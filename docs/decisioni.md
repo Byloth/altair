@@ -2,6 +2,19 @@
 
 Voci più recenti in cima. Ogni voce: decisione, motivazione, cosa la farebbe rivedere.
 
+## 2026-11-15 · SSE in C portabile; registri parziali con scritture strette
+
+**Decisione.** Le operazioni SSE sono funzioni C corsia per corsia (`runtime/acrek_sse.h`),
+senza intrinseci del processore. I registri a 8 e 16 bit si scrivono con `SET8L`/`SET8H`/`SET16`
+(scritture strette nel campo a 32 bit), non con maschera e OR.
+
+**Perché.** Il C portabile compila su ogni host, e su x86-64 produce le stesse istruzioni
+dell'originale: 3.042 funzioni identiche su 6.000 lo confermano. Le scritture strette aggirano
+una miscompilazione di clang 18.1.3 (`tests/compiler/clang18-partial-register.c`).
+
+**Si rivede se** su ARM o wasm servono intrinseci per prestazioni o per la semantica dei NaN,
+o se un clang più recente non ha più il bug.
+
 ## 2026-11-14 · Forma del codice generato
 
 **Decisione.** Una funzione C per funzione guest, `void f_XXXXXXXX(Ctx *c)`; stack guest

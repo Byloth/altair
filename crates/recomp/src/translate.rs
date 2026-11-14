@@ -224,9 +224,10 @@ fn wr_reg(r: Register, v: &str) -> R<String> {
     let full = reg32(r)?;
     Ok(match r.size() {
         4 => format!("{full} = {v};"),
-        2 => format!("{full} = ({full} & 0xffff0000u) | (u16)({v});"),
-        1 if is_high(r) => format!("{full} = ({full} & 0xffff00ffu) | ((u32)(u8)({v}) << 8);"),
-        1 => format!("{full} = ({full} & 0xffffff00u) | (u8)({v});"),
+        // Scritture strette: vedi SET8L in runtime/acrek.h e tests/compiler/.
+        2 => format!("SET16({full}, {v});"),
+        1 if is_high(r) => format!("SET8H({full}, {v});"),
+        1 => format!("SET8L({full}, {v});"),
         _ => return Err(format!("registro {r:?}")),
     })
 }
@@ -641,7 +642,7 @@ impl Emitter<'_> {
             }
             Pushfd => Ok("{ u32 v = EFLAGS(); c->esp -= 4; wr32(c, c->esp, v); }".into()),
             Popfd => Ok("{ u32 v = rd32(c, c->esp); c->esp += 4; SET_EFLAGS(v) }".into()),
-            Lahf => Ok("c->eax = (c->eax & 0xffff00ffu) | ((EFLAGS() & 0xff) << 8);".into()),
+            Lahf => Ok("SET8H(c->eax, EFLAGS());".into()),
             Sahf => Ok("{ u32 v = (EFLAGS() & ~0xffu) | ((c->eax >> 8) & 0xff); SET_EFLAGS(v) }".into()),
             Rdtsc => Ok("{ u64 t = acrek_rdtsc(c); c->eax = (u32)t; c->edx = (u32)(t >> 32); }".into()),
             Cpuid => Ok("acrek_cpuid(c);".into()),
@@ -657,8 +658,8 @@ impl Emitter<'_> {
             }
             Cdq => Ok("c->edx = (s32)c->eax < 0 ? 0xffffffffu : 0;".into()),
             Cwde => Ok("c->eax = (u32)(s32)(s16)c->eax;".into()),
-            Cbw => Ok("c->eax = (c->eax & 0xffff0000u) | (u16)(s16)(s8)c->eax;".into()),
-            Cwd => Ok("c->edx = (c->edx & 0xffff0000u) | ((s16)c->eax < 0 ? 0xffffu : 0);".into()),
+            Cbw => Ok("SET16(c->eax, (s16)(s8)c->eax);".into()),
+            Cwd => Ok("SET16(c->edx, (s16)c->eax < 0 ? 0xffffu : 0);".into()),
             Bswap => {
                 let r = reg32(ins.op0_register())?;
                 Ok(format!("{r} = __builtin_bswap32({r});"))
@@ -675,7 +676,7 @@ impl Emitter<'_> {
             Clc => Ok("cf = 0;".into()),
             Stc => Ok("cf = 1;".into()),
             Cmc => Ok("cf = !cf;".into()),
-            other => Err(format!("{other:?}")),
+            _ => self.sse(ins),
         }
     }
 
@@ -796,6 +797,228 @@ impl Emitter<'_> {
         })
     }
 
+    /// SSE e SSE2 sui registri XMM. Le operazioni sono funzioni di `runtime/acrek_sse.h`.
+    fn sse(&self, ins: &Instruction) -> R<String> {
+        use Mnemonic::*;
+        let m = ins.mnemonic();
+        let kind = |k: u32| ins.op_kind(k);
+        let xmm = |k: u32| -> R<String> {
+            let r = ins.op_register(k);
+            if kind(k) == OpKind::Register && r.is_xmm() {
+                Ok(format!("c->xmm[{}]", r.number()))
+            } else {
+                Err(format!("{m:?}"))
+            }
+        };
+        // Sorgente a 128 bit, oppure i soli 32 o 64 bit bassi quando l'operando è più corto.
+        let src128 = |k: u32| -> R<String> {
+            if kind(k) == OpKind::Memory {
+                Ok(format!("xld(c, {})", ea(ins)?))
+            } else {
+                xmm(k)
+            }
+        };
+        let f32s = |k: u32| -> R<String> {
+            if kind(k) == OpKind::Memory {
+                Ok(format!("rdf32(c, {})", ea(ins)?))
+            } else {
+                Ok(format!("{}.f[0]", xmm(k)?))
+            }
+        };
+        let f64s = |k: u32| -> R<String> {
+            if kind(k) == OpKind::Memory {
+                Ok(format!("rdf64(c, {})", ea(ins)?))
+            } else {
+                Ok(format!("{}.db[0]", xmm(k)?))
+            }
+        };
+        let u32s = |k: u32| -> R<String> {
+            if kind(k) == OpKind::Memory {
+                Ok(format!("rd32(c, {})", ea(ins)?))
+            } else {
+                Ok(format!("{}.d[0]", xmm(k)?))
+            }
+        };
+        let u64s = |k: u32| -> R<String> {
+            if kind(k) == OpKind::Memory {
+                Ok(format!("rd64(c, {})", ea(ins)?))
+            } else {
+                Ok(format!("{}.q[0]", xmm(k)?))
+            }
+        };
+        let imm = |k: u32| ins.immediate(k) as u32 & 0xff;
+        let packed2 = |f: &str| -> R<String> { Ok(format!("{d} = x_{f}({d}, {});", src128(1)?, d = xmm(0)?)) };
+        let packed1 = |f: &str| -> R<String> { Ok(format!("{} = x_{f}({});", xmm(0)?, src128(1)?)) };
+        let scalar32 = |expr: &str| -> R<String> {
+            Ok(format!("{{ float x = {d}.f[0], y = {}; {d}.f[0] = {expr}; }}", f32s(1)?, d = xmm(0)?))
+        };
+        let scalar64 = |expr: &str| -> R<String> {
+            Ok(format!("{{ double x = {d}.db[0], y = {}; {d}.db[0] = {expr}; }}", f64s(1)?, d = xmm(0)?))
+        };
+        let shift = |f: &str| -> R<String> {
+            let n = match kind(1) {
+                OpKind::Immediate8 => format!("{}", imm(1)),
+                _ => format!("{}.q[0]", src128(1)?),
+            };
+            Ok(format!("{d} = x_{f}({d}, {n});", d = xmm(0)?))
+        };
+
+        match m {
+            Movaps | Movups | Movapd | Movupd | Movdqa | Movdqu => {
+                if kind(0) == OpKind::Memory {
+                    Ok(format!("xst(c, {}, {});", ea(ins)?, xmm(1)?))
+                } else {
+                    Ok(format!("{} = {};", xmm(0)?, src128(1)?))
+                }
+            }
+            Movss => match (kind(0), kind(1)) {
+                (OpKind::Memory, _) => Ok(format!("wr32(c, {}, {}.d[0]);", ea(ins)?, xmm(1)?)),
+                (_, OpKind::Memory) => Ok(format!("{} = xd({});", xmm(0)?, u32s(1)?)),
+                _ => Ok(format!("{}.d[0] = {}.d[0];", xmm(0)?, xmm(1)?)),
+            },
+            Movsd => match (kind(0), kind(1)) {
+                (OpKind::Memory, _) => Ok(format!("wr64(c, {}, {}.q[0]);", ea(ins)?, xmm(1)?)),
+                (_, OpKind::Memory) => Ok(format!("{} = xq({});", xmm(0)?, u64s(1)?)),
+                _ => Ok(format!("{}.q[0] = {}.q[0];", xmm(0)?, xmm(1)?)),
+            },
+            Movd => {
+                if kind(0) == OpKind::Register && ins.op0_register().is_xmm() {
+                    Ok(format!("{} = xd({});", xmm(0)?, read(ins, 1, 32)?))
+                } else {
+                    write(ins, 0, 32, &format!("{}.d[0]", xmm(1)?))
+                }
+            }
+            Movq => {
+                if kind(0) == OpKind::Memory {
+                    Ok(format!("wr64(c, {}, {}.q[0]);", ea(ins)?, xmm(1)?))
+                } else {
+                    Ok(format!("{} = xq({});", xmm(0)?, u64s(1)?))
+                }
+            }
+            Movlpd | Movlps | Movhpd | Movhps => {
+                let lane = if matches!(m, Movlpd | Movlps) { 0 } else { 1 };
+                if kind(0) == OpKind::Memory {
+                    Ok(format!("wr64(c, {}, {}.q[{lane}]);", ea(ins)?, xmm(1)?))
+                } else {
+                    Ok(format!("{}.q[{lane}] = rd64(c, {});", xmm(0)?, ea(ins)?))
+                }
+            }
+            Movhlps => packed2("movhlps"),
+            Movlhps => packed2("movlhps"),
+            Movmskps => write(ins, 0, 32, &format!("x_movmskps({})", xmm(1)?)),
+            Movmskpd => write(ins, 0, 32, &format!("x_movmskpd({})", xmm(1)?)),
+            Pmovmskb => write(ins, 0, 32, &format!("x_pmovmskb({})", xmm(1)?)),
+
+            Addps => packed2("addps"),
+            Subps => packed2("subps"),
+            Mulps => packed2("mulps"),
+            Divps => packed2("divps"),
+            Minps => packed2("minps"),
+            Maxps => packed2("maxps"),
+            Addpd => packed2("addpd"),
+            Subpd => packed2("subpd"),
+            Mulpd => packed2("mulpd"),
+            Divpd => packed2("divpd"),
+            Minpd => packed2("minpd"),
+            Maxpd => packed2("maxpd"),
+            Andps | Andpd | Pand => packed2("and"),
+            Andnps | Andnpd | Pandn => packed2("andn"),
+            Orps | Orpd | Por => packed2("or"),
+            Xorps | Xorpd | Pxor => packed2("xor"),
+            Paddb => packed2("paddb"),
+            Paddw => packed2("paddw"),
+            Paddd => packed2("paddd"),
+            Paddq => packed2("paddq"),
+            Psubb => packed2("psubb"),
+            Psubw => packed2("psubw"),
+            Psubd => packed2("psubd"),
+            Psubq => packed2("psubq"),
+            Pcmpeqb => packed2("pcmpeqb"),
+            Pcmpeqw => packed2("pcmpeqw"),
+            Pcmpeqd => packed2("pcmpeqd"),
+            Pcmpgtw => packed2("pcmpgtw"),
+            Pcmpgtd => packed2("pcmpgtd"),
+            Pmullw => packed2("pmullw"),
+            Pmulhw => packed2("pmulhw"),
+            Pmuludq => packed2("pmuludq"),
+            Unpcklps => packed2("unpcklps"),
+            Unpckhps => packed2("unpckhps"),
+            Unpcklpd | Punpcklqdq => packed2("unpcklpd"),
+            Unpckhpd | Punpckhqdq => packed2("unpckhpd"),
+            Punpcklbw => packed2("punpcklbw"),
+            Punpcklwd => packed2("punpcklwd"),
+            Punpckldq => packed2("unpcklps"),
+            Punpckhdq => packed2("unpckhps"),
+            Sqrtps => packed1("sqrtps"),
+            Rsqrtps => packed1("rsqrtps"),
+            Rcpps => packed1("rcpps"),
+            Cvtpd2ps => packed1("cvtpd2ps"),
+            Cvtdq2ps => packed1("cvtdq2ps"),
+            Cvttps2dq => packed1("cvttps2dq"),
+            Cvtps2dq => packed1("cvtps2dq"),
+            // L'operando in memoria di `cvtps2pd` è di soli 64 bit.
+            Cvtps2pd => Ok(format!(
+                "{} = x_cvtps2pd({});",
+                xmm(0)?,
+                if kind(1) == OpKind::Memory { format!("xq(rd64(c, {}))", ea(ins)?) } else { xmm(1)? }
+            )),
+            Shufps => Ok(format!("{d} = x_shufps({d}, {}, {});", src128(1)?, imm(2), d = xmm(0)?)),
+            Shufpd => Ok(format!("{d} = x_shufpd({d}, {}, {});", src128(1)?, imm(2), d = xmm(0)?)),
+            Pshufd => Ok(format!("{} = x_pshufd({}, {});", xmm(0)?, src128(1)?, imm(2))),
+            Cmpps => Ok(format!("{d} = x_cmpps({d}, {}, {});", src128(1)?, imm(2), d = xmm(0)?)),
+            Cmppd => Ok(format!("{d} = x_cmppd({d}, {}, {});", src128(1)?, imm(2), d = xmm(0)?)),
+            Cmpss => Ok(format!("{d}.d[0] = x_cmpss({d}.f[0], {}, {});", f32s(1)?, imm(2), d = xmm(0)?)),
+            Cmpsd => Ok(format!("{d}.q[0] = x_cmpsd({d}.db[0], {}, {});", f64s(1)?, imm(2), d = xmm(0)?)),
+
+            Addss => scalar32("x + y"),
+            Subss => scalar32("x - y"),
+            Mulss => scalar32("x * y"),
+            Divss => scalar32("x / y"),
+            Minss => scalar32("x < y ? x : y"),
+            Maxss => scalar32("x > y ? x : y"),
+            Sqrtss => scalar32("sqrtf(y)"),
+            Rsqrtss => scalar32("1.0f / sqrtf(y)"),
+            Rcpss => scalar32("1.0f / y"),
+            Addsd => scalar64("x + y"),
+            Subsd => scalar64("x - y"),
+            Mulsd => scalar64("x * y"),
+            Divsd => scalar64("x / y"),
+            Minsd => scalar64("x < y ? x : y"),
+            Maxsd => scalar64("x > y ? x : y"),
+            Sqrtsd => scalar64("sqrt(y)"),
+            Comiss | Ucomiss => Ok(format!("{{ float a = {}.f[0], b = {}; X_COMI(a, b) }}", xmm(0)?, f32s(1)?)),
+            Comisd | Ucomisd => Ok(format!("{{ double a = {}.db[0], b = {}; X_COMI(a, b) }}", xmm(0)?, f64s(1)?)),
+
+            Cvtss2sd => Ok(format!("{}.db[0] = (double){};", xmm(0)?, f32s(1)?)),
+            Cvtsd2ss => Ok(format!("{}.f[0] = (float){};", xmm(0)?, f64s(1)?)),
+            Cvtsi2ss => Ok(format!("{}.f[0] = (float)(s32){};", xmm(0)?, read(ins, 1, 32)?)),
+            Cvtsi2sd => Ok(format!("{}.db[0] = (double)(s32){};", xmm(0)?, read(ins, 1, 32)?)),
+            Cvttss2si => write(ins, 0, 32, &format!("x_f2i({})", f32s(1)?)),
+            Cvttsd2si => write(ins, 0, 32, &format!("x_f2i({})", f64s(1)?)),
+            Cvtss2si => write(ins, 0, 32, &format!("x_f2i(rintf({}))", f32s(1)?)),
+            Cvtsd2si => write(ins, 0, 32, &format!("x_f2i(rint({}))", f64s(1)?)),
+
+            Pslldq => Ok(format!("{d} = x_pslldq({d}, {});", imm(1), d = xmm(0)?)),
+            Psrldq => Ok(format!("{d} = x_psrldq({d}, {});", imm(1), d = xmm(0)?)),
+            Psllq => shift("psllq"),
+            Psrlq => shift("psrlq"),
+            Pslld => shift("pslld"),
+            Psrld => shift("psrld"),
+            Psrad => shift("psrad"),
+            Psllw => shift("psllw"),
+            Psrlw => shift("psrlw"),
+            Psraw => shift("psraw"),
+            Pextrw => write(ins, 0, 32, &format!("(u32){}.w[{}]", xmm(1)?, imm(2) & 7)),
+            Pinsrw => {
+                let v = if kind(1) == OpKind::Memory { format!("rd16(c, {})", ea(ins)?) } else { read(ins, 1, 32)? };
+                Ok(format!("{}.w[{}] = (u16){v};", xmm(0)?, imm(2) & 7))
+            }
+            Ldmxcsr => Ok(format!("acrek_set_mxcsr(c, rd32(c, {}));", ea(ins)?)),
+            Stmxcsr => Ok(format!("wr32(c, {}, c->mxcsr);", ea(ins)?)),
+            other => Err(format!("{other:?}")),
+        }
+    }
+
     fn string(&self, ins: &Instruction) -> R<String> {
         use Mnemonic::*;
         let (kind, n) = match ins.mnemonic() {
@@ -855,6 +1078,12 @@ impl Emitter<'_> {
         };
         Ok(format!("{{ u32 d = c->df ? (u32)-{step} : {step}u; {looped} }}"))
     }
+}
+
+/// Il traduttore sa emettere questa istruzione, presa da sola?
+pub fn supported(ins: &Instruction) -> bool {
+    let f = Func { start: 0, insns: BTreeMap::new(), labels: BTreeSet::new(), tables: HashMap::new(), calls: BTreeSet::new() };
+    Emitter { f: &f, known: &|_| true }.insn(ins).is_ok()
 }
 
 /// Traduce `f`; `known` dice quali funzioni saranno definite nello stesso file.

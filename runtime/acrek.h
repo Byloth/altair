@@ -20,6 +20,16 @@ typedef int64_t s64;
 
 typedef struct Ctx Ctx;
 
+/* Un registro XMM, visto per corsie. */
+typedef union {
+    u8 b[16];
+    u16 w[8];
+    u32 d[4];
+    u64 q[2];
+    float f[4];
+    double db[2];
+} Xmm;
+
 /* Stato di un thread guest. L'ordine dei campi è replicato in tools/difftest.py. */
 struct Ctx {
     u32 eax, ecx, edx, ebx, esp, ebp, esi, edi;
@@ -34,6 +44,8 @@ struct Ctx {
     void *trap_jmp;
     const char *trap_msg;
     u32 trap_addr;
+    u32 mxcsr;     /* parola di controllo SSE del guest; all'avvio 0x1f80 */
+    Xmm xmm[8];
 };
 
 typedef void (*AcrekFn)(Ctx *c);
@@ -55,6 +67,8 @@ int acrek_run(Ctx *c, u32 addr);
 u64 acrek_rdtsc(Ctx *c);
 /* `cpuid`: una CPU fissa di classe SSE3, uguale su ogni host. */
 void acrek_cpuid(Ctx *c);
+/* `ldmxcsr`: aggiorna la parola di controllo del guest e quella dell'host. */
+void acrek_set_mxcsr(Ctx *c, u32 v);
 u8 *acrek_mem_create(void);
 void acrek_mem_destroy(u8 *mem);
 
@@ -64,6 +78,16 @@ static inline u32 rd32(Ctx *c, u32 a) { u32 v; memcpy(&v, c->mem + a, 4); return
 static inline void wr8(Ctx *c, u32 a, u8 v) { c->mem[a] = v; }
 static inline void wr16(Ctx *c, u32 a, u16 v) { memcpy(c->mem + a, &v, 2); }
 static inline void wr32(Ctx *c, u32 a, u32 v) { memcpy(c->mem + a, &v, 4); }
+static inline u64 rd64(Ctx *c, u32 a) { u64 v; memcpy(&v, c->mem + a, 8); return v; }
+static inline void wr64(Ctx *c, u32 a, u64 v) { memcpy(c->mem + a, &v, 8); }
+
+/* Scrittura dei registri a 8 e 16 bit: scritture strette dirette nel campo a 32 bit.
+ * Non si usa `reg = (reg & maschera) | v` perché clang 18 lo miscompila (vedi
+ * tests/compiler/clang18-partial-register.c). Richiede un host little-endian. */
+_Static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "serve un host little-endian");
+#define SET8L(reg, v) do { u8 t_ = (u8)(v); *(u8 *)&(reg) = t_; } while (0)
+#define SET8H(reg, v) do { u8 t_ = (u8)(v); *((u8 *)&(reg) + 1) = t_; } while (0)
+#define SET16(reg, v) do { u16 t_ = (u16)(v); memcpy(&(reg), &t_, 2); } while (0)
 
 /* Puntatore host a un indirizzo guest, per le operazioni atomiche. */
 #define MP(T, a) ((T *)(c->mem + (u32)(a)))
@@ -84,5 +108,7 @@ static inline void wr32(Ctx *c, u32 a, u32 v) { memcpy(c->mem + a, &v, 4); }
     cf = (a) < (b); of = ((((a) ^ (b)) & ((a) ^ (r))) >> ((bits) - 1)) & 1; \
     af = (((a) ^ (b) ^ (r)) >> 4) & 1; F_ZSP(r, bits)
 #define F_LOGIC(r, bits) cf = 0; of = 0; af = 0; F_ZSP(r, bits)
+
+#include "acrek_sse.h"
 
 #endif

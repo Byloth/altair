@@ -24,6 +24,8 @@ uso: acrek <comando> <AssassinsCreed_Dx9.exe> [opzioni]
   candidates [--max N]      funzioni adatte al test differenziale: tutta la chiusura è
                             traducibile, senza import né chiamate indirette
   coverage                  quante funzioni si traducono oggi, e cosa blocca le altre
+  census                    quante volte compare ogni istruzione nel codice raggiunto,
+                            e quante di quelle il traduttore sa già emettere
 
 Opzione comune: --any-exe   accetta un eseguibile con hash diverso da quello della build Steam";
 
@@ -65,6 +67,7 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         "discover" => discover_cmd(&img, flag(args, "--strict"), value(args, "--out"))?,
         "translate" => translate_cmd(&img, args)?,
         "coverage" => coverage_cmd(&img),
+        "census" => census_cmd(&img),
         "candidates" => candidates_cmd(&img, value(args, "--max").and_then(|v| v.parse().ok()).unwrap_or(500)),
         _ => return Err(USAGE.into()),
     }
@@ -363,5 +366,36 @@ fn candidates_cmd(img: &Image, max: usize) {
     eprintln!("{} funzioni adatte su {} traducibili; scelte {}", good.len(), info.len(), chosen.len());
     for a in chosen {
         println!("{a:#x}");
+    }
+}
+
+fn census_cmd(img: &Image) {
+    use iced_x86::Instruction;
+    let (d, _) = Discovery::run(img, false, false);
+    let hard = hard_starts(&d);
+    let is_hard = |a: u32| hard.contains(&a);
+    let mut seen: HashMap<u32, Instruction> = HashMap::new();
+    for &a in d.starts.keys() {
+        if let Ok(f) = translate::decode(img, a, &is_hard) {
+            seen.extend(f.insns.iter().map(|(k, v)| (*k, *v)));
+        }
+    }
+    // (totale, non traducibili) per mnemonico, sulle istruzioni distinte.
+    let mut count: BTreeMap<String, (usize, usize)> = BTreeMap::new();
+    for ins in seen.values() {
+        let e = count.entry(format!("{:?}", ins.mnemonic()).to_lowercase()).or_default();
+        e.0 += 1;
+        if !translate::supported(ins) {
+            e.1 += 1;
+        }
+    }
+    let total: usize = count.values().map(|c| c.0).sum();
+    let missing: usize = count.values().map(|c| c.1).sum();
+    println!("istruzioni distinte {total}, di cui non ancora traducibili {missing} ({:.1}%)", 100.0 * missing as f64 / total as f64);
+    println!("{:>9} {:>9}  istruzione", "totale", "mancanti");
+    let mut rows: Vec<_> = count.into_iter().collect();
+    rows.sort_by_key(|(_, c)| std::cmp::Reverse((c.1, c.0)));
+    for (m, (n, miss)) in rows {
+        println!("{n:>9} {miss:>9}  {m}");
     }
 }

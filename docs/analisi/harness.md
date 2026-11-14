@@ -71,6 +71,18 @@ Tutte passano, in 0,4 secondi. Altre due chiamate di controllo:
 - `_purecall` (`0x00F9F7A2`) si ferma su `TlsGetValue`, come atteso: chiama una funzione a
   `0x00FA8E10` (probabilmente `_decode_pointer` del CRT) che usa la TLS.
 
+## Stato ripristinato a ogni chiamata
+
+Imparato a spese del test differenziale (2026-11-15): l'emulatore conserva stato tra una
+chiamata e l'altra, e una funzione interrotta a metà lo lascia sporco.
+
+- **EFLAGS** viene riscritto a `0x202`: altrimenti il flag di direzione resta impostato.
+- **MXCSR** viene reimpostato *eseguendo* un `ldmxcsr` in una paginetta di servizio: scrivere il
+  registro dall'esterno non aggiorna arrotondamento, flush-to-zero e denormali interni.
+- `reset()` ripristina sezioni scrivibili, tutto lo heap di prova e 64 KB di stack.
+- `.text`, `.rdata` e `.rsrc` sono protette in scrittura: un puntatore sbagliato ferma il caso.
+- I registri XMM iniziali si passano con `call(..., xmm=[...])`.
+
 ## Limiti e prossimi passi
 
 - **Niente stato globale inizializzato.** L'immagine è quella su disco: gli inizializzatori

@@ -95,3 +95,12 @@ source ~/.bash_exports && cargo build --release
 ```
 
 Gli scenari sono funzioni Python in fondo al file. Dettagli in `docs/analisi/traduttore.md`.
+
+## `difftrace.py`
+
+Rigioca un caso di `difftest.py --auto` sull'originale (con la traccia degli indirizzi
+eseguiti) e sul tradotto, e mostra registri e prime differenze di heap e stack.
+
+```sh
+.venv/bin/python tools/difftrace.py "$AC1/AssassinsCreed_Dx9.exe" 0x99BC40 1
+```

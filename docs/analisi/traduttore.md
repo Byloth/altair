@@ -1,6 +1,6 @@
 # Il ricompilatore (`acrek`)
 
-Stato al 2026-11-14, primo giorno della Fase 1 (aggiornato dopo le atomiche). Codice in `crates/` (Rust) e `runtime/` (C).
+Stato al 2026-11-14, primo giorno della Fase 1 (aggiornato dopo SSE). Codice in `crates/` (Rust) e `runtime/` (C).
 
 ```sh
 source ~/.bash_exports && cargo build --release
@@ -10,9 +10,11 @@ $A rtti $E                         # conteggi RTTI e vtable
 $A discover $E [--strict] [--out private/functions.json]
 $A translate $E --out build/gen/x.c 0xFA6790 ...   # traduce in C le funzioni e ciò che chiamano
 $A coverage $E                     # quante funzioni si traducono, e cosa blocca le altre
+$A census $E                       # ogni istruzione: quante volte compare, quante non traducibili
 $A candidates $E --max 500         # funzioni adatte al test differenziale
 .venv/bin/python tools/difftest.py $E              # scenari scritti a mano
-.venv/bin/python tools/difftest.py $E --auto 4000  # campione automatico, circa 50 secondi
+.venv/bin/python tools/difftest.py $E --auto 6000  # campione automatico, meno di 2 minuti
+.venv/bin/python tools/difftrace.py $E 0xADDR 0    # rigioca un caso e mostra le differenze
 ```
 
 `acrek` rifiuta qualunque eseguibile che non abbia lo SHA-1 della build Steam DX9
@@ -27,6 +29,8 @@ $A candidates $E --max 500         # funzioni adatte al test differenziale
 | `crates/recomp/src/discover.rs` | Scoperta delle funzioni (porting di `tools/functions.py`) |
 | `crates/recomp/src/translate.rs` | Decodifica di una funzione e traduzione in C |
 | `runtime/acrek.h`, `acrek.c` | Supporto del codice generato: contesto, memoria guest, flag, registro delle funzioni, trap |
+| `runtime/acrek_sse.h` | Operazioni SSE/SSE2 in C portabile |
+| `tests/compiler/` | Riproduzioni di bug del compilatore C trovati dal test |
 | `tools/difftest.py` | Test differenziale contro `tools/harness.py` |
 
 ## Scoperta delle funzioni in Rust
@@ -76,45 +80,65 @@ Regole di decodifica di una funzione:
 
 ## Istruzioni supportate
 
-Intere: `mov movzx movsx lea push pop leave xchg`, `add adc sub sbb cmp and or xor test inc dec
-neg not`, `shl shr sar rol ror rcl rcr shld shrd`, `imul` (1, 2, 3 operandi), `mul div idiv`
+**Intere:** `mov movzx movsx lea push pop leave xchg`, `add adc sub sbb cmp and or xor test inc
+dec neg not`, `shl shr sar rol ror rcl rcr shld shrd`, `imul` (1, 2, 3 operandi), `mul div idiv`
 (8, 16, 32 bit), `cdq cwde cbw cwd bswap`, `bt bts btr btc bsf bsr`, tutti i `jcc`, `jecxz`,
 `loop`, `setcc`, `cmovcc`, `jmp`/`call` diretti e indiretti, `ret`/`ret n`, `movs stos lods scas
 cmps` con `rep`/`repe`/`repne` e flag di direzione, `cld std clc stc cmc`, `pushfd popfd sahf
 lahf`, `xadd cmpxchg`, `nop pause wait prefetch*`.
 
-Atomiche: prefisso `lock` su `add sub and or xor inc dec not xadd cmpxchg bts btr btc`, e `xchg`
-con un operando in memoria. Diventano operazioni atomiche vere sulla memoria host
-(`__atomic_*`, ordinamento sequenziale), non una simulazione.
+**Atomiche:** prefisso `lock` su `add sub and or xor inc dec not xadd cmpxchg bts btr btc`, e
+`xchg` con un operando in memoria. Diventano operazioni atomiche vere sulla memoria host
+(`__atomic_*`, ordinamento sequenziale).
 
-Non deterministiche: `rdtsc` è un contatore a 1 GHz dal tempo host; `cpuid` descrive una CPU
-fissa di classe SSE3 (Core 2), uguale su ogni host. Le funzioni che le usano sono escluse dal
-test differenziale.
+**SSE e SSE2** (registri XMM; `runtime/acrek_sse.h`):
+- spostamenti: `movaps movups movapd movupd movdqa movdqu movss movsd movd movq movlps movlpd
+  movhps movhpd movhlps movlhps movmskps movmskpd pmovmskb`;
+- aritmetica impacchettata e scalare: `add sub mul div min max sqrt` in versione `ps pd ss sd`,
+  `rsqrtps rsqrtss rcpps rcpss`;
+- logica: `and andn or xor` in versione `ps`, `pd` e intera (`pand pandn por pxor`);
+- confronti: `cmpps cmppd cmpss cmpsd` (otto predicati), `comiss ucomiss comisd ucomisd`;
+- conversioni: `cvtss2sd cvtsd2ss cvtps2pd cvtpd2ps cvtsi2ss cvtsi2sd cvttss2si cvttsd2si
+  cvtss2si cvtsd2si cvtdq2ps cvtps2dq cvttps2dq`;
+- rimescolamenti: `shufps shufpd pshufd unpcklps unpckhps unpcklpd unpckhpd punpcklbw punpcklwd
+  punpckldq punpckhdq punpcklqdq punpckhqdq pextrw pinsrw`;
+- interi impacchettati: `padd psub` (`b w d q`), `pcmpeq` (`b w d`), `pcmpgt` (`w d`), `pmullw
+  pmulhw pmuludq`, scorrimenti `psll psrl psra` (`w d q`), `pslldq psrldq`;
+- controllo: `ldmxcsr stmxcsr`.
 
-## Copertura (`acrek coverage`)
+Le operazioni SSE sono scritte in C portabile, corsia per corsia. Su un host x86-64 il
+compilatore le traduce nelle stesse istruzioni dell'originale; arrotondamento, flush-to-zero e
+denormali seguono il guest perché durante l'esecuzione l'MXCSR dell'host è quello del guest.
+`rsqrt` e `rcp` sono calcolati esatti, come nell'emulatore di riferimento (le CPU reali danno
+12 bit).
 
-| | Solo intere (mattina) | Con atomiche e resto delle intere |
-|---|---|---|
-| Funzioni che si traducono per intero | 99.735 (85,9%) | **103.848 su 116.090 (89,5%)** |
-| Istruzioni in quelle funzioni, contate per funzione | 59,5% | **2.464.880 su 3.787.598 (65,1%)** |
+**Non deterministiche:** `rdtsc` è un contatore a 1 GHz dal tempo host; `cpuid` descrive una CPU
+fissa di classe SSE3. Le funzioni che le usano sono escluse dal test differenziale.
+
+## Copertura (`acrek coverage`, `acrek census`)
+
+| | Solo intere | Con atomiche | **Con SSE** |
+|---|---|---|---|
+| Funzioni che si traducono per intero | 85,9% | 89,5% | **109.464 su 116.090 (94,3%)** |
+| Istruzioni in quelle funzioni, contate per funzione | 59,5% | 65,1% | **74,5%** |
+| Istruzioni distinte non traducibili | — | 10,9% | **94.455 su 3.223.348 (2,9%)** |
 
 "Si traduce" significa che il traduttore emette C per ogni istruzione, **non** che il risultato
 sia verificato: per quello c'è il test differenziale qui sotto.
 
-Le funzioni che restano sono poche ma grandi (il 10% delle funzioni contiene il 35% delle
-istruzioni) e sono tutte virgola mobile. Primo ostacolo di ciascuna:
-
-| Funzioni | Ostacolo |
-|---|---|
-| circa 7.800 | SSE: `movaps` 2.675, `movss` 2.487, `xorps` 2.261, `movq` 195, `movsd` 72, `pxor` 59… |
-| circa 4.400 | x87: `fld` 2.983, `fldz` 510, `fild` 368, `fstp` 252, `fld1` 125, `fnstcw` 38… |
+Quello che manca è quasi solo **x87**: `fld` 31.158, `fstp` 30.826, `fmul` 4.691, `fadd` 2.978,
+`fxch` 2.763, `fldz` 1.978, `fnstsw` 1.939, `fst` 1.851, `fild` 1.590 e una quarantina di altre
+istruzioni. Il resto sono poche centinaia di istruzioni: MMX (`movq` su registri MM, `emms`,
+`pshufw`), `push`/`pop` di registri di segmento o a 16 bit. Le 6.600 funzioni che restano
+contengono il 25% delle istruzioni contate per funzione: sono le più grandi del gioco.
 
 ## Test differenziale (`tools/difftest.py`)
 
 Traduce le funzioni, le compila con clang in una libreria, poi esegue ogni caso due volte con
 gli stessi ingressi: sull'originale in Unicorn e sul codice tradotto, in memorie guest
-identiche. Confronta i sette registri generali, i byte tolti dallo stack, gli import chiamati
-e il contenuto finale di heap di prova, stack e sezioni scrivibili dell'immagine.
+identiche. Confronta i sette registri generali, gli otto registri XMM, i byte tolti dallo
+stack, gli import chiamati e il contenuto finale di heap di prova, stack e sezioni scrivibili
+dell'immagine.
 
 ### Scenari scritti a mano
 
@@ -124,51 +148,73 @@ e il contenuto finale di heap di prova, stack e sezioni scrivibili dell'immagine
 | `strcmp` (`0xFA9760`), stringhe uguali, diverse, troncate | 300 | identico |
 | `memcpy` (`0xF9FB80`), ogni lunghezza e allineamento, più regioni sovrapposte (copia all'indietro con `std`) | 1.117 | identico |
 
-Bug trovati e corretti: tre forme di jump table di `memcpy` che il traduttore non riconosceva
-(base spostata, indice da 1, indice negativo). `memcpy` chiama una variante SSE2 (`0xFAFBBC`)
-per le copie grandi e allineate: non è ancora traducibile, e gli scenari non la raggiungono.
-
 ### Campione automatico (`--auto N`)
 
 `acrek candidates` sceglie le funzioni adatte: tutta la chiusura sulle chiamate dirette è
 traducibile, piccola (al più 12 funzioni e 3.000 istruzioni), senza import, senza chiamate o
-salti indiretti a destinazione ignota, senza `rdtsc`/`cpuid`. Sono 14.196 su 103.848. Ne prende
+salti indiretti a destinazione ignota, senza `rdtsc`/`cpuid`. Sono 17.258 su 109.464. Ne prende
 prima alcune per ogni tipo di istruzione, a partire dai più rari, poi le altre in ordine
 pseudo-casuale ripetibile.
 
 Per ogni funzione, 8 casi con ingressi generati: sei buffer pieni di puntatori ad altri buffer,
-interi piccoli, float e valori casuali; argomenti, `ecx` ed `edx` scelti tra puntatori e interi.
-Se l'originale non gira con quegli ingressi (accesso a memoria non mappata, limite di 300.000
-istruzioni) il caso è saltato.
+interi piccoli, float (anche zeri con segno, infiniti, NaN, denormali, limiti degli interi) e
+valori casuali; argomenti, `ecx` ed `edx` scelti tra puntatori e interi; registri XMM iniziali
+casuali. Se l'originale non gira con quegli ingressi il caso è saltato.
 
 | | |
 |---|---|
-| Funzioni provate | 4.000 |
-| **Identiche all'originale** in tutti i casi eseguiti | **1.753** |
-| Diverse | 0 |
-| Saltate (nessun caso eseguibile con ingressi casuali) | 2.247 |
-| Funzioni eseguite in casi identici, comprese quelle chiamate | 2.101 |
-| Tempo | 49 secondi |
+| Funzioni provate | 6.000 |
+| **Identiche all'originale** in tutti i casi eseguiti | **3.042** |
+| di cui identiche a meno del segno o del payload di un NaN | 2 |
+| Diverse | **0** |
+| Saltate (nessun caso eseguibile con ingressi casuali) | 2.958 |
+| Funzioni eseguite in casi identici, comprese quelle chiamate | 3.592 |
+| Istruzioni in quelle funzioni | 91.316, di 150 tipi |
+| Tempo | meno di 2 minuti |
 
-Nelle funzioni verificate compaiono 73 tipi di istruzione, tra cui 25 con prefisso `lock`
-(`xadd` 22, `cmpxchg` 3), `shrd` 11, `shld` 5, `rcr` 8, `mul` 26, `div` 16, `idiv` 10, `sbb` 60,
-`adc` 14, `rol` 62, `ror` 17.
+Istruzioni SSE presenti nelle funzioni verificate: `movaps` 5.142, `movss` 4.395, `shufps`
+1.208, `mulps` 1.173, `cvtps2pd` 892, `addps` 830, `xorps` 689, `subps` 493, `cvtss2sd` 394,
+`mulsd` 336, `movq` 258, `addsd` 229, `comisd` 225, `cvtpd2ps` 198, e altre 50 con conteggi
+minori (fino a `rcpps` 3, `stmxcsr` 3).
 
-**Tradotte ma non ancora verificate**, perché compaiono solo in funzioni che usano la virgola
-mobile o gli import: `rcl`, `bts`/`btr`/`btc`, `bsf`/`bsr`, `pushfd`/`popfd`, `sahf`/`lahf`,
-`cmpsb`, `lodsb`. Vanno coperte con scenari mirati o quando SSE e x87 saranno tradotti.
+**Tradotte ma assenti dalle funzioni verificate:** `paddd`, `paddq`, `pmuludq`, e tra le intere
+`rcl`, `bts`/`btr`/`btc`, `bsf`/`bsr`, `pushfd`/`popfd`, `sahf`/`lahf`, `cmpsb`, `lodsb`. Molte
+SSE meno comuni (`cmppd`, `pinsrw`, scorrimenti a parole…) hanno pochissime occorrenze.
 
 Limiti del campione: comparire in una funzione verificata non garantisce che il caso sia
-passato da quell'istruzione; le funzioni saltate (più di metà) richiedono ingressi strutturati
-che il generatore non sa costruire.
+passato da quell'istruzione; metà delle funzioni è saltata perché richiede ingressi
+strutturati che il generatore non sa costruire.
 
-Le prime differenze segnalate dal test automatico non erano bug del traduttore ma memoria
-residua tra un caso e l'altro: ora ogni caso parte da heap, stack e dati globali ripristinati.
+### Cosa ha trovato il test
+
+1. **Tre forme di jump table di `memcpy`** non riconosciute (base spostata, indice da 1,
+   indice negativo). Corretto nel traduttore.
+2. **Un bug di clang 18.1.3.** `x = (x & 0xffffff00) | (u8)mem[x]`, con `x` appena caricato
+   dalla memoria, viene compilato da `-O1` in su perdendo i 24 bit alti; gcc è corretto.
+   Riproduzione in 20 righe: `tests/compiler/clang18-partial-register.c`. Il codice generato
+   ora scrive i registri a 8 e 16 bit con scritture strette dirette (`SET8L`, `SET8H`, `SET16`).
+   **Conseguenza: il test differenziale va rifatto sul codice compilato con il compilatore e
+   le opzioni finali**, non solo sul traduttore.
+3. **NaN.** Quando i due operandi di un'operazione SSE sono entrambi NaN, l'hardware x86
+   restituisce il primo; l'emulatore (QEMU) applica la regola dell'x87. Il codice tradotto
+   segue l'hardware. Il test tollera differenze in cui entrambe le parti sono NaN, e le conta
+   a parte.
+4. **Stato che l'emulatore si porta dietro tra un caso e l'altro**, e che falsava i confronti:
+   memoria residua nello heap, flag di direzione rimasto impostato da una funzione interrotta,
+   MXCSR (scriverlo dall'esterno non aggiorna arrotondamento e flush-to-zero interni: va
+   eseguito un `ldmxcsr`). Ora ogni caso parte da uno stato ripristinato, e le sezioni di sola
+   lettura sono protette nell'emulatore e controllate nel tradotto.
+
+`tools/difftrace.py <exe> 0xADDR <caso>` rigioca un caso sui due motori e mostra indirizzi
+eseguiti, registri e prime differenze di memoria.
 
 ## Limiti noti
 
 - Flag non confrontati direttamente dal test (solo attraverso i loro effetti).
-- Niente virgola mobile (SSE, x87, MMX): vedi copertura.
+- Niente x87 né MMX: vedi copertura.
+- SSE in C portabile: su host non x86 (ARM, wasm) vanno riviste la propagazione dei NaN, le
+  conversioni e il controllo dell'arrotondamento.
+- `stmxcsr` restituisce l'ultima parola di controllo impostata: i flag di eccezione non sono tracciati.
 - Le atomiche usano puntatori host non allineati: va bene su x86-64, da rivedere su ARM e wasm.
 - I registri sono letti e scritti nel contesto a ogni istruzione: corretto ma lento.
   L'ottimizzazione (registri in variabili locali) viene dopo la correttezza.

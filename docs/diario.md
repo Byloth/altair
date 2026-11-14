@@ -64,3 +64,16 @@
   8 e 16 bit, `rdtsc`, `cpuid`. Copertura: 89,5% delle funzioni, 65,1% delle istruzioni.
 - Campione di 4.000 funzioni: **1.753 identiche all'originale, 0 diverse**, 2.247 saltate.
   Restano solo SSE e x87 → `analisi/traduttore.md`.
+
+## 2026-11-15
+
+- `acrek census`: istruzioni per tipo, con quante non traducibili.
+- **SSE/SSE2** nel traduttore (`runtime/acrek_sse.h`, in C portabile) e stato XMM nel contesto.
+  Copertura: 94,3% delle funzioni; non traducibile solo il 2,9% delle istruzioni (x87, MMX).
+- Il test confronta anche i registri XMM, con ingressi float (zeri con segno, infiniti, NaN,
+  denormali). Campione di 6.000 funzioni: **3.042 identiche, 0 diverse**.
+- **Trovato un bug di clang 18.1.3** sulle scritture dei registri parziali; riprodotto in
+  `tests/compiler/clang18-partial-register.c` e aggirato con scritture strette.
+- Differenze di NaN tra hardware ed emulatore (regola x87 applicata a SSE): tollerate e contate.
+- L'emulatore si portava dietro flag di direzione e MXCSR tra un caso e l'altro: corretto
+  nell'harness → `analisi/traduttore.md`, `analisi/harness.md`.

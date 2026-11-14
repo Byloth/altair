@@ -114,7 +114,8 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 ### 1.2 Copertura delle istruzioni
 
 - [x] Prefisso `lock`, `xadd`, `cmpxchg`, `bts`/`btr`/`btc`: atomiche vere sulla memoria host
-- [ ] SSE/SSE2 scalare e impacchettato, MXCSR (circa 7.600 funzioni)
+- [x] SSE/SSE2 scalare e impacchettato, MXCSR: copertura al 94,3% delle funzioni, resta non
+  traducibile il 2,9% delle istruzioni
 - [ ] x87 a 80 bit con stack, confronti, control word (circa 4.300 funzioni)
 - [x] `shld`/`shrd`, `rcl`/`rcr`, `rdtsc`, `cpuid`, `pushfd`/`popfd`, `sahf`/`lahf`,
   `mul`/`div` a 8 e 16 bit, `bsf`/`bsr` (copertura: 89,5% delle funzioni)
@@ -126,8 +127,9 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 - [x] Scelta automatica delle funzioni per il test differenziale (`acrek candidates`) e
   ingressi generati (`difftest.py --auto`)
-- [ ] Confronto anche di flag, stato x87 e memoria scritta
-- [x] Campione ampio: 1.753 funzioni del gioco identiche all'originale, 0 diverse
+- [x] Confronto di registri XMM, heap, stack e dati globali; tolleranza sui soli NaN
+- [ ] Confronto anche di flag e stato x87
+- [x] Campione ampio: 3.042 funzioni del gioco identiche all'originale su 6.000, 0 diverse
 - [ ] Ingressi strutturati per le funzioni oggi saltate (più di metà del campione)
 
 ### 1.4 Immagine intera
@@ -136,6 +138,8 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
   tabelle delle eccezioni C++
 - [ ] Flag passati nelle tail call tra funzioni spezzate
 - [ ] Emissione in più file C e compilazione parallela; tempo e dimensione misurati
+- [ ] Test differenziale ripetuto con il compilatore e le opzioni finali (vedi il bug di clang
+  in `analisi/traduttore.md`); valutare gcc come secondo compilatore di controllo
 - [ ] Lettore `.forge` in Rust (portato da `tools/forge.py`) e inventario completo delle classi
 
 ## Fase 2 · Runtime Win32
@@ -191,6 +195,7 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 ## Prossimi passi concreti
 
-1. **1.2**: SSE scalare e impacchettato (circa 7.800 funzioni), poi x87 (circa 4.400).
-   Per entrambi il test differenziale deve confrontare anche lo stato in virgola mobile.
-2. Scenari mirati per le istruzioni intere non ancora verificate.
+1. **1.2**: x87 a 80 bit (circa 94.000 istruzioni, 6.600 funzioni), con confronto dello stato
+   x87 nel test; poi MMX.
+2. Scenari mirati per le istruzioni non ancora verificate.
+3. **1.4**: immagine intera compilata (in più file), ora che il 94% delle funzioni si traduce.

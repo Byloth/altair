@@ -33,15 +33,35 @@ _Noreturn void acrek_trap(Ctx *c, const char *msg, u32 addr) {
     longjmp(*(jmp_buf *)c->trap_jmp, 1);
 }
 
+/* MXCSR dell'host: durante l'esecuzione guest vale quello del guest, così arrotondamento,
+ * flush-to-zero e denormali si comportano come nell'originale. */
+#if defined(__x86_64__) || defined(__i386__)
+static u32 host_mxcsr(void) { return __builtin_ia32_stmxcsr(); }
+static void set_host_mxcsr(u32 v) { __builtin_ia32_ldmxcsr(v); }
+#else
+static u32 host_mxcsr(void) { return 0x1f80; }
+static void set_host_mxcsr(u32 v) { (void)v; }
+#endif
+
+void acrek_set_mxcsr(Ctx *c, u32 v) {
+    c->mxcsr = v;
+    set_host_mxcsr(v | 0x1f80); /* le eccezioni restano mascherate sull'host */
+}
+
 int acrek_run(Ctx *c, u32 addr) {
     jmp_buf jb;
     void *outer = c->trap_jmp;
+    volatile u32 saved = host_mxcsr();
     c->trap_jmp = &jb;
     c->trap_msg = 0;
+    if (!outer)
+        set_host_mxcsr(c->mxcsr | 0x1f80);
     int trapped = setjmp(jb);
     if (!trapped)
         acrek_call_indirect(c, addr);
     c->trap_jmp = outer;
+    if (!outer)
+        set_host_mxcsr(saved);
     return trapped;
 }
 

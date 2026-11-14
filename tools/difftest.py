@@ -44,7 +44,8 @@ HOST_CALL = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(Ctx), ctypes.c_uint32)
 Ctx._fields_ = [(r, ctypes.c_uint32) for r in ('eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi',
                                                 'df', 'fs_base')] + [
     ('mem', ctypes.c_void_p), ('host_call', HOST_CALL), ('trap_jmp', ctypes.c_void_p),
-    ('trap_msg', ctypes.c_char_p), ('trap_addr', ctypes.c_uint32)]
+    ('trap_msg', ctypes.c_char_p), ('trap_addr', ctypes.c_uint32), ('mxcsr', ctypes.c_uint32),
+    ('xmm', ctypes.c_uint8 * 128)]
 
 
 class Native:
@@ -58,13 +59,13 @@ class Native:
         self.mem = lib.acrek_mem_create()
         if not self.mem:
             raise harness.GuestError('impossibile riservare la memoria guest')
-        self._writable = []
+        self._writable, self._readonly = [], []
         for name, va, vs, raw, rs in pe.sections:
             size = max(vs, rs)
             data = pe.data[raw:raw + min(rs, size)].ljust(size, b'\0')
             self.write(pe.image_base + va, data)
-            if name not in ('.text', '.rdata', '.rsrc'):
-                self._writable.append((pe.image_base + va, data))
+            (self._readonly if name in ('.text', '.rdata', '.rsrc') else self._writable).append(
+                (pe.image_base + va, data))
         self.imports, self._iat = {}, {}
         for i, (dll, fn, slot) in enumerate(iat_entries(pe)):
             self.imports[TRAMP + 16 * i] = (dll, fn)
@@ -104,6 +105,15 @@ class Native:
     def image_state(self):
         return b''.join(self.read(va, len(data)) for va, data in self._writable)
 
+    def readonly_damaged(self):
+        """Il codice tradotto ha scritto in codice o costanti? Se sì le ripristina."""
+        damaged = False
+        for va, data in self._readonly:
+            if self.read(va, len(data)) != data:
+                damaged = True
+                self.write(va, data)
+        return damaged
+
     def reset(self):
         for va, data in self._writable:
             self.write(va, data)
@@ -132,7 +142,7 @@ class Native:
         c.esp = esp + 4 + pop
         return 0
 
-    def call(self, addr, args=(), ecx=0, edx=0, max_insns=None):
+    def call(self, addr, args=(), ecx=0, edx=0, max_insns=None, xmm=None):
         teb = bytearray(PAGE * 2)
         struct.pack_into('<I', teb, 0x00, 0xFFFFFFFF)
         struct.pack_into('<I', teb, 0x04, STACK_TOP)
@@ -144,12 +154,15 @@ class Native:
         esp0 = STACK_TOP - 0x1000 - len(frame)
         self.write(esp0, frame)
         c = Ctx(eax=0, ecx=ecx & 0xFFFFFFFF, edx=edx & 0xFFFFFFFF, ebx=0, esp=esp0, ebp=0, esi=0, edi=0,
-                df=0, fs_base=TEB, mem=self.mem, host_call=self._cb)
+                df=0, fs_base=TEB, mem=self.mem, host_call=self._cb, mxcsr=0x1F80)
+        if xmm:
+            ctypes.memmove(c.xmm, b''.join(v.to_bytes(16, 'little') for v in xmm), 128)
         self._log, self._fault = [], None
         if self.lib.acrek_run(ctypes.byref(c), addr):
             raise harness.GuestError(self._fault or f'trap: {c.trap_msg.decode()} ({c.trap_addr:#010x})')
         regs = (c.eax, c.ecx, c.edx, c.ebx, c.ebp, c.esi, c.edi)
-        return harness.Result(eax=c.eax, edx=c.edx, ecx=c.ecx, regs=regs, st0=None,
+        xmm_out = tuple(int.from_bytes(bytes(c.xmm[16 * i:16 * i + 16]), 'little') for i in range(8))
+        return harness.Result(eax=c.eax, edx=c.edx, ecx=c.ecx, regs=regs, st0=None, xmm=xmm_out,
                               popped=(c.esp - esp0 - 4) & 0xFFFFFFFF, insns=None, imports=list(self._log))
 
 
@@ -166,7 +179,7 @@ class Recorder:
     def call(self, addr, args=(), ecx=0, edx=0):
         try:
             r = self.e.call(addr, args, ecx=ecx, edx=edx)
-            self.log.append((addr, tuple(args), r.regs, r.popped, tuple(r.imports)))
+            self.log.append((addr, tuple(args), r.regs, r.xmm, r.popped, tuple(r.imports)))
             return r
         except harness.GuestError as err:
             self.log.append((addr, tuple(args), 'errore', str(err)))
@@ -243,8 +256,8 @@ def build(exe, roots=None, name='difftest', opt='-O2'):
                    stderr=subprocess.DEVNULL if name != 'difftest' else None)
     rt = os.path.join(ROOT, 'runtime')
     subprocess.run(['clang', opt, '-g', '-Wall', '-Wno-unused-variable', '-Wno-unused-but-set-variable',
-                    '-Wno-unused-label', '-Wno-parentheses-equality', '-fwrapv', '-shared', '-fPIC', '-I', rt, gen,
-                    os.path.join(rt, 'acrek.c'), '-o', lib], check=True)
+                    '-Wno-unused-label', '-Wno-parentheses-equality', '-fwrapv', '-fno-math-errno', '-ffp-contract=off', '-shared', '-fPIC', '-I', rt, gen,
+                    os.path.join(rt, 'acrek.c'), '-lm', '-o', lib], check=True)
     return lib
 
 
@@ -280,6 +293,10 @@ def run(exe):
     return 1 if failed else 0
 
 
+SPECIAL_FLOATS = [0.0, -0.0, 1.0, -1.0, 0.5, float('inf'), float('-inf'), float('nan'), 1e-40, 3.4e38, 2147483648.0,
+                  -2147483904.0, 16777216.0]
+
+
 def make_inputs(g, rng):
     """Ingressi generici: buffer pieni di puntatori ad altri buffer, interi piccoli, float e
     valori casuali; argomenti e registri scelti tra puntatori e interi."""
@@ -291,21 +308,67 @@ def make_inputs(g, rng):
             return rng.choice(bufs) + 4 * rng.randrange(0, 96)
         if r < p_ptr + 0.25:
             return rng.randrange(0, 17)
-        if r < p_ptr + 0.35:
-            return struct.unpack('<I', struct.pack('<f', rng.uniform(-100, 100)))[0]
+        if r < p_ptr + 0.50:
+            return f32()
         return rng.getrandbits(32)
 
+    def f32():
+        r = rng.random()
+        x = (rng.choice(SPECIAL_FLOATS) if r < 0.15 else rng.uniform(-4, 4) if r < 0.6
+             else rng.uniform(-1e4, 1e4) if r < 0.9 else rng.uniform(-1e30, 1e30))
+        return struct.unpack('<I', struct.pack('<f', x))[0]
+
     for b in bufs:
-        g.write(b, struct.pack('<128I', *[value(0.4) for _ in range(128)]))
-    return [value(0.6) for _ in range(6)], rng.choice(bufs), value(0.5)
+        g.write(b, struct.pack('<128I', *[value(0.35) for _ in range(128)]))
+    # Registri XMM iniziali: quattro float ciascuno, a volte due double.
+    xmm = []
+    for _ in range(8):
+        if rng.random() < 0.25:
+            raw = struct.pack('<2d', rng.uniform(-1e3, 1e3), rng.uniform(-1e3, 1e3))
+        else:
+            raw = struct.pack('<4I', f32(), f32(), f32(), f32())
+        xmm.append(int.from_bytes(raw, 'little'))
+    return [value(0.6) for _ in range(6)], rng.choice(bufs), value(0.5), xmm
 
 
 def observe(g, r):
-    return (r.regs, r.popped, tuple(r.imports), g.read(HEAP, max(g.heap_top - HEAP, HEAP_CLEAR)),
+    return (r.regs, r.xmm, r.popped, tuple(r.imports), g.read(HEAP, max(g.heap_top - HEAP, HEAP_CLEAR)),
             g.read(STACK_TOP - STACK_CLEAR, STACK_CLEAR), g.image_state())
 
 
-FIELDS = ('registri (eax ecx edx ebx ebp esi edi)', 'byte tolti dallo stack', 'import', 'heap', 'stack',
+def same_but_nan(a, b):
+    """Due blocchi di byte sono uguali, a meno di parole che sono NaN in entrambi.
+
+    Quando i due operandi di un'operazione SSE sono entrambi NaN, l'hardware x86 restituisce
+    il primo; l'emulatore (QEMU) applica la regola dell'x87 e può restituire l'altro. Il codice
+    tradotto segue l'hardware, quindi segno e payload di un NaN possono differire."""
+    if a == b:
+        return True
+    if len(a) != len(b):
+        return False
+    wa, wb = struct.unpack(f'<{len(a) // 4}I', a), struct.unpack(f'<{len(b) // 4}I', b)
+
+    def nan32(x):
+        return x & 0x7F800000 == 0x7F800000 and x & 0x007FFFFF
+
+    def nan64(lo, hi):
+        return hi & 0x7FF00000 == 0x7FF00000 and (hi & 0x000FFFFF or lo)
+
+    for i, (x, y) in enumerate(zip(wa, wb)):
+        if x == y or (nan32(x) and nan32(y)):
+            continue
+        j = i & ~1                      # la parola doppia che la contiene, allineata a 8
+        if j + 1 < len(wa) and nan64(wa[j], wa[j + 1]) and nan64(wb[j], wb[j + 1]):
+            continue
+        return False
+    return True
+
+
+def xmm_bytes(regs):
+    return b''.join(v.to_bytes(16, 'little') for v in regs)
+
+
+FIELDS = ('registri (eax ecx edx ebx ebp esi edi)', 'registri xmm', 'byte tolti dallo stack', 'import', 'heap', 'stack',
           'dati globali')
 
 
@@ -346,6 +409,7 @@ def run_auto(exe, count, cases):
     lib = build(exe, roots, name='difftest-auto', opt='-O1')
     oracle, native = harness.Guest(exe), Native(exe, lib)
     same, differ, never = [], [], []
+    nan_only = set()
     report = []
     current = os.path.join(ROOT, 'build', 'difftest-current.txt')
     for addr in roots:
@@ -354,13 +418,13 @@ def run_auto(exe, count, cases):
             obs = []
             for engine in (oracle, native):
                 engine.reset()
-                args, ecx, edx = make_inputs(engine, random.Random(addr * 1000 + case))
+                args, ecx, edx, xmm = make_inputs(engine, random.Random(addr * 1000 + case))
                 if engine is native:
                     with open(current, 'w') as f:
                         f.write(f'{addr:#x} caso {case}\n')
                     signal.alarm(60)       # un ciclo infinito nel tradotto uccide il processo
                 try:
-                    r = engine.call(addr, args, ecx=ecx, edx=edx, max_insns=300_000)
+                    r = engine.call(addr, args, ecx=ecx, edx=edx, max_insns=300_000, xmm=xmm)
                     obs.append(observe(engine, r))
                 except harness.GuestError as e:
                     obs.append(('errore', str(e)))
@@ -371,13 +435,25 @@ def run_auto(exe, count, cases):
             if obs[0][0] == 'errore':
                 continue
             ran += 1
+            if obs[0] != obs[1] and obs[1][0] != 'errore':
+                # Tolleranza sui soli NaN, per registri XMM e memoria (indici 1, 4, 5, 6).
+                o0 = (obs[0][0], xmm_bytes(obs[0][1])) + obs[0][2:]
+                o1 = (obs[1][0], xmm_bytes(obs[1][1])) + obs[1][2:]
+                if all(same_but_nan(x, y) if k in (1, 4, 5, 6) else x == y
+                       for k, (x, y) in enumerate(zip(o0, o1))):
+                    nan_only.add(addr)
+                    continue
             if obs[0] != obs[1] and bad is None:
                 if obs[1][0] == 'errore':
                     bad = (case, f'il tradotto si ferma: {obs[1][1]}')
                 else:
                     k = next(i for i in range(len(FIELDS)) if obs[0][i] != obs[1][i])
-                    detail = f'{obs[0][k]} contro {obs[1][k]}' if k < 3 else ''
+                    detail = (f'{obs[0][k]} contro {obs[1][k]}' if k in (0, 2, 3) else
+                              ' '.join(f'xmm{i}: {a:032x} contro {b:032x}' for i, (a, b) in
+                                       enumerate(zip(obs[0][1], obs[1][1])) if a != b) if k == 1 else '')
                     bad = (case, f'{FIELDS[k]} {detail}')
+        if native.readonly_damaged() and not bad:
+            bad = ('-', 'il tradotto ha scritto in sezioni di sola lettura')
         if bad:
             differ.append(addr)
             report.append(f'DIVERSO {addr:#010x} caso {bad[0]}: {bad[1]}')
@@ -390,6 +466,10 @@ def run_auto(exe, count, cases):
     with open(os.path.join(ROOT, 'build', 'difftest-auto.txt'), 'w') as f:
         f.write('\n'.join(report) + '\n')
     print(f'{len(roots)} funzioni: {len(same)} identiche, {len(differ)} diverse, {len(never)} saltate')
+    nan_ok = sorted(nan_only - set(differ))
+    if nan_ok:
+        print(f'  di cui {len(nan_ok)} identiche a meno del segno o del payload di un NaN: '
+              + ' '.join(f'{a:#x}' for a in nan_ok[:8]))
     ndone, verified, missing = instruction_report(os.path.join(ROOT, 'build', 'gen', 'difftest-auto.c'), same)
     print(f'funzioni eseguite in casi identici, comprese quelle chiamate: {ndone}; '
           f'{sum(verified.values())} istruzioni di {len(verified)} tipi')

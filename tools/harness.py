@@ -26,11 +26,13 @@ import os
 import struct
 import sys
 
-from unicorn import (UC_ARCH_X86, UC_HOOK_CODE, UC_HOOK_MEM_UNMAPPED, UC_MODE_32, Uc, UcError)
+from unicorn import (UC_ARCH_X86, UC_HOOK_CODE, UC_HOOK_MEM_UNMAPPED, UC_HOOK_MEM_WRITE_PROT, UC_MODE_32, UC_PROT_EXEC, UC_PROT_READ, Uc,
+                     UcError)
 from unicorn.x86_const import (UC_X86_REG_EAX, UC_X86_REG_EBP, UC_X86_REG_EBX, UC_X86_REG_ECX,
-                               UC_X86_REG_EDI, UC_X86_REG_EDX, UC_X86_REG_EIP, UC_X86_REG_ESI,
+                               UC_X86_REG_EDI, UC_X86_REG_EDX, UC_X86_REG_EFLAGS, UC_X86_REG_EIP, UC_X86_REG_ESI,
                                UC_X86_REG_ESP, UC_X86_REG_CS, UC_X86_REG_DS, UC_X86_REG_ES,
-                               UC_X86_REG_FS, UC_X86_REG_GDTR, UC_X86_REG_SS, UC_X86_REG_ST0)
+                               UC_X86_REG_FS, UC_X86_REG_GDTR, UC_X86_REG_MXCSR, UC_X86_REG_SS,
+                               UC_X86_REG_ST0, UC_X86_REG_XMM0)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from imports import iat_entries  # noqa: E402
@@ -109,13 +111,17 @@ class Guest:
             uc.hook_add(UC_HOOK_CODE, self._on_code)
         else:
             uc.hook_add(UC_HOOK_CODE, self._on_code, begin=TRAMP, end=TRAMP + 0x10000)
-        uc.hook_add(UC_HOOK_MEM_UNMAPPED, self._on_unmapped)
+        uc.hook_add(UC_HOOK_MEM_UNMAPPED | UC_HOOK_MEM_WRITE_PROT, self._on_unmapped)
         self._fault = None
-        # Sezioni che il codice può scrivere: si ripristinano tra un caso e l'altro.
+        # Sezioni che il codice può scrivere: si ripristinano tra un caso e l'altro. Le altre
+        # sono protette in scrittura, così un puntatore sbagliato ferma il caso invece di
+        # sporcare codice e costanti per i casi successivi.
         self._writable = []
         for name, va, vs, raw, rs in pe.sections:
-            if name not in ('.text', '.rdata', '.rsrc'):
-                size = max(vs, rs)
+            size = max(vs, rs)
+            if name in ('.text', '.rdata', '.rsrc'):
+                uc.mem_protect(base + va, (size + PAGE - 1) & ~(PAGE - 1), UC_PROT_READ | UC_PROT_EXEC)
+            else:
                 self._writable.append((base + va, pe.data[raw:raw + min(rs, size)].ljust(size, b'\0')))
 
     # --- memoria ---------------------------------------------------------
@@ -176,7 +182,7 @@ class Guest:
 
     def _on_unmapped(self, uc, access, addr, size, value, _):
         eip = uc.reg_read(UC_X86_REG_EIP)
-        self._fault = f'accesso a memoria non mappata {addr:#010x} da eip={eip:#010x}'
+        self._fault = f'accesso a memoria non mappata o protetta {addr:#010x} da eip={eip:#010x}'
         return False
 
     # --- chiamata --------------------------------------------------------
@@ -184,8 +190,9 @@ class Guest:
         """Contenuto attuale delle sezioni scrivibili (per i confronti)."""
         return b''.join(self.read(va, len(data)) for va, data in self._writable)
 
-    def call(self, addr, args=(), ecx=0, edx=0, max_insns=5_000_000):
-        """Chiama `addr` con gli argomenti sullo stack (cdecl/stdcall/thiscall con ecx)."""
+    def call(self, addr, args=(), ecx=0, edx=0, max_insns=5_000_000, xmm=None):
+        """Chiama `addr` con gli argomenti sullo stack (cdecl/stdcall/thiscall con ecx).
+        `xmm`: otto interi a 128 bit con il valore iniziale dei registri XMM (default zero)."""
         uc = self.uc
         teb = bytearray(PAGE * 2)
         struct.pack_into('<I', teb, 0x00, 0xFFFFFFFF)            # fine della catena SEH
@@ -204,6 +211,17 @@ class Guest:
                        (UC_X86_REG_EDX, edx), (UC_X86_REG_EAX, 0), (UC_X86_REG_EBX, 0),
                        (UC_X86_REG_ESI, 0), (UC_X86_REG_EDI, 0)):
             uc.reg_write(reg, v & 0xFFFFFFFF)
+        # I flag vanno azzerati: una funzione interrotta può lasciare impostato il flag di
+        # direzione, e le `rep movs`/`rep stos` successive andrebbero all'indietro.
+        uc.reg_write(UC_X86_REG_EFLAGS, 0x202)
+        for i in range(8):
+            uc.reg_write(UC_X86_REG_XMM0 + i, xmm[i] if xmm else 0)
+        # Scrivere il registro MXCSR dall'esterno non aggiorna lo stato interno dell'emulatore
+        # (arrotondamento, flush-to-zero, denormali): un `ldmxcsr` eseguito da una funzione
+        # resterebbe attivo per le chiamate successive. Lo si reimposta eseguendo l'istruzione.
+        uc.mem_write(SENTINEL + 0x100, b'\x0f\xae\x15' + struct.pack('<I', SENTINEL + 0x200))
+        uc.mem_write(SENTINEL + 0x200, struct.pack('<I', 0x1F80))
+        uc.emu_start(SENTINEL + 0x100, SENTINEL + 0x107)
         self._log, self._insns, self._fault = [], 0, None
         try:
             uc.emu_start(addr, SENTINEL, count=max_insns)
@@ -216,6 +234,7 @@ class Guest:
         regs = tuple(uc.reg_read(r) for r in (UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EDX, UC_X86_REG_EBX,
                                               UC_X86_REG_EBP, UC_X86_REG_ESI, UC_X86_REG_EDI))
         return Result(eax=regs[0], ecx=regs[1], edx=regs[2], regs=regs,
+                      xmm=tuple(uc.reg_read(UC_X86_REG_XMM0 + i) for i in range(8)),
                       st0=uc.reg_read(UC_X86_REG_ST0),
                       popped=(uc.reg_read(UC_X86_REG_ESP) - esp0 - 4) & 0xFFFFFFFF,   # byte tolti dal chiamato
                       insns=self._insns if self.trace else None, imports=list(self._log))
