@@ -138,10 +138,142 @@ Nota: noi contiamo 17 DLL e 260 funzioni. La loro lista ne nomina 17 includendo 
   `EngineLoop::Enter`, `Engine::RegisterClasses`. Altre 19.664 ricevono classe e slot dalla
   RTTI di AC1. Circa 85.000 restano senza nome.
 
-## Altri documenti in `ref/scimitar-recomp/docs/` da leggere
+## Archivi `.forge` di AC1 (da `AC1_WINDOWS.md` e `PC_DATA.md`)
 
-- `PC_DATA.md`: formato dei `.forge` per PC (serve alla 0.10).
-- `ANVIL_FAMILY.md`: confronto tra i giochi del motore.
-- `ACR_WINDOWS.md`: correzioni Direct3D 9 del 2026-11-06, condivise con AC1.
-- `METAL.md`: progetto del backend grafico. Utile per il nostro su wgpu.
-- `recomp/README.md`, `platform/README.md`: struttura del traduttore e del layer.
+- Il contenitore ha lo stesso header di AC2: magic `scimitar`, **versione 25**. Indice e
+  layout a blocchi sono come quelli di AC2.
+- Il record FILEDATA prima dei dati di ogni file è **4 byte più corto** che in AC2: il magic
+  del blocco compresso sta a `+0x9B8`, in AC2 a `+0x9BC`.
+- I blocchi di AC1 sono **LZO1X_999 (tipo 1)**. Per confronto: AC2 Mac usa LZO1X_1 (tipo 0),
+  AC2 PC LZO2A (tipo 2).
+- Le classi negli archivi si identificano con il **CRC-32 del nome della classe**
+  (es. `ShaderPermutation` = `0x9467F2BB`).
+- I record FastLoad sono i campi in ordine, **senza tag né versioni**: il layout di una classe
+  cambia da gioco a gioco, quindi non si possono usare i dati di un gioco con l'eseguibile
+  di un altro. Per lo stesso motivo non si riesce a far girare AC1 sull'eseguibile Mac di AC2.
+- Il primo file del primo archivio è `GlobalMetaFile`, seguito da `Game Bootstrap Settings` e
+  `Game Fix`.
+- Gli shader negli archivi PC sono **bytecode D3D9** con prefisso di lunghezza, dentro i record
+  `ShaderPermutation` / `LightingShaderPermutation`. Il motore PC costruisce la mappa delle
+  costanti al caricamento con `D3DXGetShaderConstantTable`: per questo è una delle due funzioni
+  d3dx9 importate.
+
+## Grafica: lezioni da AC2 PC data e Revelations (`PC_DATA.md`, `ACR_WINDOWS.md`)
+
+Valgono per il nostro D3D9 su wgpu, perché il layer D3D9 è condiviso tra AC1, ACR e PoP.
+
+**Traduzione degli shader.** Loro passano da D3D9 ad ARB e poi a MSL. ARB non ha controllo di
+flusso, quindi devono appiattire `if`/`else` (eseguendo entrambi i rami) e srotolare i `rep`.
+L'appiattimento ha causato NaN: un infinito nel ramo non preso, moltiplicato per una maschera 0,
+dà NaN, e metà di Firenze spariva. **Noi traduciamo direttamente D3D9 → WGSL**, che ha controllo
+di flusso vero, e il problema non si pone. Altre cose che valgono anche per noi:
+
+- matrici column-major nella constant table, da leggere trasposte;
+- registri bool: vanno dati come costanti float separate (i bool usati in ACR sono
+  `g_VolumeFogEnabled`, `g_UseDepthTextureShadows`, `g_DeconstructionEnabled`, `g_HasSun`, …);
+- `texldl` con LOD esplicito, `vFace`, offset relativi grandi;
+- le costanti bool vanno messe dopo i registri float (le palette di ossa arrivano a c255).
+
+**Bug Direct3D 9 trovati in Revelations e condivisi con AC1:**
+
+1. **Le uscite colore di `vs_3_0` non vanno saturate.** Il gioco scrive profondità lineare in
+   un render target R32F attraverso un'uscita `COLOR`. Il clamp a 0..1 vale solo sotto SM3.
+2. **`vPos` è la coordinata intera del pixel.** Nelle API moderne la posizione è il centro
+   del pixel (k + 0.5): bisogna sottrarre 0,5.
+3. **Mezzo pixel.** Il pixel k di D3D9 è il k + 0,5 delle API moderne: le posizioni vanno
+   spostate di mezzo pixel *a destra e in basso* in clip space. Usano i 63/64 di mezzo pixel,
+   come Wine. Con l'errore, la catena di bloom (da 320x180 a 20x11) produceva un bordo luminoso.
+4. **Depth buffer più grande del render target**: in D3D9 è lecito; va scartato solo se è più
+   piccolo.
+5. **State block** registrati: il gioco ne usa due per resettare gli stati, migliaia di volte
+   al minuto.
+6. **Rinominare buffer e texture** riscritti dopo che un draw registrato li ha usati.
+7. **Device a schermo intero**: `CreateDevice` o `Reset` a schermo intero ridimensionano la
+   finestra al back buffer, e il gioco riceve `WM_SIZE`. Senza questo, ACR restava nero.
+8. Altro risolto per AC1: scalatura di `StretchRect`, render target NULL, `Reset` che conserva
+   il back buffer, il device che tiene riferimenti a ciò che ha legato.
+
+**Runtime Win32:**
+
+- `QueryPerformanceCounter` a **10 MHz** dall'avvio del processo: i nanosecondi dall'avvio del
+  sistema mandavano in overflow il calcolo `ticks * 1000000 / frequency` del gioco.
+- Con un pad collegato il gioco chiede effetti di vibrazione a DirectInput: `CreateEffect`
+  deve rispondere "non supportato" invece di interrompere.
+- **Numero di processori.** In ACR, dichiarando 2 o 4 CPU lo sfondo del menu lampeggia tra due
+  proiezioni: è una race nel percorso multiprocessore del gioco, che il loro timing rende
+  visibile. ACR ora dichiara 1 CPU; AC1 resta a 4 (`SCIMITAR_WIN32_CPUS`). Da tenere d'occhio.
+- Il gioco crea e gestisce la finestra su un thread del motore, non sul thread principale.
+
+## Scoperta delle funzioni: perché AC1 è più difficile (`ACR_WINDOWS.md`)
+
+- ACR ha rilocazioni (862.811) e una tabella SafeSEH di 34.150 handler: le rilocazioni dicono con
+  certezza quali parole sono indirizzi. **AC1 non ha rilocazioni**: ogni parola nei dati che cade
+  nel range del codice è una partenza candidata, ed è da lì che vengono le false "istruzioni"
+  `in`/`out`/`les`.
+- Con le rilocazioni ACR passa da 188.802 a 274.540 funzioni. Senza, mancavano funzioni raggiunte
+  solo tramite vtable; per esempio il CRT salva l'indirizzo di un wrapper di `TlsAlloc` che segue
+  un `ret`, senza padding.
+- La scoperta "a sequenze di indirizzi di codice nei dati" usata per AC1 perde le etichette del
+  dispatch x87 del CRT, salvate non allineate in `.data`.
+- Fonte di nomi per AC1 dal loro confronto: **4.323 nomi RTTI** con una scansione di stringhe,
+  2.582 dei quali `scimitar`. Il nostro `pe.py rtti` ne trova 4.043: va capito il perché
+  (regex diversa? nomi annidati?) quando scriveremo il parser vero.
+
+## Struttura del loro layer Windows (`platform/README.md`, `platform/win32/`)
+
+Utile come mappa dei moduli del nostro runtime, non come codice:
+
+| File | Cosa copre |
+|---|---|
+| `core.cpp` | handle, attese, TEB e TLS statica, IAT |
+| `kernel32.cpp`, `kernel32_sync.cpp`, `kernel32_file.cpp` | KERNEL32: base, sincronizzazione, file |
+| `user32.mm`, `win32_window.h` | finestra e messaggi |
+| `system.cpp`, `registry.cpp` | DLL piccole, registro emulato |
+| `com.cpp/h` | oggetti COM in memoria guest |
+| `d3d9.mm`, `d3d9_metal.mm`, `d3d9_internal.h` | API D3D9 e renderer |
+| `dinput.cpp`, `input.cpp`, `xinput.mm` | input |
+| `dsound.cpp` | DirectSound |
+| `bink_win.cpp` | Bink (wrapper stdcall su FFmpeg) |
+| `games/ac1/main.cpp`, `game.cpp` | avvio e codice specifico di AC1 |
+
+Le funzioni host chiamabili dal guest hanno un indirizzo guest proprio (`kHostFnBase`); dal
+lato host si richiama il guest con `call_guest` / `call_virtual`.
+
+## Traduttore (`recomp/README.md`)
+
+- Ogni funzione diventa `void f_XXXXXXXX(Context& c)`: registri nel contesto, memoria guest
+  tramite base più offset, salti interni come `goto`, chiamate che spingono il vero indirizzo
+  di ritorno sullo stack guest, tail call come `f_target(c); return;`.
+- Le chiamate indirette passano da un registro delle funzioni tradotte e host. Le jump table
+  diventano `switch` sulle etichette della tabella. I flag sono booleani locali, tenuti solo
+  dove un'istruzione successiva li legge.
+- x87 a 80 bit esatti: **450.000 risultati confrontati con Unicorn senza differenze**, salvo due
+  punti in cui QEMU differisce dall'hardware (overflow di `fisttp`, conversioni di NaN
+  segnalanti). Si segue l'hardware.
+- SSE con la semantica x86 su qualunque host: NaN di default negativo, conversioni float→int
+  che danno `0x80000000`, regola degli operandi di min/max. `rcp`/`rsqrt` sono esatti come in
+  Unicorn, mentre le CPU reali danno approssimazioni a 12 bit: nei test serve tolleranza o emulazione.
+- `rdtsc` come contatore a 1 GHz dal tempo host; `cpuid` come CPU fissa di classe SSE3.
+- Il loro difftest su AC2 ha confrontato 1.500 funzioni scelte per coprire ogni tipo di
+  istruzione, con 8 casi ciascuna: 8.889 casi identici a Unicorn.
+- Immagine intera di AC2: 947 MB di C++ in 64 file, compilati in 125 s su 10 core a `-O1`.
+
+## Backend grafico (`METAL.md`, solo i punti che valgono per wgpu)
+
+- La superficie grafica usata dal gioco è stretta; si implementa solo quella. Il censimento di
+  un frame (chiamate per tipo) è il primo passo, ed è da rifare per D3D9 su AC1.
+- **Precompilazione e cache delle pipeline**: senza, ogni nuova coppia di shader costa circa
+  30 ms la prima volta.
+- Depth: un formato diverso dal D24 originale cambia la scala del polygon offset.
+- Occlusion query: attenzione alle attese se la GPU è più di un frame indietro.
+
+## Migliorie del loro port (`README.md`)
+
+Un elenco utile per i nostri "nice to have", perché mostra cosa si ottiene con lo strato di traduzione:
+qualsiasi formato di schermo con l'HUD ai bordi, distanza di visibilità fino a 6x, ombre
+4096x4096, filtro anisotropico 16x, risoluzioni native, launcher con impostazioni,
+cache degli shader, alcune routine matematiche calde sostituite da codice nativo equivalente.
+
+Loro stessi scrivono che ricostruire sorgenti leggibili del motore richiederebbe anni, e che
+non sarebbero pubblicabili perché derivati dal codice Ubisoft. È coerente con la nostra scelta
+della decompilazione mirata.

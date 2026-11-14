@@ -25,3 +25,7 @@
 - Rust trovato: 1.100.0 in `~/.local/share/cargo` (PATH in `~/.bash_exports`, non in `~/.cargo`).
   Java 25 ancora da installare.
 - Installato Java 25 (rimosso il 21). Ghidra headless parte. Ambiente della 0.2 completo.
+- Completata la 0.3: letti anche `PC_DATA.md`, `ACR_WINDOWS.md`, `ANVIL_FAMILY.md`, parti di
+  `METAL.md` e `README.md`, `recomp/README.md`, `platform/README.md`. Aggiunti ad
+  `analisi/scimitar-recomp.md`: formato `.forge` di AC1 (v25, LZO1X_999), 8 bug D3D9 condivisi,
+  insidie del runtime Win32 (QPC a 10 MHz, race multi-CPU), mappa del loro layer Windows.

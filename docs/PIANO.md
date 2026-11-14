@@ -35,11 +35,11 @@ Completata il 2026-11-14 (WSL, 28 core, 31 GB RAM). Dettagli in `ambiente.md`.
 - [x] Java 25 + Ghidra 12.2 in `opt/` (progetto Ghidra in `private/ghidra/`, da creare)
 - [x] Clonare scimitar-recomp ed EaglePatch in `ref/` (ignorata da git)
 
-### 0.3 La specifica: scimitar-recomp ed EaglePatch
+### 0.3 La specifica: scimitar-recomp ed EaglePatch ✅
 
 - [x] Leggere `docs/AC1_WINDOWS.md` e `docs/PLAN.md` → `analisi/scimitar-recomp.md`
-- [ ] Leggere `README`, `PC_DATA.md`, `ACR_WINDOWS.md`, `METAL.md`, `recomp/README.md`,
-  `platform/README.md` e completare le note
+- [x] Leggere `README`, `PC_DATA.md`, `ACR_WINDOWS.md`, `METAL.md` (parti utili),
+  `ANVIL_FAMILY.md` (confronto), `recomp/README.md`, `platform/README.md`
 - [x] Estrarre da EaglePatch gli indirizzi Steam già noti → `analisi/indirizzi-noti.md`
 - [x] Confrontare il layout della loro build con la nostra (entry point, sezioni, TLS, cookie)
 
