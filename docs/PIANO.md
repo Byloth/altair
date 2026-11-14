@@ -113,19 +113,22 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 ### 1.2 Copertura delle istruzioni
 
-- [ ] Prefisso `lock`, `xadd`, `cmpxchg`, `bts`/`btr`/`btc` (4.162 funzioni bloccate)
+- [x] Prefisso `lock`, `xadd`, `cmpxchg`, `bts`/`btr`/`btc`: atomiche vere sulla memoria host
 - [ ] SSE/SSE2 scalare e impacchettato, MXCSR (circa 7.600 funzioni)
 - [ ] x87 a 80 bit con stack, confronti, control word (circa 4.300 funzioni)
-- [ ] `shld`/`shrd`, `rcl`/`rcr`, `rdtsc`, `cpuid`, `pushfd`/`popfd`, `sahf`/`lahf`,
-  `mul`/`div` a 8 e 16 bit
+- [x] `shld`/`shrd`, `rcl`/`rcr`, `rdtsc`, `cpuid`, `pushfd`/`popfd`, `sahf`/`lahf`,
+  `mul`/`div` a 8 e 16 bit, `bsf`/`bsr` (copertura: 89,5% delle funzioni)
+- [ ] Scenari mirati per le istruzioni tradotte ma non ancora verificate (`rcl`, `bt*`,
+  `bsf`/`bsr`, `pushfd`/`popfd`, `sahf`/`lahf`, `cmpsb`, `lodsb`)
 - [ ] MMX (mixer audio di DARE)
 
 ### 1.3 Verifica
 
-- [ ] Scelta automatica delle funzioni foglia per il test differenziale (chiusura traducibile,
-  nessun import, nessuno stato globale) e ingressi generati
+- [x] Scelta automatica delle funzioni per il test differenziale (`acrek candidates`) e
+  ingressi generati (`difftest.py --auto`)
 - [ ] Confronto anche di flag, stato x87 e memoria scritta
-- [ ] Campione ampio: almeno 1.000 funzioni del gioco identiche all'originale
+- [x] Campione ampio: 1.753 funzioni del gioco identiche all'originale, 0 diverse
+- [ ] Ingressi strutturati per le funzioni oggi saltate (più di metà del campione)
 
 ### 1.4 Immagine intera
 
@@ -188,6 +191,6 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 ## Prossimi passi concreti
 
-1. **1.2**: `lock` e atomiche, poi SSE scalare, poi x87, ciascuno con scenari nel test
-   differenziale.
-2. **1.3**: selezione automatica delle funzioni foglia e ingressi generati.
+1. **1.2**: SSE scalare e impacchettato (circa 7.800 funzioni), poi x87 (circa 4.400).
+   Per entrambi il test differenziale deve confrontare anche lo stato in virgola mobile.
+2. Scenari mirati per le istruzioni intere non ancora verificate.

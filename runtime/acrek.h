@@ -51,6 +51,10 @@ _Noreturn void acrek_trap(Ctx *c, const char *msg, u32 addr);
 /* Esegue la funzione guest `addr`. Ritorna 0, oppure 1 se è scattata una trap
  * (motivo in c->trap_msg, indirizzo in c->trap_addr). */
 int acrek_run(Ctx *c, u32 addr);
+/* Contatore di tempo a 1 GHz per `rdtsc`. */
+u64 acrek_rdtsc(Ctx *c);
+/* `cpuid`: una CPU fissa di classe SSE3, uguale su ogni host. */
+void acrek_cpuid(Ctx *c);
 u8 *acrek_mem_create(void);
 void acrek_mem_destroy(u8 *mem);
 
@@ -60,6 +64,15 @@ static inline u32 rd32(Ctx *c, u32 a) { u32 v; memcpy(&v, c->mem + a, 4); return
 static inline void wr8(Ctx *c, u32 a, u8 v) { c->mem[a] = v; }
 static inline void wr16(Ctx *c, u32 a, u16 v) { memcpy(c->mem + a, &v, 2); }
 static inline void wr32(Ctx *c, u32 a, u32 v) { memcpy(c->mem + a, &v, 4); }
+
+/* Puntatore host a un indirizzo guest, per le operazioni atomiche. */
+#define MP(T, a) ((T *)(c->mem + (u32)(a)))
+
+/* Registro EFLAGS ricostruito dalle variabili locali (bit 1 sempre a 1). */
+#define EFLAGS() (cf | 2u | (pf << 2) | (af << 4) | (zf << 6) | (sf << 7) | (c->df << 10) | (of << 11))
+#define SET_EFLAGS(v) \
+    cf = (v) & 1; pf = ((v) >> 2) & 1; af = ((v) >> 4) & 1; zf = ((v) >> 6) & 1; sf = ((v) >> 7) & 1; \
+    c->df = ((v) >> 10) & 1; of = ((v) >> 11) & 1;
 
 /* Flag: variabili locali `cf zf sf of pf af` della funzione generata, sempre 0 o 1. */
 #define F_ZSP(r, bits) \

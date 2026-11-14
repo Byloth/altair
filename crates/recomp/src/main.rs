@@ -316,7 +316,8 @@ fn candidates_cmd(img: &Image, max: usize) {
                 continue;
             }
             match info.get(&t) {
-                Some(i) if !i.opaque => {
+                // `rdtsc` e `cpuid` danno risultati diversi dall'emulatore: non confrontabili.
+                Some(i) if !i.opaque && !i.mnemonics.contains(&Mnemonic::Rdtsc) && !i.mnemonics.contains(&Mnemonic::Cpuid) => {
                     total += i.insns;
                     mn.extend(i.mnemonics.iter().copied());
                     pending.extend(i.calls.iter().copied());

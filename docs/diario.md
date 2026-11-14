@@ -56,3 +56,11 @@
 - `tools/difftest.py`: `strlen`, `strcmp`, `memcpy` tradotte identiche all'originale in Unicorn
   (1.717 chiamate). Il test ha trovato tre forme di jump table di `memcpy` non riconosciute,
   ora gestite → `analisi/traduttore.md`.
+- `acrek candidates` + `difftest.py --auto`: test differenziale su funzioni scelte dal
+  ricompilatore, con ingressi generati. Le prime 6 differenze erano memoria residua tra i
+  casi, non bug: ora ogni caso riparte da heap (1 MB), stack e dati globali ripristinati.
+- Aggiunte atomiche (`lock`, `xchg` con memoria), `xadd`, `cmpxchg`, `shld`/`shrd`,
+  `rcl`/`rcr`, `bts`/`btr`/`btc`, `bsf`/`bsr`, `pushfd`/`popfd`, `sahf`/`lahf`, `mul`/`div` a
+  8 e 16 bit, `rdtsc`, `cpuid`. Copertura: 89,5% delle funzioni, 65,1% delle istruzioni.
+- Campione di 4.000 funzioni: **1.753 identiche all'originale, 0 diverse**, 2.247 saltate.
+  Restano solo SSE e x87 → `analisi/traduttore.md`.

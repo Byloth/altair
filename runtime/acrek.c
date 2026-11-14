@@ -3,6 +3,7 @@
 
 #include <setjmp.h>
 #include <sys/mman.h>
+#include <time.h>
 
 #define GUEST_SPACE (1ull << 32)
 
@@ -52,4 +53,27 @@ u8 *acrek_mem_create(void) {
 void acrek_mem_destroy(u8 *mem) {
     if (mem)
         munmap(mem, GUEST_SPACE);
+}
+
+u64 acrek_rdtsc(Ctx *c) {
+    (void)c;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (u64)ts.tv_sec * 1000000000ull + (u64)ts.tv_nsec;
+}
+
+void acrek_cpuid(Ctx *c) {
+    u32 leaf = c->eax;
+    c->eax = c->ebx = c->ecx = c->edx = 0;
+    if (leaf == 0) {
+        c->eax = 1; /* foglia massima */
+        c->ebx = 0x756e6547; /* "GenuineIntel" */
+        c->edx = 0x49656e69;
+        c->ecx = 0x6c65746e;
+    } else if (leaf == 1) {
+        c->eax = 0x000006f6; /* famiglia 6: Core 2 */
+        /* FPU, TSC, CX8, CMOV, MMX, FXSR, SSE, SSE2 */
+        c->edx = (1u << 0) | (1u << 4) | (1u << 8) | (1u << 15) | (1u << 23) | (1u << 24) | (1u << 25) | (1u << 26);
+        c->ecx = 1u << 0; /* SSE3 */
+    }
 }

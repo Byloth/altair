@@ -196,6 +196,15 @@ fn reg32(r: Register) -> R<&'static str> {
     })
 }
 
+/// L'accumulatore della larghezza data: al, ax, eax.
+fn acc_reg(bits: u32) -> Register {
+    match bits {
+        8 => Register::AL,
+        16 => Register::AX,
+        _ => Register::EAX,
+    }
+}
+
 fn is_high(r: Register) -> bool {
     matches!(r, Register::AH | Register::CH | Register::DH | Register::BH)
 }
@@ -366,8 +375,10 @@ impl Emitter<'_> {
         let m = ins.mnemonic();
         let addr = ins.ip() as u32;
         let next = ins.next_ip() as u32;
-        if ins.has_lock_prefix() {
-            return Err("prefisso lock".into());
+        let has_mem = (0..ins.op_count()).any(|k| ins.op_kind(k) == OpKind::Memory);
+        if ins.has_lock_prefix() || (m == Xchg && has_mem) {
+            // `xchg` con un operando in memoria è atomico anche senza prefisso.
+            return self.atomic(ins);
         }
         // Operazioni binarie con flag: (corpo che calcola r da a e b, scrive il risultato?)
         let binary = |calc: &str, store: bool| -> R<String> {
@@ -463,7 +474,7 @@ impl Emitter<'_> {
         }
 
         match m {
-            Nop => Ok(String::new()),
+            Nop | Pause | Wait | Prefetchnta | Prefetcht0 | Prefetcht1 | Prefetcht2 => Ok(String::new()),
             Mov => {
                 let n = bits(ins, 0)?;
                 write(ins, 0, n, &read(ins, 1, n)?)
@@ -521,7 +532,7 @@ impl Emitter<'_> {
                 "r = (u(BITS))(0 - a); cf = a != 0; of = ((a & r) >> MSB) & 1; af = ((a ^ r) >> 4) & 1; F_ZSP(r, BITS)",
             ),
             Not => unary("r = (u(BITS))~a;"),
-            Shl => shift(
+            Shl | Sal => shift(
                 "u64 w = (u64)a << n; r = (u(BITS))w; cf = (u32)(w >> BITS) & 1; of = ((r >> MSB) & 1) ^ cf; F_ZSP(r, BITS)",
             ),
             Shr => shift(
@@ -538,16 +549,7 @@ impl Emitter<'_> {
                  of = cf ^ ((r >> (MSB - 1)) & 1);",
             ),
             Imul => match ins.op_count() {
-                1 => {
-                    if bits(ins, 0)? != 32 {
-                        return Err("imul a 8/16 bit".into());
-                    }
-                    Ok(format!(
-                        "{{ s64 w = (s64)(s32)c->eax * (s64)(s32){}; c->eax = (u32)w; c->edx = (u32)(w >> 32); \
-                         cf = of = (w != (s64)(s32)c->eax); }}",
-                        read(ins, 0, 32)?
-                    ))
-                }
+                1 => self.muldiv(ins),
                 k => {
                     let n = bits(ins, 0)?;
                     let (a, b) = (read(ins, k - 2, n)?, read(ins, k - 1, n)?);
@@ -558,38 +560,91 @@ impl Emitter<'_> {
                     ))
                 }
             },
-            Mul => {
-                if bits(ins, 0)? != 32 {
-                    return Err("mul a 8/16 bit".into());
-                }
+            Mul | Div | Idiv => self.muldiv(ins),
+            Xadd => {
+                let n = bits(ins, 0)?;
                 Ok(format!(
-                    "{{ u64 w = (u64)c->eax * {}; c->eax = (u32)w; c->edx = (u32)(w >> 32); cf = of = (c->edx != 0); }}",
-                    read(ins, 0, 32)?
+                    "{{ u{n} a = {}, b = {}, r = (u{n})(a + b); F_ADD(a, b, r, {n}) {} {} }}",
+                    read(ins, 0, n)?,
+                    read(ins, 1, n)?,
+                    write(ins, 1, n, "a")?,
+                    write(ins, 0, n, "r")?
                 ))
             }
-            Div => {
-                if bits(ins, 0)? != 32 {
-                    return Err("div a 8/16 bit".into());
-                }
+            Cmpxchg => {
+                let n = bits(ins, 0)?;
+                let acc = acc_reg(n);
                 Ok(format!(
-                    "{{ u64 n = ((u64)c->edx << 32) | c->eax; u32 d = {}; \
-                     if (d == 0 || n / d > 0xffffffffu) acrek_trap(c, \"div\", {addr:#x}u); \
-                     c->eax = (u32)(n / d); c->edx = (u32)(n % d); }}",
-                    read(ins, 0, 32)?
+                    "{{ u{n} a = {}, b = {}, r = (u{n})(a - b); F_SUB(a, b, r, {n}) if (zf) {{ {} }} else {{ {} }} }}",
+                    rd_reg(acc)?,
+                    read(ins, 0, n)?,
+                    write(ins, 0, n, &read(ins, 1, n)?)?,
+                    wr_reg(acc, "b")?
                 ))
             }
-            Idiv => {
+            Shld | Shrd => {
                 if bits(ins, 0)? != 32 {
-                    return Err("idiv a 8/16 bit".into());
+                    return Err("shld/shrd a 16 bit".into());
                 }
+                let calc = if m == Shld {
+                    "r = (a << n) | (b >> (32 - n)); cf = (a >> (32 - n)) & 1;"
+                } else {
+                    "r = (a >> n) | (b << (32 - n)); cf = (a >> (n - 1)) & 1;"
+                };
                 Ok(format!(
-                    "{{ s64 n = (s64)(((u64)c->edx << 32) | c->eax); s32 d = (s32){}; \
-                     if (d == 0 || (n == INT64_MIN && d == -1)) acrek_trap(c, \"idiv\", {addr:#x}u); \
-                     s64 q = n / d; if (q != (s64)(s32)q) acrek_trap(c, \"idiv\", {addr:#x}u); \
-                     c->eax = (u32)q; c->edx = (u32)(n % d); }}",
-                    read(ins, 0, 32)?
+                    "{{ u32 a = {}, b = {}, r; u32 n = {} & 31; if (n) {{ {calc} of = ((a ^ r) >> 31) & 1; F_ZSP(r, 32) {} }} }}",
+                    read(ins, 0, 32)?,
+                    read(ins, 1, 32)?,
+                    read(ins, 2, 8)?,
+                    write(ins, 0, 32, "r")?
                 ))
             }
+            Rcl | Rcr => {
+                // Rotazione attraverso il carry: su bits + 1 bit.
+                let n = bits(ins, 0)?;
+                let calc = if m == Rcl {
+                    format!("w = ((w << k) | (w >> ({n} + 1 - k))) & mask; r = (u{n})w; cf = (u32)(w >> {n}) & 1; of = ((r >> {}) & 1) ^ cf;", n - 1)
+                } else {
+                    format!("w = ((w >> k) | (w << ({n} + 1 - k))) & mask; r = (u{n})w; cf = (u32)(w >> {n}) & 1; of = ((r >> {}) ^ (r >> {})) & 1;", n - 1, n - 2)
+                };
+                Ok(format!(
+                    "{{ u{n} a = {}, r; u32 k = ({} & 31) % ({n} + 1); if (k) {{ u64 mask = (1ull << ({n} + 1)) - 1, w = ((u64)cf << {n}) | a; {calc} {} }} }}",
+                    read(ins, 0, n)?,
+                    read(ins, 1, 8)?,
+                    write(ins, 0, n, "r")?
+                ))
+            }
+            Bts | Btr | Btc => {
+                if ins.op0_kind() == OpKind::Memory && ins.op1_kind() == OpKind::Register {
+                    return Err("bt su stringa di bit".into());
+                }
+                let n = bits(ins, 0)?;
+                let op = match m {
+                    Bts => "a | bit",
+                    Btr => "a & ~bit",
+                    _ => "a ^ bit",
+                };
+                Ok(format!(
+                    "{{ u{n} a = {}, bit = (u{n})(1u << ({} & {})); cf = (a & bit) != 0; {} }}",
+                    read(ins, 0, n)?,
+                    read(ins, 1, 8)?,
+                    n - 1,
+                    write(ins, 0, n, &format!("(u{n})({op})"))?
+                ))
+            }
+            Bsf | Bsr => {
+                if bits(ins, 0)? != 32 {
+                    return Err("bsf/bsr a 16 bit".into());
+                }
+                let f = if m == Bsf { "(u32)__builtin_ctz(a)" } else { "31u - (u32)__builtin_clz(a)" };
+                Ok(format!("{{ u32 a = {}; zf = a == 0; if (a) {{ {} }} }}", read(ins, 1, 32)?, write(ins, 0, 32, f)?))
+            }
+            Pushfd => Ok("{ u32 v = EFLAGS(); c->esp -= 4; wr32(c, c->esp, v); }".into()),
+            Popfd => Ok("{ u32 v = rd32(c, c->esp); c->esp += 4; SET_EFLAGS(v) }".into()),
+            Lahf => Ok("c->eax = (c->eax & 0xffff00ffu) | ((EFLAGS() & 0xff) << 8);".into()),
+            Sahf => Ok("{ u32 v = (EFLAGS() & ~0xffu) | ((c->eax >> 8) & 0xff); SET_EFLAGS(v) }".into()),
+            Rdtsc => Ok("{ u64 t = acrek_rdtsc(c); c->eax = (u32)t; c->edx = (u32)(t >> 32); }".into()),
+            Cpuid => Ok("acrek_cpuid(c);".into()),
             Xchg => {
                 let n = bits(ins, 0)?;
                 Ok(format!(
@@ -622,6 +677,123 @@ impl Emitter<'_> {
             Cmc => Ok("cf = !cf;".into()),
             other => Err(format!("{other:?}")),
         }
+    }
+
+    /// `mul`, `imul`, `div`, `idiv` a un operando: accumulatore implicito, 8, 16 o 32 bit.
+    fn muldiv(&self, ins: &Instruction) -> R<String> {
+        use Mnemonic::*;
+        let n = bits(ins, 0)?;
+        let v = read(ins, 0, n)?;
+        let addr = ins.ip() as u32;
+        // (parte bassa, parte alta) dell'accumulatore doppio: ah:al, dx:ax, edx:eax.
+        let (lo, hi) = match n {
+            8 => (Register::AL, Register::AH),
+            16 => (Register::AX, Register::DX),
+            _ => (Register::EAX, Register::EDX),
+        };
+        let wide = format!("(((u64){} << {n}) | {})", rd_reg(hi)?, rd_reg(lo)?);
+        let store = |q: &str, r: &str| -> R<String> { Ok(format!("{} {}", wr_reg(lo, q)?, wr_reg(hi, r)?)) };
+        Ok(match ins.mnemonic() {
+            Mul => format!(
+                "{{ u64 w = (u64){} * {v}; {} cf = of = ((w >> {n}) != 0); }}",
+                rd_reg(lo)?,
+                store("(u32)w", &format!("(u32)(w >> {n})"))?
+            ),
+            Imul => format!(
+                "{{ s64 w = (s64)(s{n}){} * (s64)(s{n}){v}; {} cf = of = (w != (s64)(s{n})w); }}",
+                rd_reg(lo)?,
+                store("(u32)w", &format!("(u32)((u64)w >> {n})"))?
+            ),
+            Div => format!(
+                "{{ u64 n = {wide}; u64 d = {v}; if (d == 0 || (n / d) >> {n}) acrek_trap(c, \"div\", {addr:#x}u); \
+                 u64 q = n / d, r = n % d; {} }}",
+                store("(u32)q", "(u32)r")?
+            ),
+            Idiv => {
+                let sx = 64 - 2 * n; // estende il segno del dividendo a 2n bit (per 32 bit non serve)
+                format!(
+                    "{{ s64 n = (s64)({wide} << {sx}) >> {sx}; s64 d = (s{n}){v}; \
+                     if (d == 0 || (n == INT64_MIN && d == -1)) acrek_trap(c, \"idiv\", {addr:#x}u); \
+                     s64 q = n / d, r = n % d; if (q != (s64)(s{n})q) acrek_trap(c, \"idiv\", {addr:#x}u); {} }}",
+                    store("(u32)q", "(u32)r")?
+                )
+            }
+            other => return Err(format!("{other:?}")),
+        })
+    }
+
+    /// Istruzioni con prefisso `lock` (e `xchg` con memoria): atomiche vere sulla memoria host.
+    fn atomic(&self, ins: &Instruction) -> R<String> {
+        use Mnemonic::*;
+        let m = ins.mnemonic();
+        let mem = (0..ins.op_count()).find(|&k| ins.op_kind(k) == OpKind::Memory).ok_or("lock senza operando in memoria")?;
+        let n = bits(ins, mem)?;
+        let p = format!("MP(u{n}, {})", ea(ins)?);
+        const SEQ: &str = "__ATOMIC_SEQ_CST";
+        let msb = n - 1;
+        Ok(match m {
+            Add | Sub | And | Or | Xor => {
+                let (f, calc) = match m {
+                    Add => ("add", format!("r = (u{n})(a + b); F_ADD(a, b, r, {n})")),
+                    Sub => ("sub", format!("r = (u{n})(a - b); F_SUB(a, b, r, {n})")),
+                    And => ("and", format!("r = a & b; F_LOGIC(r, {n})")),
+                    Or => ("or", format!("r = a | b; F_LOGIC(r, {n})")),
+                    _ => ("xor", format!("r = a ^ b; F_LOGIC(r, {n})")),
+                };
+                format!("{{ u{n} b = {}, a = __atomic_fetch_{f}({p}, b, {SEQ}), r; {calc} }}", read(ins, 1, n)?)
+            }
+            Inc => format!(
+                "{{ u{n} a = __atomic_fetch_add({p}, 1, {SEQ}), r = (u{n})(a + 1); of = ((~a & r) >> {msb}) & 1; \
+                 af = ((a ^ r) >> 4) & 1; F_ZSP(r, {n}) }}"
+            ),
+            Dec => format!(
+                "{{ u{n} a = __atomic_fetch_sub({p}, 1, {SEQ}), r = (u{n})(a - 1); of = ((a & ~r) >> {msb}) & 1; \
+                 af = ((a ^ r) >> 4) & 1; F_ZSP(r, {n}) }}"
+            ),
+            Not => format!("__atomic_fetch_xor({p}, (u{n})~0u, {SEQ});"),
+            Xadd => format!(
+                "{{ u{n} b = {}, a = __atomic_fetch_add({p}, b, {SEQ}), r = (u{n})(a + b); F_ADD(a, b, r, {n}) {} }}",
+                read(ins, 1, n)?,
+                write(ins, 1, n, "a")?
+            ),
+            Cmpxchg => {
+                let acc = acc_reg(n);
+                format!(
+                    "{{ u{n} a = {}, b = a, r; __atomic_compare_exchange_n({p}, &b, {}, 0, {SEQ}, {SEQ}); \
+                     r = (u{n})(a - b); F_SUB(a, b, r, {n}) if (!zf) {{ {} }} }}",
+                    rd_reg(acc)?,
+                    read(ins, 1, n)?,
+                    wr_reg(acc, "b")?
+                )
+            }
+            Xchg => {
+                let reg = 1 - mem;
+                format!(
+                    "{{ u{n} v = __atomic_exchange_n({p}, {}, {SEQ}); {} }}",
+                    read(ins, reg, n)?,
+                    write(ins, reg, n, "v")?
+                )
+            }
+            Bts | Btr | Btc => {
+                if ins.op1_kind() == OpKind::Register {
+                    return Err("lock bt su stringa di bit".into());
+                }
+                let f = match m {
+                    Bts => "__atomic_fetch_or(P, bit, S)",
+                    Btr => "__atomic_fetch_and(P, (T)~bit, S)",
+                    _ => "__atomic_fetch_xor(P, bit, S)",
+                }
+                .replace('P', &p)
+                .replace('S', SEQ)
+                .replace('T', &format!("u{n}"));
+                format!(
+                    "{{ u{n} bit = (u{n})(1u << ({} & {})); u{n} a = {f}; cf = (a & bit) != 0; }}",
+                    read(ins, 1, 8)?,
+                    n - 1
+                )
+            }
+            other => return Err(format!("lock {other:?}")),
+        })
     }
 
     fn string(&self, ins: &Instruction) -> R<String> {

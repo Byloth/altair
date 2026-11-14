@@ -309,6 +309,35 @@ FIELDS = ('registri (eax ecx edx ebx ebp esi edi)', 'byte tolti dallo stack', 'i
           'dati globali')
 
 
+def instruction_report(gen, ok_roots):
+    """Quali tipi di istruzione compaiono nelle funzioni risultate identiche (con le funzioni
+    che chiamano). Comparire non garantisce che il caso di prova sia passato di lì."""
+    import collections
+    import re
+    src = open(gen).read()
+    funcs = {int(m.group(1), 16): m.group(2)
+             for m in re.finditer(r'^void f_([0-9a-f]{8})\(Ctx \*c\) \{\n(.*?)^\}', src, re.S | re.M)}
+    done, stack = set(), list(ok_roots)
+    while stack:
+        a = stack.pop()
+        if a in done or a not in funcs:
+            continue
+        done.add(a)
+        stack.extend(int(x, 16) for x in re.findall(r'f_([0-9a-f]{8})\(c\);', funcs[a]))
+    pat = re.compile(r'/\* [0-9a-f]{8}  ((?:lock |rep |repe |repne )?)(\w+)')
+    verified, present = collections.Counter(), set()
+    for a, text in funcs.items():
+        for prefix, mn in pat.findall(text):
+            key = 'lock' if prefix == 'lock ' else mn
+            present.add(key)
+            present.add(mn)
+            if a in done:
+                verified[key] += 1
+                if prefix == 'lock ':
+                    verified[mn] += 1
+    return len(done), verified, sorted(present - set(verified))
+
+
 def run_auto(exe, count, cases):
     import signal
     out = subprocess.run([ACREK, 'candidates', exe, '--max', str(count)], check=True, capture_output=True, text=True)
@@ -361,6 +390,14 @@ def run_auto(exe, count, cases):
     with open(os.path.join(ROOT, 'build', 'difftest-auto.txt'), 'w') as f:
         f.write('\n'.join(report) + '\n')
     print(f'{len(roots)} funzioni: {len(same)} identiche, {len(differ)} diverse, {len(never)} saltate')
+    ndone, verified, missing = instruction_report(os.path.join(ROOT, 'build', 'gen', 'difftest-auto.c'), same)
+    print(f'funzioni eseguite in casi identici, comprese quelle chiamate: {ndone}; '
+          f'{sum(verified.values())} istruzioni di {len(verified)} tipi')
+    if missing:
+        print('tipi tradotti ma assenti dalle funzioni verificate:', ' '.join(missing))
+    with open(os.path.join(ROOT, 'build', 'difftest-auto.txt'), 'a') as f:
+        f.write('\nistruzioni nelle funzioni verificate:\n')
+        f.write(''.join(f'{n:7} {m}\n' for m, n in verified.most_common()))
     for line in [x for x in report if x.startswith('DIVERSO')][:25]:
         print(' ', line[:200])
     return 1 if differ else 0
