@@ -28,6 +28,17 @@ pub struct Func {
     pub calls: BTreeSet<u32>,
 }
 
+impl Func {
+    /// Contiene chiamate o salti indiretti la cui destinazione non è nota staticamente.
+    pub fn has_opaque_indirect(&self) -> bool {
+        self.insns.values().any(|i| match i.flow_control() {
+            FlowControl::IndirectCall => true,
+            FlowControl::IndirectBranch => !self.tables.contains_key(&(i.ip() as u32)),
+            _ => false,
+        })
+    }
+}
+
 type R<T> = Result<T, String>;
 
 /// Decodifica il corpo di una funzione seguendo il flusso di controllo da `start`.

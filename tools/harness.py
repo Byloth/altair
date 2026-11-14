@@ -15,7 +15,7 @@ Uso da Python:
 
 Memoria guest:
     0x00400000  immagine PE (sezioni ai loro indirizzi; nessuna rilocazione)
-    0x10000000  heap di prova per gli argomenti (16 MB)
+    0x10000000  heap di prova per gli argomenti (1 MB)
     0x6FF00000  stack (1 MB), cresce verso il basso
     0x7FFD0000  TEB (fs:[0] = fine catena SEH, fs:[0x18] = self, fs:[0x2C] = array TLS)
     0x7F000000  trampolini degli import (16 byte ciascuno)
@@ -36,13 +36,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from imports import iat_entries  # noqa: E402
 from pe import PE  # noqa: E402
 
-HEAP, HEAP_SIZE = 0x10000000, 0x1000000
+HEAP, HEAP_SIZE = 0x10000000, 0x100000
 STACK_TOP, STACK_SIZE = 0x70000000, 0x100000
 TEB = 0x7FFD0000
 TRAMP = 0x7F000000
 SENTINEL = 0x7FFF0000
 GDT = 0x7FFE0000
 PAGE = 0x1000
+STACK_CLEAR = 0x10000      # parte alta dello stack azzerata da reset()
+HEAP_CLEAR = HEAP_SIZE     # reset() azzera tutto lo heap di prova, anche la parte non allocata
 
 
 class GuestError(Exception):
@@ -54,12 +56,13 @@ class Result:
         self.__dict__.update(kw)
 
     def __repr__(self):
-        return (f'eax={self.eax:#010x} edx={self.edx:#010x} istruzioni={self.insns} '
-                f'import={[n for n, _ in self.imports]}')
+        return (f'eax={self.eax:#010x} edx={self.edx:#010x} tolti={self.popped} '
+                f'import={[n for n, _ in self.imports]}'
+                + (f' istruzioni={self.insns}' if self.insns is not None else ''))
 
 
 class Guest:
-    def __init__(self, exe):
+    def __init__(self, exe, trace=False):
         self.pe = pe = PE(exe)
         self.uc = uc = Uc(UC_ARCH_X86, UC_MODE_32)
         base = pe.image_base
@@ -67,7 +70,6 @@ class Guest:
         uc.mem_map(base, (end + PAGE - 1) & ~(PAGE - 1))
         for _, va, vs, raw, rs in pe.sections:
             uc.mem_write(base + va, pe.data[raw:raw + min(rs, max(vs, rs))])
-        self._image = uc.mem_read(base, end)       # per ripristinare tra una chiamata e l'altra
 
         uc.mem_map(HEAP, HEAP_SIZE)
         uc.mem_map(STACK_TOP - STACK_SIZE, STACK_SIZE)
@@ -98,12 +100,23 @@ class Guest:
             uc.mem_write(slot, struct.pack('<I', t))
         self._iat = {slot: TRAMP + 16 * i for i, (_, _, slot) in enumerate(iat_entries(pe))}
 
-        self.trace = False
         self._log = []
         self._insns = 0
-        uc.hook_add(UC_HOOK_CODE, self._on_code)
+        # L'hook costa una chiamata Python per istruzione: di norma copre solo i trampolini
+        # degli import. Con trace=True copre tutto, e conta le istruzioni.
+        self.trace = trace
+        if trace:
+            uc.hook_add(UC_HOOK_CODE, self._on_code)
+        else:
+            uc.hook_add(UC_HOOK_CODE, self._on_code, begin=TRAMP, end=TRAMP + 0x10000)
         uc.hook_add(UC_HOOK_MEM_UNMAPPED, self._on_unmapped)
         self._fault = None
+        # Sezioni che il codice può scrivere: si ripristinano tra un caso e l'altro.
+        self._writable = []
+        for name, va, vs, raw, rs in pe.sections:
+            if name not in ('.text', '.rdata', '.rsrc'):
+                size = max(vs, rs)
+                self._writable.append((base + va, pe.data[raw:raw + min(rs, size)].ljust(size, b'\0')))
 
     # --- memoria ---------------------------------------------------------
     def alloc(self, size, align=16):
@@ -131,21 +144,21 @@ class Guest:
         return struct.unpack('<I', self.read(addr, 4))[0]
 
     def reset(self):
-        """Riporta immagine, heap di prova e TEB allo stato iniziale."""
-        self.uc.mem_write(self.pe.image_base, bytes(self._image))
+        """Riporta sezioni scrivibili, heap di prova e stack allo stato iniziale."""
+        for va, data in self._writable:
+            self.uc.mem_write(va, data)
+        self.uc.mem_write(STACK_TOP - STACK_CLEAR, bytes(STACK_CLEAR))
         for slot, t in self._iat.items():
             self.uc.mem_write(slot, struct.pack('<I', t))
-        self.uc.mem_write(HEAP, bytes(self.heap_top - HEAP))
+        self.uc.mem_write(HEAP, bytes(max(self.heap_top - HEAP, HEAP_CLEAR)))
         self.heap_top = HEAP
 
     # --- hook ------------------------------------------------------------
     def _on_code(self, uc, addr, size, _):
         self._insns += 1
-        if self.trace:
+        if self.trace and addr < TRAMP:
             print(f'  {addr:#010x}', file=sys.stderr)
-        if addr == SENTINEL:
-            uc.emu_stop()
-        elif addr in self.imports:
+        if addr in self.imports:
             dll, fn = self.imports[addr]
             esp = uc.reg_read(UC_X86_REG_ESP)
             ret = self.u32(esp)
@@ -167,6 +180,10 @@ class Guest:
         return False
 
     # --- chiamata --------------------------------------------------------
+    def image_state(self):
+        """Contenuto attuale delle sezioni scrivibili (per i confronti)."""
+        return b''.join(self.read(va, len(data)) for va, data in self._writable)
+
     def call(self, addr, args=(), ecx=0, edx=0, max_insns=5_000_000):
         """Chiama `addr` con gli argomenti sullo stack (cdecl/stdcall/thiscall con ecx)."""
         uc = self.uc
@@ -189,17 +206,19 @@ class Guest:
             uc.reg_write(reg, v & 0xFFFFFFFF)
         self._log, self._insns, self._fault = [], 0, None
         try:
-            uc.emu_start(addr, SENTINEL + 1, count=max_insns)
+            uc.emu_start(addr, SENTINEL, count=max_insns)
         except UcError as e:
             raise GuestError(self._fault or f'{e} a eip={uc.reg_read(UC_X86_REG_EIP):#010x}')
         if self._fault:
             raise GuestError(self._fault)
         if uc.reg_read(UC_X86_REG_EIP) != SENTINEL:
             raise GuestError(f'limite di {max_insns} istruzioni raggiunto')
-        return Result(eax=uc.reg_read(UC_X86_REG_EAX), edx=uc.reg_read(UC_X86_REG_EDX),
-                      ecx=uc.reg_read(UC_X86_REG_ECX), st0=uc.reg_read(UC_X86_REG_ST0),
-                      popped=uc.reg_read(UC_X86_REG_ESP) - esp0 - 4,   # byte tolti dal chiamato
-                      insns=self._insns - 1, imports=list(self._log))
+        regs = tuple(uc.reg_read(r) for r in (UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EDX, UC_X86_REG_EBX,
+                                              UC_X86_REG_EBP, UC_X86_REG_ESI, UC_X86_REG_EDI))
+        return Result(eax=regs[0], ecx=regs[1], edx=regs[2], regs=regs,
+                      st0=uc.reg_read(UC_X86_REG_ST0),
+                      popped=(uc.reg_read(UC_X86_REG_ESP) - esp0 - 4) & 0xFFFFFFFF,   # byte tolti dal chiamato
+                      insns=self._insns if self.trace else None, imports=list(self._log))
 
 
 def _selftest(exe):
@@ -277,9 +296,8 @@ def main(argv):
     if cmd == 'selftest':
         sys.exit(_selftest(exe))
     if cmd == 'call':
-        g = Guest(exe)
         rest = argv[3:]
-        g.trace = '--trace' in rest
+        g = Guest(exe, trace='--trace' in rest)
         ecx = 0
         if '--ecx' in rest:
             ecx = int(rest[rest.index('--ecx') + 1], 0)

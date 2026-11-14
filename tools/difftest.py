@@ -2,7 +2,10 @@
 """Test differenziale: il codice tradotto da `acrek` contro l'originale eseguito in Unicorn.
 
 Uso (dalla radice del progetto, con il Python del venv):
-    .venv/bin/python tools/difftest.py <AssassinsCreed_Dx9.exe> [--keep]
+    .venv/bin/python tools/difftest.py <AssassinsCreed_Dx9.exe>                 scenari scritti a mano
+    .venv/bin/python tools/difftest.py <AssassinsCreed_Dx9.exe> --auto N [--cases K]
+        N funzioni scelte da `acrek candidates`, K casi ciascuna (8) con ingressi generati;
+        il dettaglio va in build/difftest-auto.txt
 
 Passi:
   1. `acrek translate` traduce in C le funzioni degli scenari (build/gen/difftest.c);
@@ -25,7 +28,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import harness  # noqa: E402
-from harness import GDT, HEAP, HEAP_SIZE, PAGE, SENTINEL, STACK_SIZE, STACK_TOP, TEB, TRAMP  # noqa: E402,F401
+from harness import (HEAP, HEAP_CLEAR, HEAP_SIZE, PAGE, SENTINEL, STACK_CLEAR, STACK_SIZE, STACK_TOP, TEB,  # noqa: E402
+                     TRAMP)
 from imports import iat_entries  # noqa: E402
 from pe import PE  # noqa: E402
 
@@ -54,7 +58,13 @@ class Native:
         self.mem = lib.acrek_mem_create()
         if not self.mem:
             raise harness.GuestError('impossibile riservare la memoria guest')
-        self._sections = [(pe.image_base + va, pe.data[raw:raw + rs]) for _, va, vs, raw, rs in pe.sections]
+        self._writable = []
+        for name, va, vs, raw, rs in pe.sections:
+            size = max(vs, rs)
+            data = pe.data[raw:raw + min(rs, size)].ljust(size, b'\0')
+            self.write(pe.image_base + va, data)
+            if name not in ('.text', '.rdata', '.rsrc'):
+                self._writable.append((pe.image_base + va, data))
         self.imports, self._iat = {}, {}
         for i, (dll, fn, slot) in enumerate(iat_entries(pe)):
             self.imports[TRAMP + 16 * i] = (dll, fn)
@@ -91,12 +101,16 @@ class Native:
     def alloc_str(self, s):
         return self.alloc_bytes(bytes(s) + b'\0')
 
+    def image_state(self):
+        return b''.join(self.read(va, len(data)) for va, data in self._writable)
+
     def reset(self):
-        for va, data in self._sections:
+        for va, data in self._writable:
             self.write(va, data)
+        self.write(STACK_TOP - STACK_CLEAR, bytes(STACK_CLEAR))
         for slot, t in self._iat.items():
             self.write(slot, struct.pack('<I', t))
-        self.write(HEAP, bytes(self.heap_top - HEAP))
+        self.write(HEAP, bytes(max(self.heap_top - HEAP, HEAP_CLEAR)))
         self.heap_top = HEAP
 
     def _host_call(self, cp, addr):
@@ -134,8 +148,9 @@ class Native:
         self._log, self._fault = [], None
         if self.lib.acrek_run(ctypes.byref(c), addr):
             raise harness.GuestError(self._fault or f'trap: {c.trap_msg.decode()} ({c.trap_addr:#010x})')
-        return harness.Result(eax=c.eax, edx=c.edx, ecx=c.ecx, st0=None, popped=c.esp - esp0 - 4,
-                              insns=None, imports=list(self._log))
+        regs = (c.eax, c.ecx, c.edx, c.ebx, c.ebp, c.esi, c.edi)
+        return harness.Result(eax=c.eax, edx=c.edx, ecx=c.ecx, regs=regs, st0=None,
+                              popped=(c.esp - esp0 - 4) & 0xFFFFFFFF, insns=None, imports=list(self._log))
 
 
 class Recorder:
@@ -151,7 +166,7 @@ class Recorder:
     def call(self, addr, args=(), ecx=0, edx=0):
         try:
             r = self.e.call(addr, args, ecx=ecx, edx=edx)
-            self.log.append((addr, tuple(args), r.eax, r.ecx, r.edx, r.popped, tuple(r.imports)))
+            self.log.append((addr, tuple(args), r.regs, r.popped, tuple(r.imports)))
             return r
         except harness.GuestError as err:
             self.log.append((addr, tuple(args), 'errore', str(err)))
@@ -159,8 +174,9 @@ class Recorder:
 
     def snapshot(self):
         heap = self.e.read(HEAP, self.e.heap_top - HEAP)
-        stack = self.e.read(STACK_TOP - 0x3000, 0x3000)
-        return hashlib.sha1(heap).hexdigest(), hashlib.sha1(stack).hexdigest()
+        stack = self.e.read(STACK_TOP - STACK_CLEAR, STACK_CLEAR)
+        return (hashlib.sha1(heap).hexdigest(), hashlib.sha1(stack).hexdigest(),
+                hashlib.sha1(self.e.image_state()).hexdigest())
 
 
 # --- scenari ---------------------------------------------------------------------------------
@@ -211,16 +227,23 @@ def sc_memcpy(g, rng):
 SCENARIOS = [('strlen', sc_strlen, [STRLEN]), ('strcmp', sc_strcmp, [STRCMP]), ('memcpy', sc_memcpy, [MEMCPY])]
 
 
-def build(exe):
-    acrek = os.path.join(ROOT, 'target', 'release', 'acrek')
-    gen = os.path.join(ROOT, 'build', 'gen', 'difftest.c')
-    lib = os.path.join(ROOT, 'build', 'difftest.so')
+ACREK = os.path.join(ROOT, 'target', 'release', 'acrek')
+
+
+def build(exe, roots=None, name='difftest', opt='-O2'):
+    gen = os.path.join(ROOT, 'build', 'gen', name + '.c')
+    lib = os.path.join(ROOT, 'build', name + '.so')
     os.makedirs(os.path.dirname(gen), exist_ok=True)
-    roots = sorted({a for _, _, addrs in SCENARIOS for a in addrs})
-    subprocess.run([acrek, 'translate', exe, '--out', gen] + [f'{a:#x}' for a in roots], check=True)
+    if roots is None:
+        roots = sorted({a for _, _, addrs in SCENARIOS for a in addrs})
+    roots_file = os.path.join(ROOT, 'build', name + '.roots')
+    with open(roots_file, 'w') as f:
+        f.write(''.join(f'{a:#x}\n' for a in roots))
+    subprocess.run([ACREK, 'translate', exe, '--out', gen, '--roots', roots_file], check=True,
+                   stderr=subprocess.DEVNULL if name != 'difftest' else None)
     rt = os.path.join(ROOT, 'runtime')
-    subprocess.run(['clang', '-O2', '-g', '-Wall', '-Wno-unused-variable', '-Wno-unused-but-set-variable',
-                    '-Wno-unused-label', '-fwrapv', '-shared', '-fPIC', '-I', rt, gen,
+    subprocess.run(['clang', opt, '-g', '-Wall', '-Wno-unused-variable', '-Wno-unused-but-set-variable',
+                    '-Wno-unused-label', '-Wno-parentheses-equality', '-fwrapv', '-shared', '-fPIC', '-I', rt, gen,
                     os.path.join(rt, 'acrek.c'), '-o', lib], check=True)
     return lib
 
@@ -242,7 +265,7 @@ def run(exe):
         (la, sa), (lb, sb) = logs
         diff = next((i for i, (x, y) in enumerate(zip(la, lb)) if x != y), None)
         if diff is None and len(la) == len(lb) and sa == sb:
-            print(f'ok       {name}: {len(la)} chiamate identiche, heap e stack identici')
+            print(f'ok       {name}: {len(la)} chiamate identiche; heap, stack e dati globali identici')
             continue
         failed += 1
         print(f'DIVERSO  {name}')
@@ -251,12 +274,103 @@ def run(exe):
         elif len(la) != len(lb):
             print(f'  {len(la)} chiamate nell\'originale, {len(lb)} nel tradotto')
         else:
-            print(f'  memoria finale diversa: heap {sa[0] == sb[0]}, stack {sa[1] == sb[1]}')
+            print(f'  memoria finale: heap {"=" if sa[0] == sb[0] else "DIVERSO"}, '
+                  f'stack {"=" if sa[1] == sb[1] else "DIVERSO"}, dati {"=" if sa[2] == sb[2] else "DIVERSI"}')
     print('difftest:', 'OK' if not failed else f'{failed} scenari diversi')
     return 1 if failed else 0
+
+
+def make_inputs(g, rng):
+    """Ingressi generici: buffer pieni di puntatori ad altri buffer, interi piccoli, float e
+    valori casuali; argomenti e registri scelti tra puntatori e interi."""
+    bufs = [g.alloc(512) for _ in range(6)]
+
+    def value(p_ptr):
+        r = rng.random()
+        if r < p_ptr:
+            return rng.choice(bufs) + 4 * rng.randrange(0, 96)
+        if r < p_ptr + 0.25:
+            return rng.randrange(0, 17)
+        if r < p_ptr + 0.35:
+            return struct.unpack('<I', struct.pack('<f', rng.uniform(-100, 100)))[0]
+        return rng.getrandbits(32)
+
+    for b in bufs:
+        g.write(b, struct.pack('<128I', *[value(0.4) for _ in range(128)]))
+    return [value(0.6) for _ in range(6)], rng.choice(bufs), value(0.5)
+
+
+def observe(g, r):
+    return (r.regs, r.popped, tuple(r.imports), g.read(HEAP, max(g.heap_top - HEAP, HEAP_CLEAR)),
+            g.read(STACK_TOP - STACK_CLEAR, STACK_CLEAR), g.image_state())
+
+
+FIELDS = ('registri (eax ecx edx ebx ebp esi edi)', 'byte tolti dallo stack', 'import', 'heap', 'stack',
+          'dati globali')
+
+
+def run_auto(exe, count, cases):
+    import signal
+    out = subprocess.run([ACREK, 'candidates', exe, '--max', str(count)], check=True, capture_output=True, text=True)
+    print(out.stderr.strip())
+    roots = [int(x, 16) for x in out.stdout.split()]
+    lib = build(exe, roots, name='difftest-auto', opt='-O1')
+    oracle, native = harness.Guest(exe), Native(exe, lib)
+    same, differ, never = [], [], []
+    report = []
+    current = os.path.join(ROOT, 'build', 'difftest-current.txt')
+    for addr in roots:
+        ran, bad = 0, None
+        for case in range(cases):
+            obs = []
+            for engine in (oracle, native):
+                engine.reset()
+                args, ecx, edx = make_inputs(engine, random.Random(addr * 1000 + case))
+                if engine is native:
+                    with open(current, 'w') as f:
+                        f.write(f'{addr:#x} caso {case}\n')
+                    signal.alarm(60)       # un ciclo infinito nel tradotto uccide il processo
+                try:
+                    r = engine.call(addr, args, ecx=ecx, edx=edx, max_insns=300_000)
+                    obs.append(observe(engine, r))
+                except harness.GuestError as e:
+                    obs.append(('errore', str(e)))
+                finally:
+                    signal.alarm(0)
+                if obs[0][0] == 'errore':
+                    break                   # l'originale non gira con questi ingressi: caso saltato
+            if obs[0][0] == 'errore':
+                continue
+            ran += 1
+            if obs[0] != obs[1] and bad is None:
+                if obs[1][0] == 'errore':
+                    bad = (case, f'il tradotto si ferma: {obs[1][1]}')
+                else:
+                    k = next(i for i in range(len(FIELDS)) if obs[0][i] != obs[1][i])
+                    detail = f'{obs[0][k]} contro {obs[1][k]}' if k < 3 else ''
+                    bad = (case, f'{FIELDS[k]} {detail}')
+        if bad:
+            differ.append(addr)
+            report.append(f'DIVERSO {addr:#010x} caso {bad[0]}: {bad[1]}')
+        elif ran:
+            same.append(addr)
+            report.append(f'ok      {addr:#010x} ({ran} casi)')
+        else:
+            never.append(addr)
+            report.append(f'saltata {addr:#010x} (l\'originale non gira con gli ingressi generati)')
+    with open(os.path.join(ROOT, 'build', 'difftest-auto.txt'), 'w') as f:
+        f.write('\n'.join(report) + '\n')
+    print(f'{len(roots)} funzioni: {len(same)} identiche, {len(differ)} diverse, {len(never)} saltate')
+    for line in [x for x in report if x.startswith('DIVERSO')][:25]:
+        print(' ', line[:200])
+    return 1 if differ else 0
 
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
         sys.exit(__doc__)
+    if '--auto' in sys.argv:
+        n = int(sys.argv[sys.argv.index('--auto') + 1])
+        k = int(sys.argv[sys.argv.index('--cases') + 1]) if '--cases' in sys.argv else 8
+        sys.exit(run_auto(sys.argv[1], n, k))
     sys.exit(run(sys.argv[1]))

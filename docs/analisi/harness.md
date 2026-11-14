@@ -36,7 +36,7 @@ maggiore di 0 per stdcall e thiscall. Serve a scoprire la convenzione di chiamat
 | Indirizzo | Cosa |
 |---|---|
 | `0x00400000` | l'immagine PE, sezioni ai loro indirizzi (non servono rilocazioni) |
-| `0x10000000` | heap di prova per gli argomenti, 16 MB |
+| `0x10000000` | heap di prova per gli argomenti, 1 MB, azzerato per intero a ogni `reset()` |
 | `0x6FF00000`–`0x70000000` | stack, 1 MB |
 | `0x7F000000` | trampolini degli import, 16 byte ciascuno |
 | `0x7FFD0000` | TEB: `fs:[0]` fine della catena SEH, `fs:[0x18]` puntatore a sé, `fs:[0x2C]` array TLS |

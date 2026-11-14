@@ -19,8 +19,10 @@ uso: acrek <comando> <AssassinsCreed_Dx9.exe> [opzioni]
                             scoperta delle funzioni; con --out salva l'elenco
                             (contiene solo indirizzi, ma va comunque in private/)
 
-  translate --out FILE.c ADDR...
+  translate --out FILE.c [--roots FILE] ADDR...
                             traduce in C le funzioni indicate e quelle che chiamano
+  candidates [--max N]      funzioni adatte al test differenziale: tutta la chiusura è
+                            traducibile, senza import né chiamate indirette
   coverage                  quante funzioni si traducono oggi, e cosa blocca le altre
 
 Opzione comune: --any-exe   accetta un eseguibile con hash diverso da quello della build Steam";
@@ -63,6 +65,7 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         "discover" => discover_cmd(&img, flag(args, "--strict"), value(args, "--out"))?,
         "translate" => translate_cmd(&img, args)?,
         "coverage" => coverage_cmd(&img),
+        "candidates" => candidates_cmd(&img, value(args, "--max").and_then(|v| v.parse().ok()).unwrap_or(500)),
         _ => return Err(USAGE.into()),
     }
     Ok(())
@@ -172,6 +175,13 @@ fn translate_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error:
     for a in args.iter().skip(2).filter(|a| a.starts_with("0x")) {
         roots.push(u32::from_str_radix(&a[2..], 16)?);
     }
+    if let Some(file) = value(args, "--roots") {
+        for line in std::fs::read_to_string(file)?.lines() {
+            if let Some(hex) = line.trim().strip_prefix("0x") {
+                roots.push(u32::from_str_radix(hex, 16)?);
+            }
+        }
+    }
     if roots.is_empty() {
         return Err("nessun indirizzo da tradurre".into());
     }
@@ -263,5 +273,94 @@ fn coverage_cmd(img: &Image) {
     }
     if b.len() > 40 {
         println!("  ... e altri {} motivi", b.len() - 40);
+    }
+}
+
+fn candidates_cmd(img: &Image, max: usize) {
+    use iced_x86::Mnemonic;
+    struct Info {
+        insns: usize,
+        calls: Vec<u32>,
+        opaque: bool,
+        mnemonics: BTreeSet<Mnemonic>,
+    }
+    let (d, _) = Discovery::run(img, false, false);
+    let hard = hard_starts(&d);
+    let is_hard = |a: u32| hard.contains(&a);
+    let mut info: HashMap<u32, Info> = HashMap::new();
+    for &a in d.starts.keys() {
+        if let Ok(f) = translate::decode(img, a, &is_hard) {
+            if translate::emit(&f, &|_| true).is_ok() {
+                info.insert(a, Info {
+                    insns: f.insns.len(),
+                    calls: f.calls.iter().copied().collect(),
+                    opaque: f.has_opaque_indirect(),
+                    mnemonics: f.insns.values().map(|i| i.mnemonic()).collect(),
+                });
+            }
+        }
+    }
+    // Chiusura sulle chiamate dirette: piccola, tutta traducibile, senza destinazioni ignote.
+    let mut good: Vec<(u32, BTreeSet<Mnemonic>)> = Vec::new();
+    for (&a, root) in &info {
+        if root.insns < 4 {
+            continue;
+        }
+        let mut seen: BTreeSet<u32> = BTreeSet::new();
+        let mut pending = vec![a];
+        let mut total = 0;
+        let mut ok = true;
+        let mut mn = BTreeSet::new();
+        while let Some(t) = pending.pop() {
+            if !seen.insert(t) {
+                continue;
+            }
+            match info.get(&t) {
+                Some(i) if !i.opaque => {
+                    total += i.insns;
+                    mn.extend(i.mnemonics.iter().copied());
+                    pending.extend(i.calls.iter().copied());
+                }
+                _ => ok = false,
+            }
+            if !ok || seen.len() > 12 || total > 3000 {
+                ok = false;
+                break;
+            }
+        }
+        if ok {
+            good.push((a, mn));
+        }
+    }
+    good.sort_by_key(|(a, _)| *a);
+    // Prima qualche funzione per ogni tipo di istruzione, partendo dalle più rare; poi le
+    // altre in ordine pseudo-casuale ma ripetibile.
+    let mut count: HashMap<Mnemonic, usize> = HashMap::new();
+    for (_, mn) in &good {
+        for m in mn {
+            *count.entry(*m).or_default() += 1;
+        }
+    }
+    let mut rare: Vec<(Mnemonic, usize)> = count.into_iter().collect();
+    rare.sort_by_key(|&(m, n)| (n, m as u32));
+    let mut chosen: BTreeSet<u32> = BTreeSet::new();
+    for (m, _) in rare {
+        for (a, _) in good.iter().filter(|(_, mn)| mn.contains(&m)).take(4) {
+            if chosen.len() < max {
+                chosen.insert(*a);
+            }
+        }
+    }
+    let mut rest: Vec<u32> = good.iter().map(|(a, _)| *a).filter(|a| !chosen.contains(a)).collect();
+    rest.sort_by_key(|a| a.wrapping_mul(0x9E37_79B1));
+    for a in rest {
+        if chosen.len() >= max {
+            break;
+        }
+        chosen.insert(a);
+    }
+    eprintln!("{} funzioni adatte su {} traducibili; scelte {}", good.len(), info.len(), chosen.len());
+    for a in chosen {
+        println!("{a:#x}");
     }
 }
