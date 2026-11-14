@@ -33,7 +33,7 @@ la stessa build, priva di DRM. scimitar-recomp usa invece la build Ubisoft Conne
   che ha in più `uplay32.dll`).
   `kernel32, user32, advapi32, shell32, ole32, oleaut32, ws2_32, eax, d3d9, d3dx9_36,
   dinput8, dsound, xinput1_3, winmm, binkw32, wininet, iphlpapi`.
-- RTTI: 4.043 nomi di tipo distinti.
+- RTTI: 4.376 type descriptor, 4.597 vtable → `rtti.md`.
 
 | Sezione | VA | Dim. virtuale | Dim. su disco |
 |---|---|---|---|
@@ -63,7 +63,7 @@ hanno dimensioni diverse.
 | `.text` | `0x127A7B3` | `0x12818EF` |
 | `.data` virtuale | 1,5 MB | **17,3 MB** (`0x1149CD0`) |
 | DLL / funzioni importate | 17 / 260 | 18 / 262 |
-| Nomi RTTI | **4.043** | **937** (tutti presenti anche nella DX9) |
+| Type descriptor RTTI | **4.376** | **939** (tutti presenti anche nella DX9) |
 
 Differenze di import:
 
@@ -75,7 +75,7 @@ Differenze di import:
 La DX10 contiene shader DXBC (SM4) incorporati e la stringa
 `MSAA hi settings: Count %d, Quality %d`, che nella DX9 manca.
 
-**Conseguenza per noi:** la DX9 ha più di 4 volte i nomi di classe della DX10, inclusi
+**Conseguenza per noi:** la DX9 ha più di 4 volte i nomi di classe della DX10 (e 4.597 vtable contro 1.000), inclusi
 gameplay e menu (`AssassinMenuManager`, `AwarenessResetEvent`, `EntityRequestEvent`, …) e
 le classi `DX9Device` del renderer. Senza PDB sono la fonte principale di nomi. Vedi
 `decisioni.md`.

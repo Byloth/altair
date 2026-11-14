@@ -7,7 +7,7 @@
   La DX9 si blocca all'avvio; la DX10 funziona.
 - Verificato lo SHA-1 della DX9 (`a9ea476e…432120`): coincide con quello che EaglePatch
   indica per Steam e GOG.
-- Confrontate DX9 e DX10: stesso changelist 86610, DX9 con 4.043 nomi RTTI contro 937.
+- Confrontate DX9 e DX10: stesso changelist 86610, DX9 con 4.043 nomi RTTI contro 937 (conteggio poi corretto: 4.376 contro 939).
   → `analisi/eseguibili.md`, `decisioni.md`.
 - Creati la struttura del repository, `tools/pe.py` e il piano di lavoro (`PIANO.md`).
 - `git init`; clonati scimitar-recomp (`4f36655`) ed EaglePatch (`a39dc87`) in `ref/`, ignorata da git.
@@ -29,3 +29,6 @@
   `METAL.md` e `README.md`, `recomp/README.md`, `platform/README.md`. Aggiunti ad
   `analisi/scimitar-recomp.md`: formato `.forge` di AC1 (v25, LZO1X_999), 8 bug D3D9 condivisi,
   insidie del runtime Win32 (QPC a 10 MHz, race multi-CPU), mappa del loro layer Windows.
+- **0.5 chiusa.** `tools/rtti.py`: 4.376 type descriptor, 4.597 vtable, 59.899 slot, 28.717
+  funzioni, identici a scimitar-recomp → `analisi/rtti.md`. Corretta la regex di `pe.py rtti`
+  (troncava i template). `_purecall` è a `0xF9F7A2`.

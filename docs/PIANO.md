@@ -49,13 +49,13 @@ Completata il 2026-11-14 (WSL, 28 core, 31 GB RAM). Dettagli in `ambiente.md`.
 - [x] Esito e conseguenze → `decisioni.md`
 - [ ] (facoltativo) Confronto byte per byte di `.text`, se un giorno avremo la loro build
 
-### 0.5 Tipi: RTTI e vtable
+### 0.5 Tipi: RTTI e vtable ✅
 
-- [ ] `tools/rtti.py`: parser vero di Complete Object Locator, Type Descriptor, Class
-  Hierarchy Descriptor; elenco delle vtable con indirizzo e numero di slot
-- [ ] Confrontare i conteggi con scimitar-recomp (4.376 descrittori, 4.597 vtable)
-- [ ] Gerarchia delle classi in `private/` (contiene nomi Ubisoft); statistiche e sottosistemi
-  principali in `analisi/rtti.md`
+- [x] `tools/rtti.py`: Complete Object Locator, Type Descriptor, Class Hierarchy Descriptor,
+  vtable con indirizzo e slot
+- [x] Conteggi identici a scimitar-recomp: 4.376 descrittori, 4.597 vtable, 59.899 slot,
+  28.717 funzioni
+- [x] Dettaglio in `private/rtti-dx9.json`; statistiche e sottosistemi in `analisi/rtti.md`
 
 ### 0.6 Import e superficie del sistema operativo
 
@@ -156,6 +156,6 @@ ampio di funzioni.
 
 ## Prossimi passi concreti
 
-1. **0.2**: installare Rust, clang e il venv Python; `git init`.
-2. **0.3**: clonare scimitar-recomp ed EaglePatch e scrivere `analisi/scimitar-recomp.md`.
-3. **0.5**: parser RTTI e vtable.
+1. **0.6**: mappa dei 260 import e delle interfacce COM usate.
+2. **0.7**: primo elenco di funzioni (partenze forti e deboli).
+3. **0.8**: harness Unicorn.

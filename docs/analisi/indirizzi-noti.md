@@ -15,6 +15,9 @@ dove viene. Gli indirizzi di scimitar-recomp valgono perché la loro build ha lo
 | `0x019CA838` | Security cookie `/GS` | load config |
 | `0x017D2F10` | Campo SEHandlerTable della load config (scimitar-recomp dice "nessuna tabella SafeSEH": da controllare il conteggio) | load config |
 | `0x011B5239`–`0x01520860` | Blocco di `int3` (3,5 MB) mai referenziato | scimitar-recomp |
+| `0x0170B880` | `type_info::vftable` | `tools/rtti.py` |
+| `0x00F9F7A2` | `_purecall` del CRT (in 2.721 slot di vtable) | `tools/rtti.py` + disassemblato |
+| `0x016B1E4C`, `0x016B18AC`, `0x016B13FC` | vtable di `scimitar::Pad`, `PadXenon`, `PadProxyPC` (19 slot) | `tools/rtti.py` |
 
 ## Input (EaglePatch, `ref/EaglePatch/EaglePatch/src/ac1.cpp`)
 

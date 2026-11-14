@@ -70,7 +70,7 @@ class PE:
         return out
 
     def rtti_names(self):
-        return sorted(set(m.decode() for m in re.findall(rb'\.\?A[VU][\x21-\x7e]+?@@', self.data)))
+        return sorted(set(m.decode() for m in re.findall(rb'\.\?A[VU][\x21-\x7e]+', self.data)))
 
     def build_strings(self):
         return sorted(set(m.decode() for m in re.findall(rb'ChangeList:[\x20-\x7e]+', self.data)))

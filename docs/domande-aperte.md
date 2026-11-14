@@ -12,8 +12,11 @@ sostituisci qui la voce con un rimando.
   il conteggio è zero? (scimitar-recomp dice "nessuna tabella SafeSEH")
 - [ ] **Perché la DX9 originale si blocca all'avvio su Windows?** Driver, risoluzione,
   numero di core, EAX? Da provare con DXVK, dgVoodoo2 e con EaglePatch.
-- [ ] **Numero esatto di descrittori RTTI e di vtable** nella DX9 (scimitar-recomp: 4.376 e 4.597).
-  Con una scansione di stringhe loro trovano 4.323 nomi, noi 4.043: capire la differenza.
+- [x] ~~Numero esatto di descrittori RTTI e di vtable~~: 4.376 e 4.597, identici a
+  scimitar-recomp → `analisi/rtti.md`. I 4.043 di prima erano un errore della regex di `pe.py`,
+  che troncava i nomi dei template; 4.323 sono le sole classi, più 53 struct.
+- [ ] Gli slot delle vtable sono contati con un'euristica: verificarli quando avremo l'elenco
+  delle funzioni (0.7).
 - [ ] **A cosa servono i 17 MB in più di `.data` nella DX10?** Curiosità: non blocca nulla.
 - [ ] Cosa contengono `.data1` e `_RDATA` (presenti in tutti e due).
 

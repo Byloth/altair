@@ -30,7 +30,7 @@ sperimentale).
 **Decisione.** Si ricompila la DX9 (SHA-1 `a9ea476e…432120`), non la DX10.
 
 **Perché.**
-1. Ha 4.043 nomi RTTI contro 937: è la fonte principale di nomi senza PDB.
+1. Ha 4.376 nomi RTTI contro 939: è la fonte principale di nomi senza PDB.
 2. scimitar-recomp (la nostra specifica) e EaglePatch (indirizzi Steam) lavorano sulla DX9.
 3. Il D3D9 lo reimplementiamo noi, quindi il blocco all'avvio dell'originale su Windows non
    riguarda la versione ricompilata.
