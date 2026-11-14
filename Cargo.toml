@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["crates/pe", "crates/recomp"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+publish = false
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+debug = 1
