@@ -10,8 +10,8 @@ sostituisci qui la voce con un rimando.
   Manca solo un confronto byte per byte di `.text`, che richiederebbe la loro build.
 - [ ] Il campo SEHandlerTable della load config vale `0x17D2F10`: c'è una tabella SafeSEH o
   il conteggio è zero? (scimitar-recomp dice "nessuna tabella SafeSEH")
-- [ ] **Perché la DX9 originale si blocca all'avvio su Windows?** Driver, risoluzione,
-  numero di core, EAX? Da provare con DXVK, dgVoodoo2 e con EaglePatch.
+- [ ] **Perché la DX9 originale si blocca all'avvio su Windows?** Non indagato per scelta
+  (vedi `decisioni.md`): si riprende in Fase 3 solo se serve.
 - [x] ~~Numero esatto di descrittori RTTI e di vtable~~: 4.376 e 4.597, identici a
   scimitar-recomp → `analisi/rtti.md`. I 4.043 di prima erano un errore della regex di `pe.py`,
   che troncava i nomi dei template; 4.323 sono le sole classi, più 53 struct.

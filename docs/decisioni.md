@@ -2,6 +2,17 @@
 
 Voci più recenti in cima. Ogni voce: decisione, motivazione, cosa la farebbe rivedere.
 
+## 2026-11-14 · L'originale DX9 in esecuzione non serve ora: spostato in Fase 3, facoltativo
+
+**Decisione.** Non si lavora per far partire `AssassinsCreed_Dx9.exe` originale su Windows
+(si blocca all'avvio). L'attività esce dalla Fase 0 e diventa facoltativa in Fase 3.
+
+**Perché.** La correttezza del codice tradotto si verifica con l'harness Unicorn, senza
+Windows. Per il confronto visivo c'è la DX10 originale, che funziona. I metodi COM usati si
+ricavano dal nostro runtime con stub tracciati.
+
+**Si rivede se** in Fase 3 una differenza di rendering non si chiarisce con la DX10.
+
 ## 2026-11-14 · Gli indirizzi di scimitar-recomp valgono per la nostra build
 
 **Decisione.** Usiamo indirizzi, conteggi e insidie di scimitar-recomp come validi per la

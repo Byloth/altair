@@ -44,3 +44,4 @@
 - **0.8 chiusa.** `tools/harness.py`: `strlen`, `strcmp`, `memcpy` dell'originale eseguiti in
   Unicorn e verificati; `fs:` impostato tramite GDT (Unicorn a 32 bit non accetta FS_BASE).
   Gate della Fase 0 soddisfatto → `analisi/harness.md`.
+- Spostata la vecchia 0.9 (originale DX9 su Windows) in Fase 3 come attività facoltativa → `decisioni.md`.

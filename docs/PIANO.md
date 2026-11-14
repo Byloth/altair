@@ -83,12 +83,6 @@ Completata il 2026-11-14 (WSL, 28 core, 31 GB RAM). Dettagli in `ambiente.md`.
 - [x] `analisi/harness.md`: uso, struttura, limiti
 - [ ] Prima prova su codice del motore (CRC-32 dei nomi di classe): va trovata la funzione
 
-### 0.9 L'originale DX9 in esecuzione (non bloccante)
-
-- [ ] Riprodurre il blocco della DX9 e annotare i sintomi
-- [ ] Provare DXVK, dgVoodoo2, EaglePatch, compatibilità Windows, limite di core
-- [ ] Se parte: preparare un salvataggio e un percorso fisso del tutorial come riferimento visivo
-
 ### 0.10 Dati del gioco (ricognizione)
 
 - [ ] Inventario dei `.forge` (17 archivi, 6,8 GB): header, indice, tipi di file contenuti
@@ -130,7 +124,11 @@ ampio di funzioni.
 - [ ] D3D9 su wgpu: device, stati, risorse, formati, render target
 - [ ] Traduttore shader SM2/SM3 → WGSL
 - [ ] Video Bink, DirectSound (EAX opzionale), DirectInput, XInput
-- [ ] Confronto visivo con l'originale (se la 0.9 riesce) o con scimitar-recomp
+- [ ] Confronto visivo: di norma con la DX10 originale, che sull'hardware attuale funziona
+- [ ] (facoltativo, solo se una differenza di rendering non si chiarisce con la DX10) Far
+  partire l'originale DX9, che oggi si blocca all'avvio: provare DXVK, dgVoodoo2, EaglePatch,
+  modalità compatibilità, limite di core. Se parte: salvataggio e percorso fisso del tutorial
+  come riferimento, ed eventuale traccia delle chiamate D3D9 con apitrace
 
 ## Fase 4 · Giocabile in nativo (gate principale)
 
@@ -165,5 +163,4 @@ Il gate della Fase 0 è soddisfatto (funzioni, RTTI, import, Unicorn). Restano d
 di ricognizione, poi si apre la Fase 1.
 
 1. **0.10**: ricognizione dei `.forge`.
-2. **0.9**: far partire l'originale DX9 (non bloccante, serve l'utente su Windows).
-3. **Fase 1**: workspace Rust e ricompilatore.
+2. **Fase 1**: workspace Rust e ricompilatore.
