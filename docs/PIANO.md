@@ -57,12 +57,12 @@ Completata il 2026-11-14 (WSL, 28 core, 31 GB RAM). Dettagli in `ambiente.md`.
   28.717 funzioni
 - [x] Dettaglio in `private/rtti-dx9.json`; statistiche e sottosistemi in `analisi/rtti.md`
 
-### 0.6 Import e superficie del sistema operativo
+### 0.6 Import e superficie del sistema operativo ✅
 
-- [ ] `analisi/import.md`: le 260 funzioni per DLL, con una colonna "chi la implementa"
-  (runtime Win32, D3D9, audio, input, stub) e la priorità
-- [ ] Interfacce COM usate (D3D9, DirectInput, DirectSound) e metodi chiamati, a partire
-  dalle vtable usate nel codice
+- [x] `tools/imports.py` e `analisi/import.md`: 260 funzioni con cella IAT, riferimenti nel
+  codice, categoria, modulo del runtime che le implementerà e fase
+- [x] Interfacce COM richieste, dai GUID in `.rdata` (DirectInput 8, DirectSound 8 + 3D, EAX)
+- [ ] Metodi COM effettivamente chiamati: rimandato al runtime (stub tracciati, Fase 2–3)
 
 ### 0.7 Primo elenco di funzioni
 
@@ -156,6 +156,6 @@ ampio di funzioni.
 
 ## Prossimi passi concreti
 
-1. **0.6**: mappa dei 260 import e delle interfacce COM usate.
-2. **0.7**: primo elenco di funzioni (partenze forti e deboli).
-3. **0.8**: harness Unicorn.
+1. **0.7**: primo elenco di funzioni (partenze forti e deboli).
+2. **0.8**: harness Unicorn.
+3. **0.10**: ricognizione dei `.forge`.

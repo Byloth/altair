@@ -22,6 +22,8 @@ sostituisci qui la voce con un rimando.
 
 ## Fase 2–3: runtime
 
+- [ ] Quali metodi COM chiama davvero il gioco (D3D9, DirectInput, DirectSound)? Da tracciare a runtime.
+- [ ] A cosa servono i 2.644 usi di `TlsGetValue`: un solo indice (contesto per thread del motore) o molti?
 - [ ] Quanto è profondo lo stack reale dei thread di gioco? (decide la fattibilità sul web)
 - [ ] Quali formati di texture e shader model usa davvero la DX9 (SM2, SM3)?
 - [x] ~~Si può ignorare EAX all'inizio?~~ Sì: scimitar-recomp fa risultare EAX assente e il gioco va.

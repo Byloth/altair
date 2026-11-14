@@ -85,6 +85,17 @@ che molti parametri siano oggetti caricati dai `.forge`.
 - `Pad` (`0x016B1E4C`), `PadXenon` (`0x016B18AC`) e `PadProxyPC` hanno 19 slot ciascuna.
   EaglePatch chiama lo slot 10 come `UpdatePad(InputBindings*)`.
 
+## La DX10, per confronto
+
+`private/rtti-dx10.json`, stesso strumento. **La DX10 non ha RTTI per il namespace `scimitar`:**
+i suoi 939 tipi sono solo librerie (`magma` 385, Havok e globali 428, `Gear` 68, `Os` 24).
+Motore e gameplay sono stati compilati senza RTTI.
+
+Tutte le 1.000 vtable della DX10 hanno un'omonima nella DX9, 999 con lo stesso numero di slot.
+Accoppiando gli slot si ottengono **5.059 coppie di funzioni DX9 ↔ DX10**. Sono ancore per
+portare alla DX9 indirizzi noti solo sulla DX10 (per esempio quelli del Definitive Parkour Mod),
+estendendole lungo il grafo delle chiamate. Servirà, se mai, in Fase 6.
+
 ## Limiti
 
 - Il numero di slot di una vtable è stimato: si contano i puntatori consecutivi a `.text`

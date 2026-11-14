@@ -32,3 +32,8 @@
 - **0.5 chiusa.** `tools/rtti.py`: 4.376 type descriptor, 4.597 vtable, 59.899 slot, 28.717
   funzioni, identici a scimitar-recomp → `analisi/rtti.md`. Corretta la regex di `pe.py rtti`
   (troncava i template). `_purecall` è a `0xF9F7A2`.
+- RTTI della DX10: nessuna classe `scimitar`, solo librerie; 5.059 coppie di funzioni
+  DX9 ↔ DX10 dalle vtable omonime → `analisi/rtti.md`.
+- **0.6 chiusa.** `tools/imports.py` → `analisi/import.md`: 260 import tutti referenziati;
+  `TlsGetValue` ha 2.644 riferimenti, `DebugBreak` 144 (assert). GUID COM di DirectInput 8,
+  DirectSound 8/3D ed EAX 2–4 trovati in `.rdata`. Metodi COM rimandati al runtime.

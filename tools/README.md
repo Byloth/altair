@@ -33,3 +33,14 @@ python3 -I tools/rtti.py "$AC1/AssassinsCreed_Dx9.exe" --out private/rtti-dx9.js
 Il JSON ha tre liste: `types` (indirizzo, nome decorato e leggibile), `hierarchies` (basi di
 ogni classe con gli spiazzamenti) e `vtables` (indirizzo, classe, offset, slot). Risultati in
 `docs/analisi/rtti.md`.
+
+## `imports.py`
+
+Mappa degli import: nome (ordinali risolti), cella IAT, riferimenti in `.text`, categoria.
+
+```sh
+python3 -I tools/imports.py "$AC1/AssassinsCreed_Dx9.exe"          # tabelle Markdown
+python3 -I tools/imports.py "$AC1/AssassinsCreed_Dx9.exe" --guids  # GUID COM noti presenti
+```
+
+Le tabelle di `docs/analisi/import.md` vengono da qui.
