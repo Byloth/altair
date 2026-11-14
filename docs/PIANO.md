@@ -29,10 +29,10 @@ nominati, mappa completa degli import, una funzione del gioco eseguita in Unicor
 Oggi sulla macchina (WSL, 28 core, 31 GB RAM) ci sono solo git e Python 3.12.
 
 - [x] `git init` del repository (primo commit ancora da fare)
-- [ ] Rust stabile con `rustup` (cargo, clippy, rustfmt)
-- [ ] clang/LLVM (compilerà il C generato, anche per wasm32)
-- [ ] `python3-venv` + virtualenv in `.venv/` con `unicorn` e `capstone` (solo per gli strumenti)
-- [ ] Java 21 + Ghidra, progetto in `private/ghidra/`
+- [x] Rust 1.100.0 (in `~/.local/share/cargo`)
+- [x] clang/LLVM 18 + lld
+- [x] `.venv/` con unicorn 2.1.4 e capstone 5.0.7
+- [x] Java 25 + Ghidra 12.2 in `opt/` (progetto Ghidra in `private/ghidra/`, da creare)
 - [x] Clonare scimitar-recomp ed EaglePatch in `ref/` (ignorata da git)
 
 ### 0.3 La specifica: scimitar-recomp ed EaglePatch

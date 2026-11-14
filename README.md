@@ -15,6 +15,7 @@ repository non contiene nulla di Ubisoft.
 | `docs/domande-aperte.md` | Cose da scoprire |
 | `docs/diario.md` | Diario delle sessioni |
 | `docs/fonti.md` | Progetti, mod e riferimenti esterni |
+| `docs/ambiente.md` | Strumenti installati e come avviarli |
 | `docs/analisi/` | Fatti verificati sui file del gioco |
 | `tools/` | Script di analisi (vedi `tools/README.md`) |
 | `ref/`, `build/`, `private/`, `.venv/`, `opt/` | Riferimenti clonati, output generato, materiale non pubblicabile, strumenti locali: ignorati da git |

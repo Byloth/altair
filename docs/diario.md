@@ -19,3 +19,9 @@
 - Raccolti gli indirizzi DX9 di EaglePatch → `analisi/indirizzi-noti.md`.
 - Toolchain da installare a cura dell'utente: Rust, clang/lld, build-essential, python3-venv,
   JDK 21, Ghidra 12.2 in `opt/`.
+- Verificato l'ambiente: clang 18, lld, cmake, Java 21 presenti; Rust non trovato in WSL.
+  Creato `.venv/` (unicorn 2.1.4, capstone 5.0.7). Scaricato Ghidra 12.2 in `opt/`
+  (SHA-256 verificato). Ghidra 12.2 richiede **Java 25**, non 21 → `ambiente.md`.
+- Rust trovato: 1.100.0 in `~/.local/share/cargo` (PATH in `~/.bash_exports`, non in `~/.cargo`).
+  Java 25 ancora da installare.
+- Installato Java 25 (rimosso il 21). Ghidra headless parte. Ambiente della 0.2 completo.
