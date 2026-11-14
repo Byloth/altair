@@ -5,6 +5,9 @@ Progetto non ufficiale e non affiliato con Ubisoft: ricompilazione statica di
 e usarlo come base per un gioco migliorato. Serve la propria copia del gioco; questo
 repository non contiene nulla di Ubisoft.
 
+**Altair** è il nome tecnico del progetto: il ricompilatore (`altair`), i suoi crate e il
+supporto del codice generato (`runtime/altair.h`). "AC1 Recompiled" resta il nome completo.
+
 ## Struttura
 
 | Percorso | Contenuto |
@@ -17,7 +20,7 @@ repository non contiene nulla di Ubisoft.
 | `docs/fonti.md` | Progetti, mod e riferimenti esterni |
 | `docs/ambiente.md` | Strumenti installati e come avviarli |
 | `docs/analisi/` | Fatti verificati sui file del gioco |
-| `crates/` | Il ricompilatore in Rust: `acrek` (vedi `docs/analisi/traduttore.md`) |
+| `crates/` | Il ricompilatore in Rust: `altair` (vedi `docs/analisi/traduttore.md`) |
 | `runtime/` | Supporto in C del codice generato |
 | `tools/` | Script di analisi e di test (vedi `tools/README.md`) |
 | `ref/`, `build/`, `private/`, `.venv/`, `opt/` | Riferimenti clonati, output generato, materiale non pubblicabile, strumenti locali: ignorati da git |

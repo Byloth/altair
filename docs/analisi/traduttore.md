@@ -1,10 +1,10 @@
-# Il ricompilatore (`acrek`)
+# Il ricompilatore (`altair`)
 
 Stato al 2026-11-14, primo giorno della Fase 1 (aggiornato dopo SSE). Codice in `crates/` (Rust) e `runtime/` (C).
 
 ```sh
 source ~/.bash_exports && cargo build --release
-A=target/release/acrek; E="$AC1/AssassinsCreed_Dx9.exe"
+A=target/release/altair; E="$AC1/AssassinsCreed_Dx9.exe"
 $A info $E                         # hash, sezioni, import
 $A rtti $E                         # conteggi RTTI e vtable
 $A discover $E [--strict] [--out private/functions.json]
@@ -17,7 +17,7 @@ $A candidates $E --max 500         # funzioni adatte al test differenziale
 .venv/bin/python tools/difftrace.py $E 0xADDR 0    # rigioca un caso e mostra le differenze
 ```
 
-`acrek` rifiuta qualunque eseguibile che non abbia lo SHA-1 della build Steam DX9
+`altair` rifiuta qualunque eseguibile che non abbia lo SHA-1 della build Steam DX9
 (`--any-exe` per forzare): è la regola 4 del progetto, applicata nel codice.
 
 ## Struttura
@@ -28,8 +28,8 @@ $A candidates $E --max 500         # funzioni adatte al test differenziale
 | `crates/recomp/src/rtti.rs` | RTTI e vtable (porting di `tools/rtti.py`) |
 | `crates/recomp/src/discover.rs` | Scoperta delle funzioni (porting di `tools/functions.py`) |
 | `crates/recomp/src/translate.rs` | Decodifica di una funzione e traduzione in C |
-| `runtime/acrek.h`, `acrek.c` | Supporto del codice generato: contesto, memoria guest, flag, registro delle funzioni, trap |
-| `runtime/acrek_sse.h` | Operazioni SSE/SSE2 in C portabile |
+| `runtime/altair.h`, `altair.c` | Supporto del codice generato: contesto, memoria guest, flag, registro delle funzioni, trap |
+| `runtime/altair_sse.h` | Operazioni SSE/SSE2 in C portabile |
 | `tests/compiler/` | Riproduzioni di bug del compilatore C trovati dal test |
 | `tools/difftest.py` | Test differenziale contro `tools/harness.py` |
 
@@ -62,11 +62,11 @@ Ogni funzione guest diventa `void f_XXXXXXXX(Ctx *c)`.
 - **Chiamate**: una `call` scrive il vero indirizzo di ritorno sullo stack guest e chiama la
   funzione C; `ret` lo toglie. Lo stack guest resta così identico byte per byte all'originale.
   Un salto verso un'altra funzione è una tail call (`f_x(c); return;`).
-- **Chiamate indirette** e funzioni non presenti nel file: `acrek_call_indirect(c, indirizzo)`,
+- **Chiamate indirette** e funzioni non presenti nel file: `altair_call_indirect(c, indirizzo)`,
   che cerca nel registro delle funzioni tradotte e altrimenti passa a `c->host_call` (import e
   funzioni host). Se nessuno gestisce l'indirizzo scatta una trap.
-- **Trap** (`acrek_trap`): `int3`, divisioni non valide, destinazioni sconosciute. Riportano il
-  controllo a `acrek_run` con motivo e indirizzo, senza abortire il processo.
+- **Trap** (`altair_trap`): `int3`, divisioni non valide, destinazioni sconosciute. Riportano il
+  controllo a `altair_run` con motivo e indirizzo, senza abortire il processo.
 - Ogni istruzione tradotta porta in commento indirizzo e testo dell'originale.
 
 Regole di decodifica di una funzione:
@@ -91,7 +91,7 @@ lahf`, `xadd cmpxchg`, `nop pause wait prefetch*`.
 `xchg` con un operando in memoria. Diventano operazioni atomiche vere sulla memoria host
 (`__atomic_*`, ordinamento sequenziale).
 
-**SSE e SSE2** (registri XMM; `runtime/acrek_sse.h`):
+**SSE e SSE2** (registri XMM; `runtime/altair_sse.h`):
 - spostamenti: `movaps movups movapd movupd movdqa movdqu movss movsd movd movq movlps movlpd
   movhps movhpd movhlps movlhps movmskps movmskpd pmovmskb`;
 - aritmetica impacchettata e scalare: `add sub mul div min max sqrt` in versione `ps pd ss sd`,
@@ -115,7 +115,7 @@ denormali seguono il guest perché durante l'esecuzione l'MXCSR dell'host è que
 **Non deterministiche:** `rdtsc` è un contatore a 1 GHz dal tempo host; `cpuid` descrive una CPU
 fissa di classe SSE3. Le funzioni che le usano sono escluse dal test differenziale.
 
-## Copertura (`acrek coverage`, `acrek census`)
+## Copertura (`altair coverage`, `altair census`)
 
 | | Solo intere | Con atomiche | **Con SSE** |
 |---|---|---|---|
@@ -150,7 +150,7 @@ dell'immagine.
 
 ### Campione automatico (`--auto N`)
 
-`acrek candidates` sceglie le funzioni adatte: tutta la chiusura sulle chiamate dirette è
+`altair candidates` sceglie le funzioni adatte: tutta la chiusura sulle chiamate dirette è
 traducibile, piccola (al più 12 funzioni e 3.000 istruzioni), senza import, senza chiamate o
 salti indiretti a destinazione ignota, senza `rdtsc`/`cpuid`. Sono 17.258 su 109.464. Ne prende
 prima alcune per ogni tipo di istruzione, a partire dai più rari, poi le altre in ordine

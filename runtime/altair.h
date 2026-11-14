@@ -1,10 +1,10 @@
-/* Supporto per il codice C generato da `acrek translate`.
+/* Supporto per il codice C generato da `altair translate`.
  *
  * Il codice generato non contiene altro che chiamate a queste funzioni e macro: tutto ciò
  * che dipende dalla piattaforma sta nel runtime, non nel codice tradotto.
  */
-#ifndef ACREK_H
-#define ACREK_H
+#ifndef ALTAIR_H
+#define ALTAIR_H
 
 #include <stdint.h>
 #include <string.h>
@@ -48,29 +48,29 @@ struct Ctx {
     Xmm xmm[8];
 };
 
-typedef void (*AcrekFn)(Ctx *c);
+typedef void (*AltairFn)(Ctx *c);
 typedef struct {
     u32 addr;
-    AcrekFn fn;
-} AcrekEntry;
+    AltairFn fn;
+} AltairEntry;
 
 /* Definiti dal codice generato: funzioni tradotte, ordinate per indirizzo. */
-extern const AcrekEntry acrek_functions[];
-extern const u32 acrek_function_count;
+extern const AltairEntry altair_functions[];
+extern const u32 altair_function_count;
 
-void acrek_call_indirect(Ctx *c, u32 addr);
-_Noreturn void acrek_trap(Ctx *c, const char *msg, u32 addr);
+void altair_call_indirect(Ctx *c, u32 addr);
+_Noreturn void altair_trap(Ctx *c, const char *msg, u32 addr);
 /* Esegue la funzione guest `addr`. Ritorna 0, oppure 1 se è scattata una trap
  * (motivo in c->trap_msg, indirizzo in c->trap_addr). */
-int acrek_run(Ctx *c, u32 addr);
+int altair_run(Ctx *c, u32 addr);
 /* Contatore di tempo a 1 GHz per `rdtsc`. */
-u64 acrek_rdtsc(Ctx *c);
+u64 altair_rdtsc(Ctx *c);
 /* `cpuid`: una CPU fissa di classe SSE3, uguale su ogni host. */
-void acrek_cpuid(Ctx *c);
+void altair_cpuid(Ctx *c);
 /* `ldmxcsr`: aggiorna la parola di controllo del guest e quella dell'host. */
-void acrek_set_mxcsr(Ctx *c, u32 v);
-u8 *acrek_mem_create(void);
-void acrek_mem_destroy(u8 *mem);
+void altair_set_mxcsr(Ctx *c, u32 v);
+u8 *altair_mem_create(void);
+void altair_mem_destroy(u8 *mem);
 
 static inline u8 rd8(Ctx *c, u32 a) { return c->mem[a]; }
 static inline u16 rd16(Ctx *c, u32 a) { u16 v; memcpy(&v, c->mem + a, 2); return v; }
@@ -109,6 +109,6 @@ _Static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "serve un host little-
     af = (((a) ^ (b) ^ (r)) >> 4) & 1; F_ZSP(r, bits)
 #define F_LOGIC(r, bits) cf = 0; of = 0; af = 0; F_ZSP(r, bits)
 
-#include "acrek_sse.h"
+#include "altair_sse.h"
 
 #endif

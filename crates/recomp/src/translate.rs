@@ -8,10 +8,10 @@
 //!  - i flag sono variabili locali calcolate dopo ogni istruzione che li scrive: il compilatore
 //!    C elimina quelle che nessuno legge.
 //! Le istruzioni non ancora supportate fanno fallire la traduzione dell'intera funzione, con
-//! il nome dell'istruzione: `acrek coverage` le conta.
+//! il nome dell'istruzione: `altair coverage` le conta.
 
 use crate::discover::table_bound;
-use acrek_pe::Image;
+use altair_pe::Image;
 use iced_x86::{
     ConditionCode, Decoder, DecoderOptions, FlowControl, Formatter, Instruction, IntelFormatter, Mnemonic, OpKind,
     Register,
@@ -224,7 +224,7 @@ fn wr_reg(r: Register, v: &str) -> R<String> {
     let full = reg32(r)?;
     Ok(match r.size() {
         4 => format!("{full} = {v};"),
-        // Scritture strette: vedi SET8L in runtime/acrek.h e tests/compiler/.
+        // Scritture strette: vedi SET8L in runtime/altair.h e tests/compiler/.
         2 => format!("SET16({full}, {v});"),
         1 if is_high(r) => format!("SET8H({full}, {v});"),
         1 => format!("SET8L({full}, {v});"),
@@ -323,7 +323,7 @@ impl Emitter<'_> {
         if (self.known)(t) {
             format!("{}(c);", fn_name(t))
         } else {
-            format!("acrek_call_indirect(c, {t:#x}u);")
+            format!("altair_call_indirect(c, {t:#x}u);")
         }
     }
 
@@ -423,9 +423,9 @@ impl Emitter<'_> {
                     Some(entries) => {
                         let uniq: BTreeSet<u32> = entries.iter().copied().collect();
                         let cases: String = uniq.iter().map(|t| format!("case {t:#x}u: goto L_{t:08x}; ")).collect();
-                        format!("{{ u32 t = {target}; switch (t) {{ {cases}default: acrek_trap(c, \"jump table\", t); }} }}")
+                        format!("{{ u32 t = {target}; switch (t) {{ {cases}default: altair_trap(c, \"jump table\", t); }} }}")
                     }
-                    None => format!("{{ u32 t = {target}; acrek_call_indirect(c, t); return; }}"),
+                    None => format!("{{ u32 t = {target}; altair_call_indirect(c, t); return; }}"),
                 });
             }
             FlowControl::Call => {
@@ -435,7 +435,7 @@ impl Emitter<'_> {
             FlowControl::IndirectCall => {
                 let target = read(ins, 0, 32)?;
                 return Ok(format!(
-                    "{{ u32 t = {target}; c->esp -= 4; wr32(c, c->esp, {next:#x}u); acrek_call_indirect(c, t); }}"
+                    "{{ u32 t = {target}; c->esp -= 4; wr32(c, c->esp, {next:#x}u); altair_call_indirect(c, t); }}"
                 ));
             }
             FlowControl::Return => {
@@ -446,7 +446,7 @@ impl Emitter<'_> {
                 return Ok(format!("c->esp += {}; return;", 4 + extra));
             }
             FlowControl::Interrupt | FlowControl::Exception => {
-                return Ok(format!("acrek_trap(c, \"{m:?}\", {addr:#x}u);"));
+                return Ok(format!("altair_trap(c, \"{m:?}\", {addr:#x}u);"));
             }
             FlowControl::XbeginXabortXend => return Err("xbegin".into()),
             FlowControl::Next => {}
@@ -644,8 +644,8 @@ impl Emitter<'_> {
             Popfd => Ok("{ u32 v = rd32(c, c->esp); c->esp += 4; SET_EFLAGS(v) }".into()),
             Lahf => Ok("SET8H(c->eax, EFLAGS());".into()),
             Sahf => Ok("{ u32 v = (EFLAGS() & ~0xffu) | ((c->eax >> 8) & 0xff); SET_EFLAGS(v) }".into()),
-            Rdtsc => Ok("{ u64 t = acrek_rdtsc(c); c->eax = (u32)t; c->edx = (u32)(t >> 32); }".into()),
-            Cpuid => Ok("acrek_cpuid(c);".into()),
+            Rdtsc => Ok("{ u64 t = altair_rdtsc(c); c->eax = (u32)t; c->edx = (u32)(t >> 32); }".into()),
+            Cpuid => Ok("altair_cpuid(c);".into()),
             Xchg => {
                 let n = bits(ins, 0)?;
                 Ok(format!(
@@ -706,7 +706,7 @@ impl Emitter<'_> {
                 store("(u32)w", &format!("(u32)((u64)w >> {n})"))?
             ),
             Div => format!(
-                "{{ u64 n = {wide}; u64 d = {v}; if (d == 0 || (n / d) >> {n}) acrek_trap(c, \"div\", {addr:#x}u); \
+                "{{ u64 n = {wide}; u64 d = {v}; if (d == 0 || (n / d) >> {n}) altair_trap(c, \"div\", {addr:#x}u); \
                  u64 q = n / d, r = n % d; {} }}",
                 store("(u32)q", "(u32)r")?
             ),
@@ -714,8 +714,8 @@ impl Emitter<'_> {
                 let sx = 64 - 2 * n; // estende il segno del dividendo a 2n bit (per 32 bit non serve)
                 format!(
                     "{{ s64 n = (s64)({wide} << {sx}) >> {sx}; s64 d = (s{n}){v}; \
-                     if (d == 0 || (n == INT64_MIN && d == -1)) acrek_trap(c, \"idiv\", {addr:#x}u); \
-                     s64 q = n / d, r = n % d; if (q != (s64)(s{n})q) acrek_trap(c, \"idiv\", {addr:#x}u); {} }}",
+                     if (d == 0 || (n == INT64_MIN && d == -1)) altair_trap(c, \"idiv\", {addr:#x}u); \
+                     s64 q = n / d, r = n % d; if (q != (s64)(s{n})q) altair_trap(c, \"idiv\", {addr:#x}u); {} }}",
                     store("(u32)q", "(u32)r")?
                 )
             }
@@ -797,7 +797,7 @@ impl Emitter<'_> {
         })
     }
 
-    /// SSE e SSE2 sui registri XMM. Le operazioni sono funzioni di `runtime/acrek_sse.h`.
+    /// SSE e SSE2 sui registri XMM. Le operazioni sono funzioni di `runtime/altair_sse.h`.
     fn sse(&self, ins: &Instruction) -> R<String> {
         use Mnemonic::*;
         let m = ins.mnemonic();
@@ -1013,7 +1013,7 @@ impl Emitter<'_> {
                 let v = if kind(1) == OpKind::Memory { format!("rd16(c, {})", ea(ins)?) } else { read(ins, 1, 32)? };
                 Ok(format!("{}.w[{}] = (u16){v};", xmm(0)?, imm(2) & 7))
             }
-            Ldmxcsr => Ok(format!("acrek_set_mxcsr(c, rd32(c, {}));", ea(ins)?)),
+            Ldmxcsr => Ok(format!("altair_set_mxcsr(c, rd32(c, {}));", ea(ins)?)),
             Stmxcsr => Ok(format!("wr32(c, {}, c->mxcsr);", ea(ins)?)),
             other => Err(format!("{other:?}")),
         }

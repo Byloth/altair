@@ -9,7 +9,7 @@
  *   clang -O2 tests/compiler/clang18-partial-register.c -o /tmp/t && /tmp/t
  *
  * Per questo il codice generato scrive i registri a 8 e 16 bit con le macro SET8L, SET8H e
- * SET16 di runtime/acrek.h (scritture strette dirette) invece che con maschera e OR.
+ * SET16 di runtime/altair.h (scritture strette dirette) invece che con maschera e OR.
  */
 #include <stdint.h>
 #include <stdio.h>

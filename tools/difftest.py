@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Test differenziale: il codice tradotto da `acrek` contro l'originale eseguito in Unicorn.
+"""Test differenziale: il codice tradotto da `altair` contro l'originale eseguito in Unicorn.
 
 Uso (dalla radice del progetto, con il Python del venv):
     .venv/bin/python tools/difftest.py <AssassinsCreed_Dx9.exe>                 scenari scritti a mano
     .venv/bin/python tools/difftest.py <AssassinsCreed_Dx9.exe> --auto N [--cases K]
-        N funzioni scelte da `acrek candidates`, K casi ciascuna (8) con ingressi generati;
+        N funzioni scelte da `altair candidates`, K casi ciascuna (8) con ingressi generati;
         il dettaglio va in build/difftest-auto.txt
 
 Passi:
-  1. `acrek translate` traduce in C le funzioni degli scenari (build/gen/difftest.c);
-  2. clang le compila con runtime/acrek.c in una libreria (build/difftest.so);
+  1. `altair translate` traduce in C le funzioni degli scenari (build/gen/difftest.c);
+  2. clang le compila con runtime/altair.c in una libreria (build/difftest.so);
   3. ogni scenario gira due volte con gli stessi ingressi: sull'originale in Unicorn
      (tools/harness.py) e sul codice tradotto, in una memoria guest identica;
   4. si confrontano, chiamata per chiamata, eax, ecx, edx, i byte tolti dallo stack, gli import
@@ -54,9 +54,9 @@ class Native:
     def __init__(self, exe, lib):
         self.pe = pe = PE(exe)
         self.lib = lib = ctypes.CDLL(lib)
-        lib.acrek_mem_create.restype = ctypes.c_void_p
-        lib.acrek_run.argtypes = [ctypes.POINTER(Ctx), ctypes.c_uint32]
-        self.mem = lib.acrek_mem_create()
+        lib.altair_mem_create.restype = ctypes.c_void_p
+        lib.altair_run.argtypes = [ctypes.POINTER(Ctx), ctypes.c_uint32]
+        self.mem = lib.altair_mem_create()
         if not self.mem:
             raise harness.GuestError('impossibile riservare la memoria guest')
         self._writable, self._readonly = [], []
@@ -158,7 +158,7 @@ class Native:
         if xmm:
             ctypes.memmove(c.xmm, b''.join(v.to_bytes(16, 'little') for v in xmm), 128)
         self._log, self._fault = [], None
-        if self.lib.acrek_run(ctypes.byref(c), addr):
+        if self.lib.altair_run(ctypes.byref(c), addr):
             raise harness.GuestError(self._fault or f'trap: {c.trap_msg.decode()} ({c.trap_addr:#010x})')
         regs = (c.eax, c.ecx, c.edx, c.ebx, c.ebp, c.esi, c.edi)
         xmm_out = tuple(int.from_bytes(bytes(c.xmm[16 * i:16 * i + 16]), 'little') for i in range(8))
@@ -240,7 +240,7 @@ def sc_memcpy(g, rng):
 SCENARIOS = [('strlen', sc_strlen, [STRLEN]), ('strcmp', sc_strcmp, [STRCMP]), ('memcpy', sc_memcpy, [MEMCPY])]
 
 
-ACREK = os.path.join(ROOT, 'target', 'release', 'acrek')
+ALTAIR = os.path.join(ROOT, 'target', 'release', 'altair')
 
 
 def build(exe, roots=None, name='difftest', opt='-O2'):
@@ -252,12 +252,12 @@ def build(exe, roots=None, name='difftest', opt='-O2'):
     roots_file = os.path.join(ROOT, 'build', name + '.roots')
     with open(roots_file, 'w') as f:
         f.write(''.join(f'{a:#x}\n' for a in roots))
-    subprocess.run([ACREK, 'translate', exe, '--out', gen, '--roots', roots_file], check=True,
+    subprocess.run([ALTAIR, 'translate', exe, '--out', gen, '--roots', roots_file], check=True,
                    stderr=subprocess.DEVNULL if name != 'difftest' else None)
     rt = os.path.join(ROOT, 'runtime')
     subprocess.run(['clang', opt, '-g', '-Wall', '-Wno-unused-variable', '-Wno-unused-but-set-variable',
                     '-Wno-unused-label', '-Wno-parentheses-equality', '-fwrapv', '-fno-math-errno', '-ffp-contract=off', '-shared', '-fPIC', '-I', rt, gen,
-                    os.path.join(rt, 'acrek.c'), '-lm', '-o', lib], check=True)
+                    os.path.join(rt, 'altair.c'), '-lm', '-o', lib], check=True)
     return lib
 
 
@@ -403,7 +403,7 @@ def instruction_report(gen, ok_roots):
 
 def run_auto(exe, count, cases):
     import signal
-    out = subprocess.run([ACREK, 'candidates', exe, '--max', str(count)], check=True, capture_output=True, text=True)
+    out = subprocess.run([ALTAIR, 'candidates', exe, '--max', str(count)], check=True, capture_output=True, text=True)
     print(out.stderr.strip())
     roots = [int(x, 16) for x in out.stdout.split()]
     lib = build(exe, roots, name='difftest-auto', opt='-O1')

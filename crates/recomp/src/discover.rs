@@ -10,7 +10,7 @@
 //! Le 3 e 4 devono anche "sembrare un inizio". Metodo e limiti: docs/analisi/funzioni.md.
 
 use crate::rtti;
-use acrek_pe::Image;
+use altair_pe::Image;
 use iced_x86::{Decoder, DecoderOptions, FlowControl, Instruction, Mnemonic, OpKind, Register};
 use std::collections::{BTreeMap, HashSet};
 

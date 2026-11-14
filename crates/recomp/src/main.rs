@@ -1,17 +1,17 @@
-//! `acrek`: strumenti di analisi e ricompilazione per Assassin's Creed (2007), build Steam DX9.
+//! `altair`: strumenti di analisi e ricompilazione per Assassin's Creed (2007), build Steam DX9.
 
 mod discover;
 mod rtti;
 mod translate;
 
-use acrek_pe::{Image, AC1_DX9_STEAM_SHA1};
+use altair_pe::{Image, AC1_DX9_STEAM_SHA1};
 use discover::{Discovery, Kind};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Write;
 use std::process::ExitCode;
 
 const USAGE: &str = "\
-uso: acrek <comando> <AssassinsCreed_Dx9.exe> [opzioni]
+uso: altair <comando> <AssassinsCreed_Dx9.exe> [opzioni]
 
   info                      hash, sezioni, import, export
   rtti                      conteggi di type descriptor e vtable
@@ -212,7 +212,7 @@ fn translate_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error:
         }
     }
     let known = |a: u32| funcs.contains_key(&a);
-    let mut c = String::from("/* Generato da `acrek translate`: non modificare e non pubblicare. */\n#include \"acrek.h\"\n\n");
+    let mut c = String::from("/* Generato da `altair translate`: non modificare e non pubblicare. */\n#include \"altair.h\"\n\n");
     for a in funcs.keys() {
         c += &format!("void {}(Ctx *c);\n", translate::fn_name(*a));
     }
@@ -223,11 +223,11 @@ fn translate_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error:
         c += &translate::emit(f, &known)?;
         c.push('\n');
     }
-    c += "const AcrekEntry acrek_functions[] = {\n";
+    c += "const AltairEntry altair_functions[] = {\n";
     for a in funcs.keys() {
         c += &format!("    {{{a:#x}u, {}}},\n", translate::fn_name(*a));
     }
-    c += &format!("}};\nconst u32 acrek_function_count = {};\n", funcs.len());
+    c += &format!("}};\nconst u32 altair_function_count = {};\n", funcs.len());
     std::fs::write(out, c)?;
     eprintln!("{} funzioni, {insns} istruzioni tradotte in {out}", funcs.len());
     for (a, e) in &failed {

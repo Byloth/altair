@@ -3,7 +3,7 @@
 //! Stesso metodo di `tools/rtti.py`; i conteggi attesi per la build Steam DX9 sono
 //! 4.376 type descriptor, 4.597 vtable, 59.899 slot.
 
-use acrek_pe::Image;
+use altair_pe::Image;
 use std::collections::{HashMap, HashSet};
 
 pub struct Vtable {

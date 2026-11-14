@@ -1,8 +1,14 @@
-# AC1 Recompiled (`ac-rek`)
+# AC1 Recompiled (`altair`)
 
 Ricompilazione statica di Assassin's Creed (2007), build Steam DX9, verso nativo e browser.
 Piano completo, per chi legge da fuori: documento "AC1 Recompiled: piano di progetto"
 (https://claude.ai/artifact/SoPWUhJZPJ45oWk3t4r8bu). Qui dentro vive il lavoro operativo.
+
+**Nomi.** "AC1 Recompiled" è il nome completo del progetto; **Altair** è il nome tecnico:
+binario `altair`, crate `altair-*`, prefisso `altair_` nel codice generato, cartella `altair`.
+Un eventuale ricompilatore per un altro gioco prenderebbe il nome del suo protagonista.
+Fino al 2026-11-15 il nome tecnico era `acrek` e la cartella `ac-rek`: i commit più vecchi li
+citano ancora.
 
 ## Regola principale: si scrive tutto qui
 
@@ -54,7 +60,7 @@ necessarie a spiegare una scoperta.
 
 ```sh
 source ~/.bash_exports                     # cargo non è nel PATH delle shell non interattive
-cargo build --release                      # produce target/release/acrek
+cargo build --release                      # produce target/release/altair
 .venv/bin/python tools/harness.py "$AC1/AssassinsCreed_Dx9.exe" selftest
 .venv/bin/python tools/difftest.py "$AC1/AssassinsCreed_Dx9.exe"   # da rifare dopo ogni modifica al traduttore
 ```

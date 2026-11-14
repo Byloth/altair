@@ -49,14 +49,14 @@
   oggetto porta il CRC-32 (standard) del nome della sua classe: incrociato con l'RTTI, il 100%
   degli oggetti è riconosciuto. Le missioni sono oggetti `MissionItem*` nei dati (27 classi,
   circa 950 oggetti in `DataPC.forge`) → `analisi/forge.md`.
-- **Fase 1 aperta.** Workspace Rust (`crates/pe`, `crates/recomp`), binario `acrek` con
+- **Fase 1 aperta.** Workspace Rust (`crates/pe`, `crates/recomp`), binario `altair` con
   `info`, `rtti`, `discover`, `translate`, `coverage`. Scoperta in 0,35 s: 116.090 funzioni.
 - Traduttore x86 → C per le istruzioni intere e supporto C in `runtime/`. Si traduce l'85,9%
   delle funzioni (59,5% delle istruzioni); mancano `lock`, SSE, x87.
 - `tools/difftest.py`: `strlen`, `strcmp`, `memcpy` tradotte identiche all'originale in Unicorn
   (1.717 chiamate). Il test ha trovato tre forme di jump table di `memcpy` non riconosciute,
   ora gestite → `analisi/traduttore.md`.
-- `acrek candidates` + `difftest.py --auto`: test differenziale su funzioni scelte dal
+- `altair candidates` + `difftest.py --auto`: test differenziale su funzioni scelte dal
   ricompilatore, con ingressi generati. Le prime 6 differenze erano memoria residua tra i
   casi, non bug: ora ogni caso riparte da heap (1 MB), stack e dati globali ripristinati.
 - Aggiunte atomiche (`lock`, `xchg` con memoria), `xadd`, `cmpxchg`, `shld`/`shrd`,
@@ -67,8 +67,8 @@
 
 ## 2026-11-15
 
-- `acrek census`: istruzioni per tipo, con quante non traducibili.
-- **SSE/SSE2** nel traduttore (`runtime/acrek_sse.h`, in C portabile) e stato XMM nel contesto.
+- `altair census`: istruzioni per tipo, con quante non traducibili.
+- **SSE/SSE2** nel traduttore (`runtime/altair_sse.h`, in C portabile) e stato XMM nel contesto.
   Copertura: 94,3% delle funzioni; non traducibile solo il 2,9% delle istruzioni (x87, MMX).
 - Il test confronta anche i registri XMM, con ingressi float (zeri con segno, infiniti, NaN,
   denormali). Campione di 6.000 funzioni: **3.042 identiche, 0 diverse**.
@@ -77,3 +77,7 @@
 - Differenze di NaN tra hardware ed emulatore (regola x87 applicata a SSE): tollerate e contate.
 - L'emulatore si portava dietro flag di direzione e MXCSR tra un caso e l'altro: corretto
   nell'harness → `analisi/traduttore.md`, `analisi/harness.md`.
+- **Rinominato il progetto tecnico da `acrek` ad `altair`** (binario, crate, file e prefissi
+  del runtime, documenti). Le voci di diario precedenti sono state aggiornate al nuovo nome.
+  Test rifatti dopo il cambio: selftest e scenari OK, 820 funzioni identiche su 1.500.
+  La cartella va rinominata dall'utente a sessione chiusa → `ambiente.md`.

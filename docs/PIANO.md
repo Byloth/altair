@@ -103,13 +103,13 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 ### 1.1 Fondamenta ✅
 
-- [x] Workspace Rust: `crates/pe`, `crates/recomp` (binario `acrek`)
+- [x] Workspace Rust: `crates/pe`, `crates/recomp` (binario `altair`)
 - [x] Parser PE con verifica dell'hash della build Steam
 - [x] RTTI e scoperta delle funzioni portate in Rust (0,35 s; limite delle jump table dal `cmp`)
 - [x] Traduttore x86 → C per le istruzioni intere, stringhe, salti, chiamate, jump table
-- [x] Supporto C del codice generato (`runtime/acrek.h`, `acrek.c`)
+- [x] Supporto C del codice generato (`runtime/altair.h`, `altair.c`)
 - [x] Primo test differenziale contro Unicorn: `strlen`, `strcmp`, `memcpy` identici
-- [x] `acrek coverage`: 85,9% delle funzioni (59,5% delle istruzioni) si traduce
+- [x] `altair coverage`: 85,9% delle funzioni (59,5% delle istruzioni) si traduce
 
 ### 1.2 Copertura delle istruzioni
 
@@ -125,7 +125,7 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 ### 1.3 Verifica
 
-- [x] Scelta automatica delle funzioni per il test differenziale (`acrek candidates`) e
+- [x] Scelta automatica delle funzioni per il test differenziale (`altair candidates`) e
   ingressi generati (`difftest.py --auto`)
 - [x] Confronto di registri XMM, heap, stack e dati globali; tolleranza sui soli NaN
 - [ ] Confronto anche di flag e stato x87

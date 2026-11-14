@@ -9,8 +9,8 @@
  * `rsqrt*` e `rcp*` sono esatti (1/sqrt(x), 1/x), mentre le CPU reali danno 12 bit.
  * Su host non x86 andranno riviste la propagazione dei NaN e le conversioni.
  */
-#ifndef ACREK_SSE_H
-#define ACREK_SSE_H
+#ifndef ALTAIR_SSE_H
+#define ALTAIR_SSE_H
 
 #include <math.h>
 

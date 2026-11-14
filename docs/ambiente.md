@@ -34,3 +34,17 @@ opt/ghidra_12.2_PUBLIC/support/analyzeHeadless ...  # analisi da script
 
 Senza `JAVA_HOME` e senza un terminale interattivo, Ghidra si ferma perché non può chiedere
 il percorso del JDK.
+
+## Spostare o rinominare la cartella del progetto
+
+Da fare a sessione di Claude Code chiusa:
+
+```sh
+mv ~/projects/ac-rek ~/projects/altair      # il rinomino deciso il 2026-11-15
+cd ~/projects/altair
+rm -rf .venv && python3 -m venv .venv && .venv/bin/pip install unicorn capstone   # il venv contiene percorsi assoluti
+source ~/.bash_exports && cargo build --release
+```
+
+`ref/`, `opt/`, `private/` e `build/` si spostano con la cartella. La memoria di Claude Code è
+legata al percorso: quella per `~/projects/altair` è già stata preparata.

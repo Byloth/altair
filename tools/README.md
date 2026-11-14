@@ -86,7 +86,7 @@ gioco: vanno in `private/`. Formato e risultati in `docs/analisi/forge.md`.
 
 ## `difftest.py`
 
-Test differenziale: traduce con `acrek`, compila con clang, esegue ogni scenario sull'originale
+Test differenziale: traduce con `altair`, compila con clang, esegue ogni scenario sull'originale
 (Unicorn) e sul tradotto, confronta registri, stack, import chiamati e memoria.
 
 ```sh

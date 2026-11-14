@@ -1,13 +1,13 @@
 [package]
-name = "acrek-recomp"
+name = "altair-recomp"
 edition.workspace = true
 version.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "acrek"
+name = "altair"
 path = "src/main.rs"
 
 [dependencies]
-acrek-pe = { path = "../pe" }
+altair-pe = { path = "../pe" }
 iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "instr_info", "intel"] }

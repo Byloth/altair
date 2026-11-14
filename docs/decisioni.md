@@ -2,9 +2,21 @@
 
 Voci più recenti in cima. Ogni voce: decisione, motivazione, cosa la farebbe rivedere.
 
+## 2026-11-15 · Nome tecnico del progetto: Altair
+
+**Decisione.** Il ricompilatore e tutto ciò che è codice si chiamano `altair` (prima `acrek`);
+la cartella del progetto diventa `altair` (prima `ac-rek`). Il nome completo resta
+"AC1 Recompiled". Un ricompilatore per un altro gioco prenderebbe il nome del suo protagonista.
+
+**Perché.** Scelta dell'utente. Altair è un nome proprio e una stella, già usato in informatica
+(l'Altair 8800 del 1975): come nome tecnico non richiama un prodotto ufficiale.
+
+**Attenzione.** Esiste una libreria Python molto diffusa con lo stesso nome: da tenere presente
+se un giorno si pubblicano pacchetti. Verso l'esterno si usa "AC1 Recompiled".
+
 ## 2026-11-15 · SSE in C portabile; registri parziali con scritture strette
 
-**Decisione.** Le operazioni SSE sono funzioni C corsia per corsia (`runtime/acrek_sse.h`),
+**Decisione.** Le operazioni SSE sono funzioni C corsia per corsia (`runtime/altair_sse.h`),
 senza intrinseci del processore. I registri a 8 e 16 bit si scrivono con `SET8L`/`SET8H`/`SET16`
 (scritture strette nel campo a 32 bit), non con maschera e OR.
 
@@ -20,7 +32,7 @@ o se un clang più recente non ha più il bug.
 **Decisione.** Una funzione C per funzione guest, `void f_XXXXXXXX(Ctx *c)`; stack guest
 identico all'originale (indirizzi di ritorno veri); flag come variabili locali; memoria guest
 come base più indirizzo su 4 GB riservati; chiamate indirette tramite un registro di funzioni.
-Il supporto è in C (`runtime/acrek.h`), il ricompilatore in Rust. Dettagli in
+Il supporto è in C (`runtime/altair.h`), il ricompilatore in Rust. Dettagli in
 `analisi/traduttore.md`.
 
 **Perché.** È il modello di scimitar-recomp, che ha dimostrato di funzionare su questo
