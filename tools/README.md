@@ -56,3 +56,14 @@ Scoperta delle funzioni senza simboli (prototipo). Serve Capstone, quindi il Pyt
 
 Stampa le statistiche in JSON; con `--out` salva l'elenco `[indirizzo, origine]`. Circa 30
 secondi. Metodo, risultati e limiti in `docs/analisi/funzioni.md`.
+
+## `harness.py`
+
+Esegue funzioni dell'eseguibile originale in Unicorn: l'oracolo dei test differenziali.
+
+```sh
+.venv/bin/python tools/harness.py "$AC1/AssassinsCreed_Dx9.exe" selftest
+.venv/bin/python tools/harness.py "$AC1/AssassinsCreed_Dx9.exe" call 0xFA6790 s:Altair
+```
+
+Uso da Python, mappa della memoria e limiti in `docs/analisi/harness.md`.

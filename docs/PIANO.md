@@ -74,13 +74,14 @@ Completata il 2026-11-14 (WSL, 28 core, 31 GB RAM). Dettagli in `ambiente.md`.
 - [ ] Importare RTTI e funzioni in Ghidra per avere una vista navigabile (spostato: si fa
   quando servirà leggere codice, non blocca il gate)
 
-### 0.8 Harness Unicorn
+### 0.8 Harness Unicorn ✅
 
-- [ ] `tools/harness.py`: mappa l'immagine a `0x400000`, prepara stack, TEB e `fs:`, intercetta
-  gli import con stub
-- [ ] Eseguire una funzione foglia del gioco (es. una routine di stringhe o math del CRT)
-  e confrontarne il risultato
-- [ ] Documentare in `analisi/harness.md` come scrivere un test differenziale
+- [x] `tools/harness.py`: immagine a `0x400000`, stack, TEB e `fs:` (tramite GDT), import
+  intercettati da trampolini con gestori in Python
+- [x] `selftest`: `strlen`, `strcmp` e `memcpy` del CRT eseguiti dall'originale e confrontati
+  con Python; una funzione del motore con prologo SEH ritorna correttamente
+- [x] `analisi/harness.md`: uso, struttura, limiti
+- [ ] Prima prova su codice del motore (CRC-32 dei nomi di classe): va trovata la funzione
 
 ### 0.9 L'originale DX9 in esecuzione (non bloccante)
 
@@ -160,6 +161,9 @@ ampio di funzioni.
 
 ## Prossimi passi concreti
 
-1. **0.8**: harness Unicorn.
-2. **0.10**: ricognizione dei `.forge`.
-3. **0.9**: far partire l'originale DX9 (non bloccante).
+Il gate della Fase 0 è soddisfatto (funzioni, RTTI, import, Unicorn). Restano due attività
+di ricognizione, poi si apre la Fase 1.
+
+1. **0.10**: ricognizione dei `.forge`.
+2. **0.9**: far partire l'originale DX9 (non bloccante, serve l'utente su Windows).
+3. **Fase 1**: workspace Rust e ricompilatore.

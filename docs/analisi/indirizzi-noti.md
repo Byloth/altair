@@ -56,3 +56,13 @@ Tipi di pad: `MouseKeyboardPad`, `PCPad`, `XenonPad`, `PS2Pad`. Ci sono 16 pulsa
 
 EaglePatch distingue DX9 e DX10 leggendo il dword in `0x00401376`: vale `0x42D6` nella DX9.
 Nella DX10 si legge `0x004013DF`, che vale `0x428D`.
+
+## CRT (trovati dalle firme di byte, verificati con `tools/harness.py selftest`)
+
+| Indirizzo | Cosa |
+|---|---|
+| `0x00FA6790` | `strlen` |
+| `0x00FA9760` | `strcmp` |
+| `0x00F9FB80` | `memcpy` (o `memmove`: stessa sequenza iniziale; ce n'è una seconda a `0x00FA0120`) |
+| `0x00FA8E10` | probabilmente `_decode_pointer` (chiamata da `_purecall`, usa `TlsGetValue`) |
+| `0x01915AC0` | tabella CRC-32 standard in `.data`, senza riferimenti diretti |

@@ -41,3 +41,6 @@
   (96.781 con `--strict`; scimitar-recomp 98.470). Dall'entry per chiamate dirette si
   raggiungono solo 7.216 funzioni: il resto passa da vtable e puntatori. 3,7 MB di `.text`
   sono codice non referenziato → `analisi/funzioni.md`. Import in Ghidra rimandato.
+- **0.8 chiusa.** `tools/harness.py`: `strlen`, `strcmp`, `memcpy` dell'originale eseguiti in
+  Unicorn e verificati; `fs:` impostato tramite GDT (Unicorn a 32 bit non accetta FS_BASE).
+  Gate della Fase 0 soddisfatto → `analisi/harness.md`.

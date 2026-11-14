@@ -23,6 +23,8 @@ sostituisci qui la voce con un rimando.
   funclet e handler SEH.
 - [ ] **A cosa servono i 17 MB in più di `.data` nella DX10?** Curiosità: non blocca nulla.
 - [ ] Cosa contengono `.data1` e `_RDATA` (presenti in tutti e due).
+- [ ] Quale funzione calcola il CRC-32 dei nomi di classe? La tabella a `0x01915AC0` non ha
+  riferimenti diretti → `analisi/harness.md`.
 
 ## Fase 2–3: runtime
 
