@@ -485,6 +485,21 @@ impl Emitter<'_> {
 
         match m {
             Nop | Pause | Wait | Prefetchnta | Prefetcht0 | Prefetcht1 | Prefetcht2 => Ok(String::new()),
+            Mov if ins.op1_kind() == OpKind::Register && ins.op1_register().is_segment_register() => {
+                // Selettori di un processo a 32 bit su Windows a 64 bit. Il CRT li legge solo per
+                // riempire il contesto di un'eccezione.
+                let sel = match ins.op1_register() {
+                    Register::CS => 0x23,
+                    Register::FS => 0x53,
+                    _ => 0x2b,
+                };
+                if ins.op0_kind() == OpKind::Memory {
+                    Ok(format!("wr16(c, {}, {sel:#x});", ea(ins)?))
+                } else {
+                    Ok(format!("{} = {sel:#x}u;", reg32(ins.op0_register())?))
+                }
+            }
+            Xlatb => Ok("SET8L(c->eax, rd8(c, c->ebx + (u8)c->eax));".into()),
             Mov => {
                 let n = bits(ins, 0)?;
                 write(ins, 0, n, &read(ins, 1, n)?)
@@ -624,10 +639,24 @@ impl Emitter<'_> {
                     write(ins, 0, n, "r")?
                 ))
             }
-            Bts | Btr | Btc => {
-                if ins.op0_kind() == OpKind::Memory && ins.op1_kind() == OpKind::Register {
-                    return Err("bt su stringa di bit".into());
+            Bt | Bts | Btr | Btc if ins.op0_kind() == OpKind::Memory && ins.op1_kind() == OpKind::Register => {
+                // Stringa di bit: l'indice (con segno) sceglie anche la parola, oltre al bit.
+                if bits(ins, 0)? != 32 {
+                    return Err("bt su stringa di bit a 16 bit".into());
                 }
+                let upd = match m {
+                    Bt => "",
+                    Bts => " wr32(c, p, w | bit);",
+                    Btr => " wr32(c, p, w & ~bit);",
+                    _ => " wr32(c, p, w ^ bit);",
+                };
+                Ok(format!(
+                    "{{ u32 i = {}, p = {} + (u32)(((s32)i >> 5) * 4), bit = 1u << (i & 31), w = rd32(c, p); cf = (w & bit) != 0;{upd} }}",
+                    read(ins, 1, 32)?,
+                    ea(ins)?
+                ))
+            }
+            Bts | Btr | Btc => {
                 let n = bits(ins, 0)?;
                 let op = match m {
                     Bts => "a | bit",
@@ -643,11 +672,9 @@ impl Emitter<'_> {
                 ))
             }
             Bsf | Bsr => {
-                if bits(ins, 0)? != 32 {
-                    return Err("bsf/bsr a 16 bit".into());
-                }
+                let n = bits(ins, 0)?;
                 let f = if m == Bsf { "(u32)__builtin_ctz(a)" } else { "31u - (u32)__builtin_clz(a)" };
-                Ok(format!("{{ u32 a = {}; zf = a == 0; if (a) {{ {} }} }}", read(ins, 1, 32)?, write(ins, 0, 32, f)?))
+                Ok(format!("{{ u32 a = {}; zf = a == 0; if (a) {{ {} }} }}", read(ins, 1, n)?, write(ins, 0, n, f)?))
             }
             Pushfd => Ok("{ u32 v = EFLAGS(); c->esp -= 4; wr32(c, c->esp, v); }".into()),
             Popfd => Ok("{ u32 v = rd32(c, c->esp); c->esp += 4; SET_EFLAGS(v) }".into()),
@@ -674,9 +701,6 @@ impl Emitter<'_> {
                 Ok(format!("{r} = __builtin_bswap32({r});"))
             }
             Bt => {
-                if ins.op0_kind() == OpKind::Memory && ins.op1_kind() == OpKind::Register {
-                    return Err("bt su stringa di bit".into());
-                }
                 let n = bits(ins, 0)?;
                 Ok(format!("cf = ({} >> ({} & {})) & 1;", read(ins, 0, n)?, read(ins, 1, 8)?, n - 1))
             }
@@ -977,9 +1001,138 @@ impl Emitter<'_> {
             Fldcw => Ok(format!("altair_set_fpcw(c, rd16(c, {}));", ea(ins)?)),
             Fninit => Ok("{ c->fptop = 0; c->fpsw = 0; altair_set_fpcw(c, 0x37f); }".into()),
             Fnclex | Ffree | Fnop => Ok(String::new()),
+            Fnstenv => Ok(format!("x87_env_store(c, {});", ea(ins)?)),
+            Fldenv => Ok(format!("x87_env_load(c, {});", ea(ins)?)),
+            Fnsave => Ok(format!("x87_save(c, {});", ea(ins)?)),
+            Frstor => Ok(format!("x87_restore(c, {});", ea(ins)?)),
             Fincstp => Ok("fpop(c);".into()),
             Fdecstp => Ok("c->fptop = (c->fptop - 1) & 7;".into()),
             other => Err(format!("{other:?}")),
+        }
+    }
+
+    /// MMX: registri MM come mantisse dei registri x87. Riusa le operazioni a corsie di SSE
+    /// sulla metà bassa di un valore a 128 bit.
+    fn mmx(&self, ins: &Instruction) -> R<String> {
+        use Mnemonic::*;
+        let m = ins.mnemonic();
+        let kind = |k: u32| ins.op_kind(k);
+        let is_mm = |k: u32| kind(k) == OpKind::Register && ins.op_register(k).is_mm();
+        let mm = |k: u32| -> R<u32> {
+            if is_mm(k) {
+                Ok(ins.op_register(k) as u32 - Register::MM0 as u32)
+            } else {
+                Err(format!("{m:?}"))
+            }
+        };
+        // Sorgente a 64 bit: registro MM o memoria.
+        let src = |k: u32| -> R<String> {
+            if kind(k) == OpKind::Memory {
+                Ok(format!("rd64(c, {})", ea(ins)?))
+            } else {
+                Ok(format!("mmr(c, {})", mm(k)?))
+            }
+        };
+        let imm = |k: u32| ins.immediate(k) as u32 & 0xff;
+        let bin = |f: &str| -> R<String> {
+            let d = mm(0)?;
+            Ok(format!("mmw(c, {d}, x_{f}(xq(mmr(c, {d})), xq({})).q[0]);", src(1)?))
+        };
+        // Le varianti "alte" lavorano sulla metà alta dei 64 bit: si scorre e si usa quella bassa.
+        let bin_high = |f: &str| -> R<String> {
+            let d = mm(0)?;
+            Ok(format!("mmw(c, {d}, x_{f}(xq(mmr(c, {d}) >> 32), xq({} >> 32)).q[0]);", src(1)?))
+        };
+        let pack = |f: &str| -> R<String> {
+            let d = mm(0)?;
+            Ok(format!("mmw(c, {d}, m_{f}(mmr(c, {d}), {}));", src(1)?))
+        };
+        let shift = |f: &str| -> R<String> {
+            let d = mm(0)?;
+            let n = if kind(1) == OpKind::Immediate8 { format!("{}", imm(1)) } else { src(1)? };
+            Ok(format!("mmw(c, {d}, x_{f}(xq(mmr(c, {d})), {n}).q[0]);"))
+        };
+        match m {
+            Emms => Ok("c->fptop = 0;".into()),
+            Movq => {
+                if is_mm(0) {
+                    Ok(format!("mmw(c, {}, {});", mm(0)?, src(1)?))
+                } else {
+                    Ok(format!("wr64(c, {}, mmr(c, {}));", ea(ins)?, mm(1)?))
+                }
+            }
+            Movntq => Ok(format!("wr64(c, {}, mmr(c, {}));", ea(ins)?, mm(1)?)),
+            Movd => {
+                if is_mm(0) {
+                    Ok(format!("mmw(c, {}, (u64){});", mm(0)?, read(ins, 1, 32)?))
+                } else {
+                    write(ins, 0, 32, &format!("(u32)mmr(c, {})", mm(1)?))
+                }
+            }
+            Pand => bin("and"),
+            Pandn => bin("andn"),
+            Por => bin("or"),
+            Pxor => bin("xor"),
+            Paddb => bin("paddb"),
+            Paddw => bin("paddw"),
+            Paddd => bin("paddd"),
+            Paddq => bin("paddq"),
+            Psubb => bin("psubb"),
+            Psubw => bin("psubw"),
+            Psubd => bin("psubd"),
+            Psubq => bin("psubq"),
+            Paddsw => bin("paddsw"),
+            Psubsw => bin("psubsw"),
+            Paddusw => bin("paddusw"),
+            Psubusw => bin("psubusw"),
+            Pmaxsw => bin("pmaxsw"),
+            Pminsw => bin("pminsw"),
+            Pmaddwd => bin("pmaddwd"),
+            Pmullw => bin("pmullw"),
+            Pmulhw => bin("pmulhw"),
+            Pcmpeqb => bin("pcmpeqb"),
+            Pcmpeqw => bin("pcmpeqw"),
+            Pcmpeqd => bin("pcmpeqd"),
+            Pcmpgtw => bin("pcmpgtw"),
+            Pcmpgtd => bin("pcmpgtd"),
+            Punpcklbw => bin("punpcklbw"),
+            Punpcklwd => bin("punpcklwd"),
+            Punpckldq => bin("unpcklps"),
+            Punpckhbw => bin_high("punpcklbw"),
+            Punpckhwd => bin_high("punpcklwd"),
+            Punpckhdq => bin_high("unpcklps"),
+            Packssdw => pack("packssdw"),
+            Packsswb => pack("packsswb"),
+            Packuswb => pack("packuswb"),
+            Psllw => shift("psllw"),
+            Psrlw => shift("psrlw"),
+            Psraw => shift("psraw"),
+            Pslld => shift("pslld"),
+            Psrld => shift("psrld"),
+            Psrad => shift("psrad"),
+            Psllq => shift("psllq"),
+            Psrlq => shift("psrlq"),
+            Pshufw => Ok(format!("mmw(c, {}, m_pshufw({}, {}));", mm(0)?, src(1)?, imm(2))),
+            Cvttps2pi | Cvtps2pi => {
+                let s = if kind(1) == OpKind::Memory {
+                    format!("xq(rd64(c, {}))", ea(ins)?)
+                } else {
+                    format!("c->xmm[{}]", ins.op1_register().number())
+                };
+                let conv = if m == Cvttps2pi { "x_f2i(s.f[I])" } else { "x_f2i(rintf(s.f[I]))" };
+                Ok(format!(
+                    "{{ Xmm s = {s}; mmw(c, {}, (u64){} | ((u64){} << 32)); }}",
+                    mm(0)?,
+                    conv.replace('I', "0"),
+                    conv.replace('I', "1")
+                ))
+            }
+            Cvtpi2ps => Ok(format!(
+                "{{ u64 s = {}; c->xmm[{d}].f[0] = (float)(s32)s; c->xmm[{d}].f[1] = (float)(s32)(s >> 32); }}",
+                src(1)?,
+                d = ins.op0_register().number()
+            )),
+            other => Err(format!("MMX {other:?}")),
         }
     }
 
@@ -988,6 +1141,9 @@ impl Emitter<'_> {
         use Mnemonic::*;
         let m = ins.mnemonic();
         let kind = |k: u32| ins.op_kind(k);
+        if m == Emms || (0..ins.op_count()).any(|k| kind(k) == OpKind::Register && ins.op_register(k).is_mm()) {
+            return self.mmx(ins);
+        }
         let xmm = |k: u32| -> R<String> {
             let r = ins.op_register(k);
             if kind(k) == OpKind::Register && r.is_xmm() {
@@ -1140,6 +1296,25 @@ impl Emitter<'_> {
             Rcpps => packed1("rcpps"),
             Cvtpd2ps => packed1("cvtpd2ps"),
             Cvtdq2ps => packed1("cvtdq2ps"),
+            Cvtdq2pd => Ok(format!(
+                "{} = x_cvtdq2pd({});",
+                xmm(0)?,
+                if kind(1) == OpKind::Memory { format!("xq(rd64(c, {}))", ea(ins)?) } else { xmm(1)? }
+            )),
+            // Con sorgente in memoria (con un registro MM passa da `mmx`).
+            Cvtpi2ps => Ok(format!(
+                "{{ u64 s = rd64(c, {}); {d}.f[0] = (float)(s32)s; {d}.f[1] = (float)(s32)(s >> 32); }}",
+                ea(ins)?,
+                d = xmm(0)?
+            )),
+            Movntps | Movntpd | Movntdq => Ok(format!("xst(c, {}, {});", ea(ins)?, xmm(1)?)),
+            Paddsw => packed2("paddsw"),
+            Psubsw => packed2("psubsw"),
+            Paddusw => packed2("paddusw"),
+            Psubusw => packed2("psubusw"),
+            Pmaxsw => packed2("pmaxsw"),
+            Pminsw => packed2("pminsw"),
+            Pmaddwd => packed2("pmaddwd"),
             Cvttps2dq => packed1("cvttps2dq"),
             Cvtps2dq => packed1("cvtps2dq"),
             // L'operando in memoria di `cvtps2pd` è di soli 64 bit.

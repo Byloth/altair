@@ -113,3 +113,10 @@ Anomalie nelle partenze **forti** (codice sicuramente vero), da risolvere in Fas
    interne (blocchi `catch`), non funzioni chiamabili.
 5. Non usa le tabelle delle eccezioni C++ (`FuncInfo`, unwind map), che darebbero funclet e
    handler in modo certo anziché euristico.
+
+## Aggiornamento del 2026-11-15: la scoperta in Rust
+
+I numeri sopra sono del prototipo in Python. `altair discover` oggi dà **116.077 funzioni e
+3.221.462 istruzioni**, con 641 jump table. Tra le partenze scartate ci sono ora anche le
+tabelle di indici degli switch a due livelli, che si decodificavano come `push es`/`pop es`:
+vedi `traduttore.md`, "Le ultime 42 funzioni".

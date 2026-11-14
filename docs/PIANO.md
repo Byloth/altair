@@ -121,7 +121,7 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
   `mul`/`div` a 8 e 16 bit, `bsf`/`bsr` (copertura: 89,5% delle funzioni)
 - [ ] Scenari mirati per le istruzioni tradotte ma non ancora verificate (`rcl`, `bt*`,
   `bsf`/`bsr`, `pushfd`/`popfd`, `sahf`/`lahf`, `cmpsb`, `lodsb`)
-- [ ] MMX (mixer audio di DARE)
+- [x] MMX (mixer audio) e le ultime istruzioni rare: **tutte le 116.077 funzioni si traducono**
 
 ### 1.3 Verifica
 
@@ -198,5 +198,5 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 1. **1.4**: immagine intera tradotta e compilata in più file; tempo e dimensione misurati.
    È il gate della Fase 1.
-2. Scenari mirati per le istruzioni non ancora verificate; MMX e le 42 funzioni rimaste.
+2. Scenari mirati per le istruzioni non ancora verificate.
 3. Poi Fase 2: runtime Win32, per far partire il CRT del gioco.

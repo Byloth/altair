@@ -9,7 +9,7 @@ $A info $E                         # hash, sezioni, import
 $A rtti $E                         # conteggi RTTI e vtable
 $A discover $E [--strict] [--out private/functions.json]
 $A translate $E --out build/gen/x.c 0xFA6790 ...   # traduce in C le funzioni e ciò che chiamano
-$A coverage $E                     # quante funzioni si traducono, e cosa blocca le altre
+$A coverage $E [--list]            # quante funzioni si traducono, e cosa blocca le altre
 $A census $E                       # ogni istruzione: quante volte compare, quante non traducibili
 $A candidates $E --max 500         # funzioni adatte al test differenziale
 .venv/bin/python tools/difftest.py $E              # scenari scritti a mano
@@ -138,17 +138,49 @@ quelle con istruzioni x87 trascendenti (l'emulatore le calcola in doppia precisi
 
 | | Solo intere | Con atomiche | Con SSE | **Con x87** |
 |---|---|---|---|---|
-| Funzioni che si traducono per intero | 85,9% | 89,5% | 94,3% | **116.048 su 116.090 (99,96%)** |
+| Funzioni che si traducono per intero | 85,9% | 89,5% | 94,3% | 116.048 su 116.090 (99,96%), poi **tutte** (vedi sotto) |
 | Istruzioni in quelle funzioni, contate per funzione | 59,5% | 65,1% | 74,5% | **99,9%** |
 | Istruzioni distinte non traducibili | — | 10,9% | 2,9% | **336 su 3.223.348** |
 
 "Si traduce" significa che il traduttore emette C per ogni istruzione, **non** che il risultato
 sia verificato: per quello c'è il test differenziale qui sotto.
 
-Restano 42 funzioni. Primo ostacolo di ciascuna: `push`/`pop` di registri di segmento o a 16
-bit (14), MMX (`movq`, `pxor`, `movd`, `emms`, `punpckhbw`, `cvttps2pi`: 15), `xlatb` (2),
-`fnstenv`, `fnsave`, `movntps`, `cvtdq2pd`, `enter`, `loopne`, e tre forme rare di `bt`/`bsf`.
-Diverse sono con ogni probabilità dati decodificati come codice.
+### Le ultime 42 funzioni (2026-11-15)
+
+Dopo x87 restavano 42 funzioni non traducibili. `altair coverage --list` le elenca con origine
+e motivo. Erano di due tipi.
+
+**17 non erano funzioni.** Erano dati presi per codice dalla scoperta:
+- 14 tabelle di indici degli switch a due livelli. I loro byte (`00 01 02 03 04 05 06 07…`) si
+  decodificano come `add`, `push es`, `pop es`, `pop ds`. Stanno subito dopo la tabella di
+  indirizzi, a un indirizzo allineato, e il codice ne carica l'indirizzo come immediato;
+- 3 costanti "tonde" nei dati (`0xD20000`, `0x1640000`, `0x113F9F0`).
+
+La scoperta ora scarta le partenze che contengono `push`/`pop` di un registro di segmento,
+`enter`, `clts`, `loope`/`loopne`. Le funzioni scendono da 116.090 a **116.077**.
+
+**25 erano codice vero**, ora tradotto:
+
+| Funzioni | Cosa | Dove |
+|---|---|---|
+| 13 | MMX: `movq movd emms pshufw punpck* pcmpgtw pmulhw padd* psub* pack* psll* psra* cvttps2pi` | mixer audio (`0x8146F0`…, `0x833DF0`…) e due a `0x1023410` |
+| 3 | `mov [mem], ss` e altri registri di segmento | il CRT che cattura il contesto di un'eccezione |
+| 2 | `xlatb` | CRT |
+| 2 | `fnstenv`, `fnsave` (con `fldenv`, `frstor`) | CRT, gestione degli errori matematici |
+| 5 | `bsr` a 16 bit, `bts` su stringa di bit, `cvtdq2pd`, `movntps` | varie |
+
+I registri MM sono le mantisse dei registri x87 fisici, come sull'hardware; le operazioni
+riusano quelle a corsie di SSE. I registri di segmento restituiscono i selettori di un processo
+a 32 bit su Windows a 64 bit (`cs` 0x23, `ds`/`es`/`ss` 0x2B, `fs` 0x53).
+
+**Ora `altair coverage` dà 116.077 funzioni su 116.077 e `altair census` zero istruzioni non
+traducibili.**
+
+Verifica di quelle 25 (`difftest.py --funcs …`, 40 casi ciascuna): 17 identiche, di cui 9 a
+meno dell'esponente dei registri MMX (vedi sotto); 7 saltate perché non girano con ingressi
+casuali (le tre del contesto d'eccezione, le due con `xlatb`, quella con `bsr` a 16 bit, una
+MMX); 1 diversa, `0xFB3476`, solo nei campi dell'ambiente x87 scritti da `fnstenv` che non
+modelliamo (tag, puntatori all'ultima istruzione, bit riservati).
 
 ## Test differenziale (`tools/difftest.py`)
 
@@ -183,12 +215,12 @@ ingressi il caso è saltato.
 | | |
 |---|---|
 | Funzioni provate | 8.000 |
-| **Identiche all'originale** in tutti i casi eseguiti | **4.201** |
-| di cui identiche a meno del segno o del payload di un NaN | 6 |
+| **Identiche all'originale** in tutti i casi eseguiti | **4.199** |
+| di cui identiche a meno di un NaN o dell'esponente di un registro MMX | 9 |
 | Diverse | **0** |
-| Saltate (nessun caso eseguibile con ingressi casuali) | 3.799 |
-| Funzioni eseguite in casi identici, comprese quelle chiamate | 4.939 |
-| Istruzioni in quelle funzioni | 141.884, di 199 tipi |
+| Saltate (nessun caso eseguibile con ingressi casuali) | 3.801 |
+| Funzioni eseguite in casi identici, comprese quelle chiamate | 4.935 |
+| Istruzioni in quelle funzioni | 142.138, di 213 tipi |
 | Tempo | circa 3 minuti |
 
 Istruzioni x87 presenti nelle funzioni verificate: `fld` 3.051, `fstp` 2.305, `fmul` 545, `fxch`
@@ -200,7 +232,8 @@ il cambio di arrotondamento (la sequenza di MSVC per convertire un float in inte
 Istruzioni SSE nelle funzioni verificate (campione precedente, da 6.000): `movaps` 5.142,
 `movss` 4.395, `shufps` 1.208, `mulps` 1.173, `cvtps2pd` 892, `addps` 830, e altre 60.
 
-**Tradotte ma assenti dalle funzioni verificate:** `fisubr`, `paddd`, `paddq`, `pmuludq`, e tra
+**Tradotte ma assenti dalle funzioni verificate:** `fisubr`, `paddq`, `pmuludq`, `paddsw`,
+`pshufw`, `punpckhbw`, `cvtpi2ps`, `xlatb`, `fldenv`, `frstor`, `mov` da registro di segmento, e tra
 le intere `rcl`, `bts`/`btr`/`btc`, `bsf`/`bsr`, `pushfd`/`popfd`, `sahf`/`lahf`, `cmpsb`,
 `lodsb`. **Tradotte ed escluse per scelta dal confronto:** le x87 trascendenti, `fprem`,
 `fprem1`. Poche occorrenze (meno di 5): `frndint`, `fldpi`, `fucom`, `fiadd`, `fimul`, `fidiv`.
@@ -229,7 +262,10 @@ strutturati che il generatore non sa costruire; lo stack x87 parte sempre vuoto.
    eseguito un `ldmxcsr`). Ora ogni caso parte da uno stato ripristinato, e le sezioni di sola
    lettura sono protette nell'emulatore e controllate nel tradotto.
 
-5. **Codice che prosegue dentro un'altra funzione.** Dopo una `call`, le routine matematiche
+5. **MMX nell'emulatore.** Dopo un'istruzione MMX l'hardware porta a tutti uno l'esponente
+   del registro x87 che la ospita; l'emulatore lo lascia invariato. Il tradotto segue
+   l'hardware; il test tollera la differenza e la conta con quelle sui NaN.
+6. **Codice che prosegue dentro un'altra funzione.** Dopo una `call`, le routine matematiche
    del CRT continuano in codice che è anche l'inizio di un'altra funzione. Il traduttore la
    trattava come tail call senza includerla tra le funzioni da tradurre. Corretto.
 
@@ -239,7 +275,7 @@ eseguiti, registri e prime differenze di memoria.
 ## Limiti noti
 
 - Flag non confrontati direttamente dal test (solo attraverso i loro effetti).
-- Niente MMX: vedi copertura.
+- `fnstenv`/`fnsave` scrivono solo parola di controllo, parola di stato e registri.
 - x87 con `long double`: funziona solo su host con formato esteso a 80 bit (x86). Per ARM e
   wasm servirà un'implementazione software dell'x87. È il vincolo più pesante verso il web.
 - La parola di controllo x87 dell'host è quella del guest durante tutta l'esecuzione guest: le

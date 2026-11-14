@@ -23,7 +23,8 @@ uso: altair <comando> <AssassinsCreed_Dx9.exe> [opzioni]
                             traduce in C le funzioni indicate e quelle che chiamano
   candidates [--max N]      funzioni adatte al test differenziale: tutta la chiusura è
                             traducibile, senza import né chiamate indirette
-  coverage                  quante funzioni si traducono oggi, e cosa blocca le altre
+  coverage [--list]         quante funzioni si traducono oggi, e cosa blocca le altre;
+                            --list elenca ogni funzione non tradotta con origine e motivo
   census                    quante volte compare ogni istruzione nel codice raggiunto,
                             e quante di quelle il traduttore sa già emettere
 
@@ -66,7 +67,7 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         "rtti" => rtti_stats(&img),
         "discover" => discover_cmd(&img, flag(args, "--strict"), value(args, "--out"))?,
         "translate" => translate_cmd(&img, args)?,
-        "coverage" => coverage_cmd(&img),
+        "coverage" => coverage_cmd(&img, flag(args, "--list")),
         "census" => census_cmd(&img),
         "candidates" => candidates_cmd(&img, value(args, "--max").and_then(|v| v.parse().ok()).unwrap_or(500)),
         _ => return Err(USAGE.into()),
@@ -163,6 +164,10 @@ fn discover_cmd(img: &Image, strict: bool, out: Option<&str>) -> std::io::Result
     Ok(())
 }
 
+fn origin_label(o: &discover::Origin) -> String {
+    if o.via_call { format!("{} → call", o.kind.label()) } else { o.kind.label().to_string() }
+}
+
 /// Le partenze certe: un salto verso una di queste è una tail call, non codice interno.
 fn hard_starts(d: &Discovery) -> HashSet<u32> {
     d.starts
@@ -241,7 +246,8 @@ fn translate_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-fn coverage_cmd(img: &Image) {
+fn coverage_cmd(img: &Image, list: bool) {
+    let mut failures: Vec<(u32, String, String)> = Vec::new();
     let (d, _) = Discovery::run(img, false, false);
     let hard = hard_starts(&d);
     let is_hard = |a: u32| hard.contains(&a);
@@ -258,10 +264,16 @@ fn coverage_cmd(img: &Image) {
                         ok += 1;
                         ok_insns += f.insns.len();
                     }
-                    Err(e) => *blockers.entry(e.split(' ').next().unwrap_or("?").to_string()).or_default() += 1,
+                    Err(e) => {
+                        *blockers.entry(e.split(' ').next().unwrap_or("?").to_string()).or_default() += 1;
+                        failures.push((a, origin_label(&d.starts[&a]), e));
+                    }
                 }
             }
-            Err(e) => *blockers.entry(format!("[decodifica] {}", e.split(" (").next().unwrap_or("?"))).or_default() += 1,
+            Err(e) => {
+                *blockers.entry(format!("[decodifica] {}", e.split(" (").next().unwrap_or("?"))).or_default() += 1;
+                failures.push((a, origin_label(&d.starts[&a]), format!("[decodifica] {e}")));
+            }
         }
     }
     let n = d.starts.len();
@@ -276,6 +288,12 @@ fn coverage_cmd(img: &Image) {
     }
     if b.len() > 40 {
         println!("  ... e altri {} motivi", b.len() - 40);
+    }
+    if list {
+        println!("funzioni non tradotte:");
+        for (a, origin, why) in &failures {
+            println!("  {a:#010x}  {origin:<26} {why}");
+        }
     }
 }
 

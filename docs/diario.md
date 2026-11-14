@@ -88,3 +88,9 @@
 - Il test confronta anche lo stato x87. Campione di 8.000 funzioni: **4.201 identiche, 0
   diverse** (6 a meno di un NaN). Corretto un caso: codice che dopo una `call` prosegue dentro
   un'altra funzione (routine matematiche del CRT) → `analisi/traduttore.md`, `decisioni.md`.
+- **Le ultime 42 funzioni.** 17 erano dati (tabelle di indici degli switch, costanti tonde):
+  ora la scoperta le scarta. 25 erano codice vero: MMX dei mixer audio, registri di segmento,
+  `xlatb`, `fnstenv`/`fnsave`, `bts` su stringa di bit e poche altre. **Ora si traducono tutte
+  le 116.077 funzioni.** Verifica delle 25: 17 identiche, 7 saltate, 1 diversa solo nei campi
+  non modellati di `fnstenv`. Campione da 8.000: 4.199 identiche, 0 diverse.
+  `altair coverage --list`, `difftest.py --funcs` → `analisi/traduttore.md`.

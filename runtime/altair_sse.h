@@ -104,6 +104,14 @@ X_INT2(pcmpgtd, d, 4, (s32)a.d[i] > (s32)b.d[i] ? 0xffffffffu : 0)
 X_INT2(pmullw, w, 8, (u16)((s16)a.w[i] * (s16)b.w[i]))
 X_INT2(pmulhw, w, 8, (u16)(((s32)(s16)a.w[i] * (s32)(s16)b.w[i]) >> 16))
 X_INT2(pmuludq, q, 2, (u64)a.d[2 * i] * b.d[2 * i])
+static inline s32 x_sat16(s32 v) { return v > 32767 ? 32767 : v < -32768 ? -32768 : v; }
+X_INT2(paddsw, w, 8, (u16)x_sat16((s16)a.w[i] + (s16)b.w[i]))
+X_INT2(psubsw, w, 8, (u16)x_sat16((s16)a.w[i] - (s16)b.w[i]))
+X_INT2(paddusw, w, 8, (u16)(a.w[i] + b.w[i] > 0xffff ? 0xffff : a.w[i] + b.w[i]))
+X_INT2(psubusw, w, 8, (u16)(a.w[i] > b.w[i] ? a.w[i] - b.w[i] : 0))
+X_INT2(pmaxsw, w, 8, (s16)a.w[i] > (s16)b.w[i] ? a.w[i] : b.w[i])
+X_INT2(pminsw, w, 8, (s16)a.w[i] < (s16)b.w[i] ? a.w[i] : b.w[i])
+X_INT2(pmaddwd, d, 4, (u32)((s32)(s16)a.w[2 * i] * (s16)b.w[2 * i] + (s32)(s16)a.w[2 * i + 1] * (s16)b.w[2 * i + 1]))
 
 static inline Xmm x_cmpps(Xmm a, Xmm b, u32 imm) {
     Xmm r;
@@ -136,6 +144,7 @@ static inline Xmm x_punpcklwd(Xmm a, Xmm b) { Xmm r; for (int i = 0; i < 4; i++)
 static inline Xmm x_movhlps(Xmm a, Xmm b) { a.q[0] = b.q[1]; return a; }
 static inline Xmm x_movlhps(Xmm a, Xmm b) { a.q[1] = b.q[0]; return a; }
 
+static inline Xmm x_cvtdq2pd(Xmm s) { Xmm r; r.db[0] = (double)(s32)s.d[0]; r.db[1] = (double)(s32)s.d[1]; return r; }
 static inline Xmm x_cvtps2pd(Xmm s) { Xmm r; r.db[0] = (double)s.f[0]; r.db[1] = (double)s.f[1]; return r; }
 static inline Xmm x_cvtpd2ps(Xmm s) { Xmm r = {.q = {0, 0}}; r.f[0] = (float)s.db[0]; r.f[1] = (float)s.db[1]; return r; }
 static inline Xmm x_cvtdq2ps(Xmm s) { Xmm r; for (int i = 0; i < 4; i++) r.f[i] = (float)(s32)s.d[i]; return r; }

@@ -81,7 +81,7 @@ fn never_executed(m: Mnemonic) -> bool {
         m,
         In | Out | Insb | Insd | Insw | Outsb | Outsd | Outsw | Les | Lds | Aaa | Aas | Aam | Aad | Daa | Das
             | Iret | Iretd | Hlt | Cli | Sti | Salc | Int1 | Into | Bound | Arpl | Retf | Int | Lgdt | Lidt
-            | Xlatb | Popa | Popad | Pusha | Pushad
+            | Xlatb | Popa | Popad | Pusha | Pushad | Enter | Clts | Loopne | Loope
     )
 }
 
@@ -198,7 +198,12 @@ impl<'a> Discovery<'a> {
                     return Err("sovrapposizione");
                 }
                 let m = ins.mnemonic();
-                if never_executed(m) || (m == Mnemonic::Int3 && addr == start) {
+                // `push es`, `pop ds`…: sono i byte 06, 07, 0E, 16, 17, 1E, 1F delle tabelle di
+                // indici degli switch a due livelli, non codice a 32 bit.
+                let seg_stack = matches!(m, Mnemonic::Push | Mnemonic::Pop)
+                    && ins.op0_kind() == OpKind::Register
+                    && ins.op0_register().is_segment_register();
+                if never_executed(m) || seg_stack || (m == Mnemonic::Int3 && addr == start) {
                     return Err("istruzione improbabile");
                 }
                 self.own[p] = INSN;

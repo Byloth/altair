@@ -5,6 +5,8 @@ Uso (dalla radice del progetto, con il Python del venv):
     .venv/bin/python tools/difftest.py <AssassinsCreed_Dx9.exe>                 scenari scritti a mano
     .venv/bin/python tools/difftest.py <AssassinsCreed_Dx9.exe> --auto N [--cases K]
         N funzioni scelte da `altair candidates`, K casi ciascuna (8) con ingressi generati;
+    .venv/bin/python tools/difftest.py <AssassinsCreed_Dx9.exe> --funcs 0xA,0xB [--cases K]
+        lo stesso sulle funzioni indicate, anche se non sono candidate;
         il dettaglio va in build/difftest-auto.txt
 
 Passi:
@@ -370,8 +372,13 @@ def same_but_nan(a, b):
 def x87_same_but_nan(a, b):
     """Stessa cima dello stack e stessi registri, a meno di registri che sono NaN in entrambi."""
     def nan(r):
-        return r[9] & 0x7F == 0x7F and r[8] == 0xFF
-    return a[0] == b[0] and all(x == y or (nan(x) and nan(y)) for x, y in zip(a[1], b[1]))
+        return (r[9] & 0x7F) == 0x7F and r[8] == 0xFF
+
+    def mmx(x, y):
+        # Dopo un'istruzione MMX l'hardware porta l'esponente del registro a tutti uno;
+        # l'emulatore lo lascia com'era. Il tradotto (y) segue l'hardware.
+        return x[:8] == y[:8] and y[8:] == b'\xff\xff'
+    return a[0] == b[0] and all(x == y or (nan(x) and nan(y)) or mmx(x, y) for x, y in zip(a[1], b[1]))
 
 
 def xmm_bytes(regs):
@@ -411,11 +418,15 @@ def instruction_report(gen, ok_roots):
     return len(done), verified, sorted(present - set(verified))
 
 
-def run_auto(exe, count, cases):
+def run_auto(exe, count, cases, only=None):
     import signal
-    out = subprocess.run([ALTAIR, 'candidates', exe, '--max', str(count)], check=True, capture_output=True, text=True)
-    print(out.stderr.strip())
-    roots = [int(x, 16) for x in out.stdout.split()]
+    if only:
+        roots = only
+    else:
+        out = subprocess.run([ALTAIR, 'candidates', exe, '--max', str(count)], check=True, capture_output=True,
+                             text=True)
+        print(out.stderr.strip())
+        roots = [int(x, 16) for x in out.stdout.split()]
     lib = build(exe, roots, name='difftest-auto', opt='-O1')
     oracle, native = harness.Guest(exe), Native(exe, lib)
     same, differ, never = [], [], []
@@ -481,7 +492,7 @@ def run_auto(exe, count, cases):
     print(f'{len(roots)} funzioni: {len(same)} identiche, {len(differ)} diverse, {len(never)} saltate')
     nan_ok = sorted(nan_only - set(differ))
     if nan_ok:
-        print(f'  di cui {len(nan_ok)} identiche a meno del segno o del payload di un NaN: '
+        print(f'  di cui {len(nan_ok)} identiche a meno di un NaN o dell\'esponente di un registro MMX: '
               + ' '.join(f'{a:#x}' for a in nan_ok[:8]))
     ndone, verified, missing = instruction_report(os.path.join(ROOT, 'build', 'gen', 'difftest-auto.c'), same)
     print(f'funzioni eseguite in casi identici, comprese quelle chiamate: {ndone}; '
@@ -503,4 +514,8 @@ if __name__ == '__main__':
         n = int(sys.argv[sys.argv.index('--auto') + 1])
         k = int(sys.argv[sys.argv.index('--cases') + 1]) if '--cases' in sys.argv else 8
         sys.exit(run_auto(sys.argv[1], n, k))
+    if '--funcs' in sys.argv:
+        addrs = [int(x, 16) for x in sys.argv[sys.argv.index('--funcs') + 1].split(',')]
+        k = int(sys.argv[sys.argv.index('--cases') + 1]) if '--cases' in sys.argv else 8
+        sys.exit(run_auto(sys.argv[1], 0, k, only=addrs))
     sys.exit(run(sys.argv[1]))

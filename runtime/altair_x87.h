@@ -79,4 +79,61 @@ static inline void x87_xam(Ctx *c) {
     c->fpsw = (c->fpsw & ~0x4700u) | cc | ((se & 0x8000) ? 0x200u : 0);
 }
 
+/* MMX: i registri MM sono le mantisse dei registri x87 fisici. Ogni scrittura porta la cima
+ * dello stack a 0 e l'esponente a tutti uno, come sull'hardware. */
+static inline u64 mmr(Ctx *c, int i) { u64 v; memcpy(&v, &c->fpr[i], 8); return v; }
+static inline void mmw(Ctx *c, int i, u64 v) {
+    u16 e = 0xffff;
+    memcpy(&c->fpr[i], &v, 8);
+    memcpy((u8 *)&c->fpr[i] + 8, &e, 2);
+    c->fptop = 0;
+}
+static inline u64 m_packssdw(u64 a, u64 b) {
+    Xmm r = {.q = {0, 0}};
+    r.w[0] = (u16)x_sat16((s32)a); r.w[1] = (u16)x_sat16((s32)(a >> 32));
+    r.w[2] = (u16)x_sat16((s32)b); r.w[3] = (u16)x_sat16((s32)(b >> 32));
+    return r.q[0];
+}
+static inline u64 m_packsswb(u64 a, u64 b) {
+    Xmm r = {.q = {0, 0}}, x = {.q = {a, b}};
+    for (int i = 0; i < 8; i++) { s32 v = (s16)x.w[i]; r.b[i] = (u8)(v > 127 ? 127 : v < -128 ? -128 : v); }
+    return r.q[0];
+}
+static inline u64 m_packuswb(u64 a, u64 b) {
+    Xmm r = {.q = {0, 0}}, x = {.q = {a, b}};
+    for (int i = 0; i < 8; i++) { s32 v = (s16)x.w[i]; r.b[i] = (u8)(v > 255 ? 255 : v < 0 ? 0 : v); }
+    return r.q[0];
+}
+static inline u64 m_pshufw(u64 s, u32 imm) {
+    Xmm x = {.q = {s, 0}}, r = {.q = {0, 0}};
+    for (int i = 0; i < 4; i++) r.w[i] = x.w[(imm >> (2 * i)) & 3];
+    return r.q[0];
+}
+
+/* Ambiente x87 a 32 bit (28 byte), per `fnstenv`/`fldenv` e in testa a `fnsave`/`frstor`.
+ * I tag non sono modellati: si scrivono come "tutti vuoti". */
+static inline void x87_env_store(Ctx *c, u32 a) {
+    memset(c->mem + a, 0, 28);
+    wr32(c, a, 0xffff0000u | c->fpcw);
+    wr32(c, a + 4, 0xffff0000u | X87_SW());
+    wr32(c, a + 8, 0xffffffffu);
+}
+static inline void x87_env_load(Ctx *c, u32 a) {
+    u32 sw = rd32(c, a + 4);
+    altair_set_fpcw(c, rd32(c, a) & 0xffff);
+    c->fptop = (sw >> 11) & 7;
+    c->fpsw = sw & 0x4700u;
+}
+static inline void x87_save(Ctx *c, u32 a) {
+    x87_env_store(c, a);
+    for (int i = 0; i < 8; i++) wrf80(c, a + 28 + 10 * i, ST(i));
+    c->fptop = 0;
+    c->fpsw = 0;
+    altair_set_fpcw(c, 0x37f);
+}
+static inline void x87_restore(Ctx *c, u32 a) {
+    x87_env_load(c, a);
+    for (int i = 0; i < 8; i++) ST(i) = rdf80(c, a + 28 + 10 * i);
+}
+
 #endif

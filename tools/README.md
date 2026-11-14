@@ -109,3 +109,5 @@ eseguiti) e sul tradotto, e mostra registri e prime differenze di heap e stack.
 
 Rinomina o sposta la cartella del progetto portando con sé conversazioni e memoria di Claude
 Code, poi ricrea il venv e ricompila. Va lanciato a sessione chiusa. Vedi `docs/ambiente.md`.
+
+`difftest.py --funcs 0xA,0xB --cases 40` prova funzioni scelte a mano, anche non candidate.
