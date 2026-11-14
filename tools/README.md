@@ -67,3 +67,19 @@ Esegue funzioni dell'eseguibile originale in Unicorn: l'oracolo dei test differe
 ```
 
 Uso da Python, mappa della memoria e limiti in `docs/analisi/harness.md`.
+
+## `forge.py`
+
+Lettore degli archivi `.forge` (contenitore versione 25), con decompressore LZO1X in Python.
+
+```sh
+python3 -I tools/forge.py summary "$AC1"                                  # una riga per archivio
+python3 -I tools/forge.py list "$AC1/DataPC.forge"                        # id, dimensione, nome
+python3 -I tools/forge.py sections "$AC1/DataPC.forge" 20                 # sezioni compresse
+python3 -I tools/forge.py head "$AC1/DataPC_Map_Menu.forge" Map_Menu      # hexdump dell'indice
+python3 -I tools/forge.py classes "$AC1/DataPC.forge" private/rtti-dx9.json [--objects]
+```
+
+`classes` conta gli oggetti per classe, traducendo i CRC-32 con i nomi di `rtti.py`. È lento
+sugli archivi grandi (quasi 3 minuti per `DataPC.forge`). Gli output contengono nomi e dati del
+gioco: vanno in `private/`. Formato e risultati in `docs/analisi/forge.md`.

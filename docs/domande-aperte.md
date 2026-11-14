@@ -37,7 +37,12 @@ sostituisci qui la voce con un rimando.
 
 ## Fase 6: gameplay (dal documento di progetto)
 
-- [ ] Missioni e investigazioni sono dati nei `.forge` o codice nell'eseguibile?
+- [x] ~~Missioni e investigazioni sono dati o codice?~~ Struttura nei dati (oggetti
+  `MissionItem*` in `DataPC.forge`), comportamento nel codice (una classe per tipo) →
+  `analisi/forge.md`.
+- [ ] Quali campi hanno `MissionItemList` e `MissionItemPickPocket`? Da leggere nella loro
+  funzione di caricamento.
+- [ ] Inventario completo delle classi su tutti i 18 archivi, oggetti annidati compresi.
 - [ ] Quanto della logica di movimento è parametrizzata nei dati?
 - [ ] Come il sistema delle entità crea un personaggio con lo scheletro del giocatore?
 - [ ] Fisica e animazioni dipendono dal frame rate?

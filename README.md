@@ -22,4 +22,4 @@ repository non contiene nulla di Ubisoft.
 
 ## Stato
 
-Fase 0 (fondamenta) in corso. Vedi `docs/PIANO.md`.
+Fase 0 (fondamenta) chiusa il 2026-11-14. Prossima: Fase 1, il ricompilatore. Vedi `docs/PIANO.md`.

@@ -12,7 +12,7 @@ Spunta le caselle man mano; ogni risultato va scritto in `analisi/`, `decisioni.
 
 ---
 
-## Fase 0 · Fondamenta (in corso)
+## Fase 0 · Fondamenta ✅
 
 **Gate:** build Steam mappata. Elenco iniziale delle funzioni, RTTI e vtable contati e
 nominati, mappa completa degli import, una funzione del gioco eseguita in Unicorn da script.
@@ -83,11 +83,16 @@ Completata il 2026-11-14 (WSL, 28 core, 31 GB RAM). Dettagli in `ambiente.md`.
 - [x] `analisi/harness.md`: uso, struttura, limiti
 - [ ] Prima prova su codice del motore (CRC-32 dei nomi di classe): va trovata la funzione
 
-### 0.10 Dati del gioco (ricognizione)
+### 0.10 Dati del gioco (ricognizione) ✅
 
-- [ ] Inventario dei `.forge` (17 archivi, 6,8 GB): header, indice, tipi di file contenuti
-  → `analisi/forge.md`
-- [ ] Prima risposta alla domanda "missioni: dati o codice?" (guardando i tipi negli archivi)
+- [x] `tools/forge.py`: contenitore v25, tabelle, record, sezioni LZO1X, pacchetti di oggetti
+- [x] Inventario dei 18 archivi (15.906 voci, 6,45 GB) → `analisi/forge.md`
+- [x] Le classi degli oggetti sono CRC-32 dei nomi RTTI: 100% riconosciute su 3 archivi
+- [x] "Missioni: dati o codice?" → struttura nei dati (27 classi `MissionItem*`, circa 950
+  oggetti), comportamento nel codice
+
+**Fase 0 chiusa il 2026-11-14.** Gate soddisfatto: build mappata, funzioni, RTTI e vtable,
+import, esecuzione in Unicorn, formato dei dati.
 
 ---
 
@@ -97,6 +102,7 @@ Completata il 2026-11-14 (WSL, 28 core, 31 GB RAM). Dettagli in `ambiente.md`.
 ampio di funzioni.
 
 - [ ] Workspace Rust: `crates/pe`, `crates/recomp`, `crates/runtime`
+- [ ] Lettore `.forge` in Rust (portato da `tools/forge.py`) e inventario completo delle classi
 - [ ] Parser PE e loader dell'immagine (riuso del lavoro della 0.5–0.7)
 - [ ] Scoperta delle funzioni: partenze forti e deboli, jump table MSVC, code prima dell'entry;
   risolvere i 5 limiti del prototipo elencati in `analisi/funzioni.md`
@@ -159,8 +165,7 @@ ampio di funzioni.
 
 ## Prossimi passi concreti
 
-Il gate della Fase 0 è soddisfatto (funzioni, RTTI, import, Unicorn). Restano due attività
-di ricognizione, poi si apre la Fase 1.
-
-1. **0.10**: ricognizione dei `.forge`.
-2. **Fase 1**: workspace Rust e ricompilatore.
+1. **Fase 1**: workspace Rust (`crates/pe`, `crates/recomp`, `crates/runtime`), parser PE e
+   scoperta delle funzioni portati da `tools/`.
+2. Traduzione delle prime funzioni foglia in C e primo test differenziale contro l'harness.
+3. Lettore `.forge` in Rust (serve al runtime e all'inventario completo delle classi).

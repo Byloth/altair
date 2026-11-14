@@ -45,3 +45,7 @@
   Unicorn e verificati; `fs:` impostato tramite GDT (Unicorn a 32 bit non accetta FS_BASE).
   Gate della Fase 0 soddisfatto → `analisi/harness.md`.
 - Spostata la vecchia 0.9 (originale DX9 su Windows) in Fase 3 come attività facoltativa → `decisioni.md`.
+- **0.10 chiusa, Fase 0 chiusa.** `tools/forge.py` legge i 18 archivi (15.906 voci). Ogni
+  oggetto porta il CRC-32 (standard) del nome della sua classe: incrociato con l'RTTI, il 100%
+  degli oggetti è riconosciuto. Le missioni sono oggetti `MissionItem*` nei dati (27 classi,
+  circa 950 oggetti in `DataPC.forge`) → `analisi/forge.md`.
