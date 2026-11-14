@@ -104,3 +104,8 @@ eseguiti) e sul tradotto, e mostra registri e prime differenze di heap e stack.
 ```sh
 .venv/bin/python tools/difftrace.py "$AC1/AssassinsCreed_Dx9.exe" 0x99BC40 1
 ```
+
+## `migra-cartella.sh`
+
+Rinomina o sposta la cartella del progetto portando con sé conversazioni e memoria di Claude
+Code, poi ricrea il venv e ricompila. Va lanciato a sessione chiusa. Vedi `docs/ambiente.md`.

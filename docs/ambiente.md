@@ -37,14 +37,14 @@ il percorso del JDK.
 
 ## Spostare o rinominare la cartella del progetto
 
-Da fare a sessione di Claude Code chiusa:
+A sessione di Claude Code chiusa, da un terminale normale:
 
 ```sh
-mv ~/projects/ac-rek ~/projects/altair      # il rinomino deciso il 2026-11-15
-cd ~/projects/altair
-rm -rf .venv && python3 -m venv .venv && .venv/bin/pip install unicorn capstone   # il venv contiene percorsi assoluti
-source ~/.bash_exports && cargo build --release
+bash ~/projects/ac-rek/tools/migra-cartella.sh ~/projects/ac-rek ~/projects/altair
+cd ~/projects/altair && claude --resume
 ```
 
-`ref/`, `opt/`, `private/` e `build/` si spostano con la cartella. La memoria di Claude Code è
-legata al percorso: quella per `~/projects/altair` è già stata preparata.
+Lo script sposta la cartella (con `ref/`, `opt/`, `private/`, `build/`), copia conversazioni e
+memoria di Claude Code sotto il nuovo percorso (`~/.claude/projects/<percorso con i trattini>`),
+ricrea il venv, che contiene percorsi assoluti, e ricompila. Gli originali delle conversazioni
+restano al vecchio posto come copia di sicurezza.
