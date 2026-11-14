@@ -24,11 +24,11 @@ nominati, mappa completa degli import, una funzione del gioco eseguita in Unicor
 - [x] Confronto DX9 / DX10 e scelta della DX9 → `decisioni.md`
 - [x] Identificare launcher e file accessori (`AssassinsCreed_Game.exe`, `Detection/`)
 
-### 0.2 Ambiente di lavoro
+### 0.2 Ambiente di lavoro ✅
 
-Oggi sulla macchina (WSL, 28 core, 31 GB RAM) ci sono solo git e Python 3.12.
+Completata il 2026-11-14 (WSL, 28 core, 31 GB RAM). Dettagli in `ambiente.md`.
 
-- [x] `git init` del repository (primo commit ancora da fare)
+- [x] `git init` del repository e primo commit
 - [x] Rust 1.100.0 (in `~/.local/share/cargo`)
 - [x] clang/LLVM 18 + lld
 - [x] `.venv/` con unicorn 2.1.4 e capstone 5.0.7
