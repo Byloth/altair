@@ -1,0 +1,23 @@
+# Output generato (C tradotto, oggetti, binari): mai pubblicato
+build/
+target/
+
+# Repository di riferimento clonati (scimitar-recomp GPL-2.0, EaglePatch senza licenza)
+ref/
+
+# Ambienti e strumenti locali (venv Python, Ghidra, toolchain scaricate)
+.venv/
+opt/
+
+# Materiale derivato da binari Ubisoft (nomi da AC2 Mac, dump, progetti Ghidra)
+private/
+
+# Nessun file del gioco, nemmeno per sbaglio
+*.exe
+*.dll
+*.forge
+*.bik
+*.map
+
+__pycache__/
+*.pyc
