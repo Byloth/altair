@@ -52,6 +52,15 @@ necessarie a spiegare una scoperta.
 
 ## Strumenti
 
+```sh
+source ~/.bash_exports                     # cargo non è nel PATH delle shell non interattive
+cargo build --release                      # produce target/release/acrek
+.venv/bin/python tools/harness.py "$AC1/AssassinsCreed_Dx9.exe" selftest
+.venv/bin/python tools/difftest.py "$AC1/AssassinsCreed_Dx9.exe"   # da rifare dopo ogni modifica al traduttore
+```
+
+Ogni istruzione nuova nel traduttore va accompagnata da uno scenario nel test differenziale.
+
 - Python solo con `python3 -I` e libreria standard, salvo dipendenze dichiarate in `tools/README.md`.
 - Ogni strumento nuovo va in `tools/` e documentato in `tools/README.md`.
 - Stack previsto: Rust (ricompilatore e runtime, `iced-x86`, `wgpu`), C generato compilato con clang.

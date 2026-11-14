@@ -96,21 +96,44 @@ import, esecuzione in Unicorn, formato dei dati.
 
 ---
 
-## Fase 1 · Ricompilatore
+## Fase 1 · Ricompilatore (in corso)
 
 **Gate:** tutto `.text` tradotto in C che compila; test differenziali verdi su un campione
-ampio di funzioni.
+ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
-- [ ] Workspace Rust: `crates/pe`, `crates/recomp`, `crates/runtime`
+### 1.1 Fondamenta ✅
+
+- [x] Workspace Rust: `crates/pe`, `crates/recomp` (binario `acrek`)
+- [x] Parser PE con verifica dell'hash della build Steam
+- [x] RTTI e scoperta delle funzioni portate in Rust (0,35 s; limite delle jump table dal `cmp`)
+- [x] Traduttore x86 → C per le istruzioni intere, stringhe, salti, chiamate, jump table
+- [x] Supporto C del codice generato (`runtime/acrek.h`, `acrek.c`)
+- [x] Primo test differenziale contro Unicorn: `strlen`, `strcmp`, `memcpy` identici
+- [x] `acrek coverage`: 85,9% delle funzioni (59,5% delle istruzioni) si traduce
+
+### 1.2 Copertura delle istruzioni
+
+- [ ] Prefisso `lock`, `xadd`, `cmpxchg`, `bts`/`btr`/`btc` (4.162 funzioni bloccate)
+- [ ] SSE/SSE2 scalare e impacchettato, MXCSR (circa 7.600 funzioni)
+- [ ] x87 a 80 bit con stack, confronti, control word (circa 4.300 funzioni)
+- [ ] `shld`/`shrd`, `rcl`/`rcr`, `rdtsc`, `cpuid`, `pushfd`/`popfd`, `sahf`/`lahf`,
+  `mul`/`div` a 8 e 16 bit
+- [ ] MMX (mixer audio di DARE)
+
+### 1.3 Verifica
+
+- [ ] Scelta automatica delle funzioni foglia per il test differenziale (chiusura traducibile,
+  nessun import, nessuno stato globale) e ingressi generati
+- [ ] Confronto anche di flag, stato x87 e memoria scritta
+- [ ] Campione ampio: almeno 1.000 funzioni del gioco identiche all'originale
+
+### 1.4 Immagine intera
+
+- [ ] Risolvere i limiti della scoperta (`analisi/funzioni.md`): funzioni che non ritornano,
+  tabelle delle eccezioni C++
+- [ ] Flag passati nelle tail call tra funzioni spezzate
+- [ ] Emissione in più file C e compilazione parallela; tempo e dimensione misurati
 - [ ] Lettore `.forge` in Rust (portato da `tools/forge.py`) e inventario completo delle classi
-- [ ] Parser PE e loader dell'immagine (riuso del lavoro della 0.5–0.7)
-- [ ] Scoperta delle funzioni: partenze forti e deboli, jump table MSVC, code prima dell'entry;
-  risolvere i 5 limiti del prototipo elencati in `analisi/funzioni.md`
-- [ ] Traduzione delle istruzioni x86 in C: interi, flag lazy, SSE, x87 a 80 bit
-- [ ] Accessi a `fs:` (TEB), chiamate indirette tramite tabella delle funzioni tradotte
-- [ ] Emissione in più file C per compilazione parallela
-- [ ] Test differenziali automatici contro l'harness Unicorn
-- [ ] Copertura: percentuale di funzioni tradotte e verificate → `analisi/copertura.md`
 
 ## Fase 2 · Runtime Win32
 
@@ -165,7 +188,6 @@ ampio di funzioni.
 
 ## Prossimi passi concreti
 
-1. **Fase 1**: workspace Rust (`crates/pe`, `crates/recomp`, `crates/runtime`), parser PE e
-   scoperta delle funzioni portati da `tools/`.
-2. Traduzione delle prime funzioni foglia in C e primo test differenziale contro l'harness.
-3. Lettore `.forge` in Rust (serve al runtime e all'inventario completo delle classi).
+1. **1.2**: `lock` e atomiche, poi SSE scalare, poi x87, ciascuno con scenari nel test
+   differenziale.
+2. **1.3**: selezione automatica delle funzioni foglia e ingressi generati.

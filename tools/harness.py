@@ -121,6 +121,9 @@ class Guest:
     def alloc_str(self, s):
         return self.alloc_bytes(bytes(s) + b'\0')
 
+    def write(self, addr, data):
+        self.uc.mem_write(addr, bytes(data))
+
     def read(self, addr, size):
         return bytes(self.uc.mem_read(addr, size))
 
@@ -194,7 +197,7 @@ class Guest:
         if uc.reg_read(UC_X86_REG_EIP) != SENTINEL:
             raise GuestError(f'limite di {max_insns} istruzioni raggiunto')
         return Result(eax=uc.reg_read(UC_X86_REG_EAX), edx=uc.reg_read(UC_X86_REG_EDX),
-                      st0=uc.reg_read(UC_X86_REG_ST0),
+                      ecx=uc.reg_read(UC_X86_REG_ECX), st0=uc.reg_read(UC_X86_REG_ST0),
                       popped=uc.reg_read(UC_X86_REG_ESP) - esp0 - 4,   # byte tolti dal chiamato
                       insns=self._insns - 1, imports=list(self._log))
 
@@ -220,7 +223,7 @@ def _t_strlen(g, addr, zlib):
     for n in (0, 1, 3, 4, 5, 31, 32, 255, 1000):
         for shift in range(4):                      # tutti gli allineamenti
             p = g.alloc(n + 8) + shift
-            g.uc.mem_write(p, b'x' * n + b'\0')
+            g.write(p, b'x' * n + b'\0')
             r = g.call(addr, [p])
             if r.eax != n:
                 print(f'strlen({n}, allineamento {shift}) = {r.eax}')
@@ -246,7 +249,7 @@ def _t_memcpy(g, addr, zlib):
     # Percorre le jump table del memcpy di MSVC: ogni lunghezza e ogni allineamento.
     src0 = g.alloc(600)
     data = bytes((i * 7 + 3) & 0xFF for i in range(600))
-    g.uc.mem_write(src0, data)
+    g.write(src0, data)
     for n in list(range(0, 40)) + [63, 64, 65, 127, 128, 129, 255, 256, 511]:
         for sa in range(4):
             for da in range(4):

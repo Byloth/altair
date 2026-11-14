@@ -83,3 +83,15 @@ python3 -I tools/forge.py classes "$AC1/DataPC.forge" private/rtti-dx9.json [--o
 `classes` conta gli oggetti per classe, traducendo i CRC-32 con i nomi di `rtti.py`. È lento
 sugli archivi grandi (quasi 3 minuti per `DataPC.forge`). Gli output contengono nomi e dati del
 gioco: vanno in `private/`. Formato e risultati in `docs/analisi/forge.md`.
+
+## `difftest.py`
+
+Test differenziale: traduce con `acrek`, compila con clang, esegue ogni scenario sull'originale
+(Unicorn) e sul tradotto, confronta registri, stack, import chiamati e memoria.
+
+```sh
+source ~/.bash_exports && cargo build --release
+.venv/bin/python tools/difftest.py "$AC1/AssassinsCreed_Dx9.exe"
+```
+
+Gli scenari sono funzioni Python in fondo al file. Dettagli in `docs/analisi/traduttore.md`.

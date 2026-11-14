@@ -2,6 +2,21 @@
 
 Voci più recenti in cima. Ogni voce: decisione, motivazione, cosa la farebbe rivedere.
 
+## 2026-11-14 · Forma del codice generato
+
+**Decisione.** Una funzione C per funzione guest, `void f_XXXXXXXX(Ctx *c)`; stack guest
+identico all'originale (indirizzi di ritorno veri); flag come variabili locali; memoria guest
+come base più indirizzo su 4 GB riservati; chiamate indirette tramite un registro di funzioni.
+Il supporto è in C (`runtime/acrek.h`), il ricompilatore in Rust. Dettagli in
+`analisi/traduttore.md`.
+
+**Perché.** È il modello di scimitar-recomp, che ha dimostrato di funzionare su questo
+eseguibile; lo stack identico rende possibile il confronto byte per byte con Unicorn; i flag
+locali lasciano l'ottimizzazione al compilatore C.
+
+**Si rivede se** le prestazioni lo richiedono (registri in variabili locali) o se su wasm32 i
+frame C risultano troppo profondi.
+
 ## 2026-11-14 · L'originale DX9 in esecuzione non serve ora: spostato in Fase 3, facoltativo
 
 **Decisione.** Non si lavora per far partire `AssassinsCreed_Dx9.exe` originale su Windows

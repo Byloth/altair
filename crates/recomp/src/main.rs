@@ -2,10 +2,11 @@
 
 mod discover;
 mod rtti;
+mod translate;
 
 use acrek_pe::{Image, AC1_DX9_STEAM_SHA1};
 use discover::{Discovery, Kind};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::Write;
 use std::process::ExitCode;
 
@@ -17,6 +18,10 @@ uso: acrek <comando> <AssassinsCreed_Dx9.exe> [opzioni]
   discover [--strict] [--out FILE.json]
                             scoperta delle funzioni; con --out salva l'elenco
                             (contiene solo indirizzi, ma va comunque in private/)
+
+  translate --out FILE.c ADDR...
+                            traduce in C le funzioni indicate e quelle che chiamano
+  coverage                  quante funzioni si traducono oggi, e cosa blocca le altre
 
 Opzione comune: --any-exe   accetta un eseguibile con hash diverso da quello della build Steam";
 
@@ -56,6 +61,8 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         "info" => info(&img, &sha),
         "rtti" => rtti_stats(&img),
         "discover" => discover_cmd(&img, flag(args, "--strict"), value(args, "--out"))?,
+        "translate" => translate_cmd(&img, args)?,
+        "coverage" => coverage_cmd(&img),
         _ => return Err(USAGE.into()),
     }
     Ok(())
@@ -148,4 +155,113 @@ fn discover_cmd(img: &Image, strict: bool, out: Option<&str>) -> std::io::Result
         eprintln!("elenco scritto in {path}");
     }
     Ok(())
+}
+
+/// Le partenze certe: un salto verso una di queste è una tail call, non codice interno.
+fn hard_starts(d: &Discovery) -> HashSet<u32> {
+    d.starts
+        .iter()
+        .filter(|(_, o)| o.via_call || matches!(o.kind, Kind::Entry | Kind::Export | Kind::Tls | Kind::Vtable))
+        .map(|(&a, _)| a)
+        .collect()
+}
+
+fn translate_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let out = value(args, "--out").ok_or("manca --out FILE.c")?;
+    let mut roots = Vec::new();
+    for a in args.iter().skip(2).filter(|a| a.starts_with("0x")) {
+        roots.push(u32::from_str_radix(&a[2..], 16)?);
+    }
+    if roots.is_empty() {
+        return Err("nessun indirizzo da tradurre".into());
+    }
+    let (d, _) = Discovery::run(img, false, false);
+    let mut hard = hard_starts(&d);
+    hard.extend(&roots);
+    let is_hard = |a: u32| hard.contains(&a);
+
+    // Chiusura sulle chiamate dirette; le funzioni non traducibili restano fuori.
+    let mut funcs: BTreeMap<u32, translate::Func> = BTreeMap::new();
+    let mut failed: BTreeMap<u32, String> = BTreeMap::new();
+    let mut pending = roots.clone();
+    while let Some(a) = pending.pop() {
+        if funcs.contains_key(&a) || failed.contains_key(&a) {
+            continue;
+        }
+        match translate::decode(img, a, &is_hard).and_then(|f| translate::emit(&f, &|_| false).map(|_| f)) {
+            Ok(f) => {
+                pending.extend(f.calls.iter().copied());
+                funcs.insert(a, f);
+            }
+            Err(e) => {
+                failed.insert(a, e);
+            }
+        }
+    }
+    let known = |a: u32| funcs.contains_key(&a);
+    let mut c = String::from("/* Generato da `acrek translate`: non modificare e non pubblicare. */\n#include \"acrek.h\"\n\n");
+    for a in funcs.keys() {
+        c += &format!("void {}(Ctx *c);\n", translate::fn_name(*a));
+    }
+    c.push('\n');
+    let mut insns = 0;
+    for f in funcs.values() {
+        insns += f.insns.len();
+        c += &translate::emit(f, &known)?;
+        c.push('\n');
+    }
+    c += "const AcrekEntry acrek_functions[] = {\n";
+    for a in funcs.keys() {
+        c += &format!("    {{{a:#x}u, {}}},\n", translate::fn_name(*a));
+    }
+    c += &format!("}};\nconst u32 acrek_function_count = {};\n", funcs.len());
+    std::fs::write(out, c)?;
+    eprintln!("{} funzioni, {insns} istruzioni tradotte in {out}", funcs.len());
+    for (a, e) in &failed {
+        eprintln!("  non tradotta {a:#010x}: {e}");
+    }
+    for r in &roots {
+        if failed.contains_key(r) {
+            return Err(format!("la funzione richiesta {r:#x} non è traducibile").into());
+        }
+    }
+    Ok(())
+}
+
+fn coverage_cmd(img: &Image) {
+    let (d, _) = Discovery::run(img, false, false);
+    let hard = hard_starts(&d);
+    let is_hard = |a: u32| hard.contains(&a);
+    let (mut ok, mut ok_insns, mut total_insns) = (0usize, 0usize, 0usize);
+    let mut blockers: HashMap<String, usize> = HashMap::new();
+    let mut seen: BTreeSet<u32> = BTreeSet::new();
+    for &a in d.starts.keys() {
+        match translate::decode(img, a, &is_hard) {
+            Ok(f) => {
+                total_insns += f.insns.len();
+                seen.extend(f.insns.keys());
+                match translate::emit(&f, &|_| true) {
+                    Ok(_) => {
+                        ok += 1;
+                        ok_insns += f.insns.len();
+                    }
+                    Err(e) => *blockers.entry(e.split(' ').next().unwrap_or("?").to_string()).or_default() += 1,
+                }
+            }
+            Err(e) => *blockers.entry(format!("[decodifica] {}", e.split(" (").next().unwrap_or("?"))).or_default() += 1,
+        }
+    }
+    let n = d.starts.len();
+    println!("funzioni tradotte   {ok} su {n} ({:.1}%)", 100.0 * ok as f64 / n as f64);
+    println!("istruzioni          {ok_insns} su {total_insns} ({:.1}%), contate per funzione", 100.0 * ok_insns as f64 / total_insns as f64);
+    println!("istruzioni distinte {}", seen.len());
+    println!("primo ostacolo delle funzioni non tradotte:");
+    let mut b: Vec<_> = blockers.into_iter().collect();
+    b.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    for (why, n) in b.iter().take(40) {
+        println!("  {n:>6}  {why}");
+    }
+    if b.len() > 40 {
+        println!("  ... e altri {} motivi", b.len() - 40);
+    }
 }

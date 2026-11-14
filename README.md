@@ -17,9 +17,11 @@ repository non contiene nulla di Ubisoft.
 | `docs/fonti.md` | Progetti, mod e riferimenti esterni |
 | `docs/ambiente.md` | Strumenti installati e come avviarli |
 | `docs/analisi/` | Fatti verificati sui file del gioco |
-| `tools/` | Script di analisi (vedi `tools/README.md`) |
+| `crates/` | Il ricompilatore in Rust: `acrek` (vedi `docs/analisi/traduttore.md`) |
+| `runtime/` | Supporto in C del codice generato |
+| `tools/` | Script di analisi e di test (vedi `tools/README.md`) |
 | `ref/`, `build/`, `private/`, `.venv/`, `opt/` | Riferimenti clonati, output generato, materiale non pubblicabile, strumenti locali: ignorati da git |
 
 ## Stato
 
-Fase 0 (fondamenta) chiusa il 2026-11-14. Prossima: Fase 1, il ricompilatore. Vedi `docs/PIANO.md`.
+Fase 0 (fondamenta) chiusa il 2026-11-14. Fase 1 (il ricompilatore) in corso. Vedi `docs/PIANO.md`.

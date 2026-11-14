@@ -49,3 +49,10 @@
   oggetto porta il CRC-32 (standard) del nome della sua classe: incrociato con l'RTTI, il 100%
   degli oggetti è riconosciuto. Le missioni sono oggetti `MissionItem*` nei dati (27 classi,
   circa 950 oggetti in `DataPC.forge`) → `analisi/forge.md`.
+- **Fase 1 aperta.** Workspace Rust (`crates/pe`, `crates/recomp`), binario `acrek` con
+  `info`, `rtti`, `discover`, `translate`, `coverage`. Scoperta in 0,35 s: 116.090 funzioni.
+- Traduttore x86 → C per le istruzioni intere e supporto C in `runtime/`. Si traduce l'85,9%
+  delle funzioni (59,5% delle istruzioni); mancano `lock`, SSE, x87.
+- `tools/difftest.py`: `strlen`, `strcmp`, `memcpy` tradotte identiche all'originale in Unicorn
+  (1.717 chiamate). Il test ha trovato tre forme di jump table di `memcpy` non riconosciute,
+  ora gestite → `analisi/traduttore.md`.
