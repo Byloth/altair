@@ -15,8 +15,12 @@ sostituisci qui la voce con un rimando.
 - [x] ~~Numero esatto di descrittori RTTI e di vtable~~: 4.376 e 4.597, identici a
   scimitar-recomp → `analisi/rtti.md`. I 4.043 di prima erano un errore della regex di `pe.py`,
   che troncava i nomi dei template; 4.323 sono le sole classi, più 53 struct.
-- [ ] Gli slot delle vtable sono contati con un'euristica: verificarli quando avremo l'elenco
-  delle funzioni (0.7).
+- [x] ~~Gli slot delle vtable sono contati bene?~~ Sì: solo 13 su 28.717 non si decodificano
+  come funzione → `analisi/funzioni.md`.
+- [ ] I 3,7 MB di `.text` non referenziati sono davvero codice morto? Si saprà a runtime: una
+  chiamata indiretta verso un indirizzo non tradotto va registrata.
+- [ ] Il gioco lancia eccezioni C++ durante il gioco normale? Decide se servono i circa 19.000
+  funclet e handler SEH.
 - [ ] **A cosa servono i 17 MB in più di `.data` nella DX10?** Curiosità: non blocca nulla.
 - [ ] Cosa contengono `.data1` e `_RDATA` (presenti in tutti e due).
 

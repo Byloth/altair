@@ -44,3 +44,15 @@ python3 -I tools/imports.py "$AC1/AssassinsCreed_Dx9.exe" --guids  # GUID COM no
 ```
 
 Le tabelle di `docs/analisi/import.md` vengono da qui.
+
+## `functions.py`
+
+Scoperta delle funzioni senza simboli (prototipo). Serve Capstone, quindi il Python del venv.
+
+```sh
+.venv/bin/python tools/functions.py "$AC1/AssassinsCreed_Dx9.exe" --out private/functions-dx9.json
+.venv/bin/python tools/functions.py "$AC1/AssassinsCreed_Dx9.exe" --strict   # regola più severa
+```
+
+Stampa le statistiche in JSON; con `--out` salva l'elenco `[indirizzo, origine]`. Circa 30
+secondi. Metodo, risultati e limiti in `docs/analisi/funzioni.md`.

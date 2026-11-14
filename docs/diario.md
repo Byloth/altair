@@ -37,3 +37,7 @@
 - **0.6 chiusa.** `tools/imports.py` → `analisi/import.md`: 260 import tutti referenziati;
   `TlsGetValue` ha 2.644 riferimenti, `DebugBreak` 144 (assert). GUID COM di DirectInput 8,
   DirectSound 8/3D ed EAX 2–4 trovati in `.rdata`. Metodi COM rimandati al runtime.
+- **0.7 chiusa (prototipo).** `tools/functions.py`: 115.807 partenze, 3,19 M di istruzioni
+  (96.781 con `--strict`; scimitar-recomp 98.470). Dall'entry per chiamate dirette si
+  raggiungono solo 7.216 funzioni: il resto passa da vtable e puntatori. 3,7 MB di `.text`
+  sono codice non referenziato → `analisi/funzioni.md`. Import in Ghidra rimandato.

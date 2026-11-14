@@ -64,12 +64,15 @@ Completata il 2026-11-14 (WSL, 28 core, 31 GB RAM). Dettagli in `ambiente.md`.
 - [x] Interfacce COM richieste, dai GUID in `.rdata` (DirectInput 8, DirectSound 8 + 3D, EAX)
 - [ ] Metodi COM effettivamente chiamati: rimandato al runtime (stub tracciati, Fase 2–3)
 
-### 0.7 Primo elenco di funzioni
+### 0.7 Primo elenco di funzioni ✅ (prototipo)
 
-- [ ] Partenze forti: entry point, export, vtable, puntatori a funzione in `.rdata`
-- [ ] Partenze deboli: prologhi MSVC tipici dopo padding `int3`/`nop`
-- [ ] Confronto con il conteggio di scimitar-recomp (~98.000 funzioni) → `analisi/funzioni.md`
-- [ ] Importare RTTI e funzioni in Ghidra per avere una vista navigabile
+- [x] `tools/functions.py`: partenze forti (entry, export, TLS, chiamate dirette) e deboli
+  (vtable, immediati, parole nei dati) con decodifica di prova
+- [x] 115.807 partenze e 3,19 milioni di istruzioni (96.781 con `--strict`), contro le 98.470
+  funzioni di scimitar-recomp → `analisi/funzioni.md`
+- [x] Controllo incrociato con gli indirizzi di EaglePatch e con gli slot delle vtable
+- [ ] Importare RTTI e funzioni in Ghidra per avere una vista navigabile (spostato: si fa
+  quando servirà leggere codice, non blocca il gate)
 
 ### 0.8 Harness Unicorn
 
@@ -100,7 +103,8 @@ ampio di funzioni.
 
 - [ ] Workspace Rust: `crates/pe`, `crates/recomp`, `crates/runtime`
 - [ ] Parser PE e loader dell'immagine (riuso del lavoro della 0.5–0.7)
-- [ ] Scoperta delle funzioni: partenze forti e deboli, jump table MSVC, code prima dell'entry
+- [ ] Scoperta delle funzioni: partenze forti e deboli, jump table MSVC, code prima dell'entry;
+  risolvere i 5 limiti del prototipo elencati in `analisi/funzioni.md`
 - [ ] Traduzione delle istruzioni x86 in C: interi, flag lazy, SSE, x87 a 80 bit
 - [ ] Accessi a `fs:` (TEB), chiamate indirette tramite tabella delle funzioni tradotte
 - [ ] Emissione in più file C per compilazione parallela
@@ -156,6 +160,6 @@ ampio di funzioni.
 
 ## Prossimi passi concreti
 
-1. **0.7**: primo elenco di funzioni (partenze forti e deboli).
-2. **0.8**: harness Unicorn.
-3. **0.10**: ricognizione dei `.forge`.
+1. **0.8**: harness Unicorn.
+2. **0.10**: ricognizione dei `.forge`.
+3. **0.9**: far partire l'originale DX9 (non bloccante).
