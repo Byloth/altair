@@ -81,3 +81,4 @@
   del runtime, documenti). Le voci di diario precedenti sono state aggiornate al nuovo nome.
   Test rifatti dopo il cambio: selftest e scenari OK, 820 funzioni identiche su 1.500.
   La cartella va rinominata dall'utente a sessione chiusa → `ambiente.md`.
+- Titolo esteso del progetto cambiato in "AC1 Recompiled - Altaïr" (repository e documento online) → `decisioni.md`.

@@ -27,5 +27,5 @@
 
 ## Documento di progetto
 
-- [AC1 Recompiled: piano di progetto](https://claude.ai/artifact/SoPWUhJZPJ45oWk3t4r8bu):
+- [AC1 Recompiled - Altaïr: piano di progetto](https://claude.ai/artifact/SoPWUhJZPJ45oWk3t4r8bu):
   visione, architettura, rischi del web, nice to have, aspetti legali.

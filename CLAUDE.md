@@ -1,10 +1,11 @@
-# AC1 Recompiled (`altair`)
+# AC1 Recompiled - Altaïr (`altair`)
 
 Ricompilazione statica di Assassin's Creed (2007), build Steam DX9, verso nativo e browser.
-Piano completo, per chi legge da fuori: documento "AC1 Recompiled: piano di progetto"
+Piano completo, per chi legge da fuori: documento "AC1 Recompiled - Altaïr: piano di progetto"
 (https://claude.ai/artifact/SoPWUhJZPJ45oWk3t4r8bu). Qui dentro vive il lavoro operativo.
 
-**Nomi.** "AC1 Recompiled" è il nome completo del progetto; **Altair** è il nome tecnico:
+**Nomi.** "AC1 Recompiled - Altaïr" è il nome completo del progetto (con la dieresi); `altair`, senza
+dieresi, è il nome tecnico:
 binario `altair`, crate `altair-*`, prefisso `altair_` nel codice generato, cartella `altair`.
 Un eventuale ricompilatore per un altro gioco prenderebbe il nome del suo protagonista.
 Fino al 2026-11-15 il nome tecnico era `acrek` e la cartella `ac-rek`: i commit più vecchi li

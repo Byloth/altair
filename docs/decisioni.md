@@ -2,6 +2,14 @@
 
 Voci più recenti in cima. Ogni voce: decisione, motivazione, cosa la farebbe rivedere.
 
+## 2026-11-15 · Nome completo: "AC1 Recompiled - Altaïr"
+
+**Decisione.** Il titolo esteso del progetto diventa "AC1 Recompiled - Altaïr" (prima
+"AC1 Recompiled"). Nel codice, nei comandi e nei percorsi resta `altair`, senza dieresi.
+
+**Perché.** Scelta dell'utente: il nome tecnico entra nel titolo. La voce qui sotto, dello stesso
+giorno, riporta ancora il titolo precedente.
+
 ## 2026-11-15 · Nome tecnico del progetto: Altair
 
 **Decisione.** Il ricompilatore e tutto ciò che è codice si chiamano `altair` (prima `acrek`);

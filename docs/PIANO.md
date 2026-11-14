@@ -1,7 +1,7 @@
 # Piano di lavoro
 
 Versione operativa del documento di progetto
-([AC1 Recompiled: piano di progetto](https://claude.ai/artifact/SoPWUhJZPJ45oWk3t4r8bu)).
+([AC1 Recompiled - Altaïr: piano di progetto](https://claude.ai/artifact/SoPWUhJZPJ45oWk3t4r8bu)).
 Ogni fase si chiude con un **gate** verificabile; non si passa alla fase successiva senza.
 Spunta le caselle man mano; ogni risultato va scritto in `analisi/`, `decisioni.md` o `diario.md`.
 
