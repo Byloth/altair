@@ -31,7 +31,7 @@ from unicorn import (UC_ARCH_X86, UC_HOOK_CODE, UC_HOOK_MEM_UNMAPPED, UC_HOOK_ME
 from unicorn.x86_const import (UC_X86_REG_EAX, UC_X86_REG_EBP, UC_X86_REG_EBX, UC_X86_REG_ECX,
                                UC_X86_REG_EDI, UC_X86_REG_EDX, UC_X86_REG_EFLAGS, UC_X86_REG_EIP, UC_X86_REG_ESI,
                                UC_X86_REG_ESP, UC_X86_REG_CS, UC_X86_REG_DS, UC_X86_REG_ES,
-                               UC_X86_REG_FS, UC_X86_REG_GDTR, UC_X86_REG_MXCSR, UC_X86_REG_SS,
+                               UC_X86_REG_FP0, UC_X86_REG_FPSW, UC_X86_REG_FS, UC_X86_REG_GDTR, UC_X86_REG_MXCSR, UC_X86_REG_SS,
                                UC_X86_REG_ST0, UC_X86_REG_XMM0)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -186,6 +186,14 @@ class Guest:
         return False
 
     # --- chiamata --------------------------------------------------------
+    def _x87(self):
+        """(cima dello stack, gli otto registri fisici come 10 byte ciascuno)."""
+        regs = []
+        for i in range(8):
+            mant, exp = self.uc.reg_read(UC_X86_REG_FP0 + i)
+            regs.append(mant.to_bytes(8, 'little') + (exp & 0xFFFF).to_bytes(2, 'little'))
+        return (self.uc.reg_read(UC_X86_REG_FPSW) >> 11) & 7, tuple(regs)
+
     def image_state(self):
         """Contenuto attuale delle sezioni scrivibili (per i confronti)."""
         return b''.join(self.read(va, len(data)) for va, data in self._writable)
@@ -219,9 +227,14 @@ class Guest:
         # Scrivere il registro MXCSR dall'esterno non aggiorna lo stato interno dell'emulatore
         # (arrotondamento, flush-to-zero, denormali): un `ldmxcsr` eseguito da una funzione
         # resterebbe attivo per le chiamate successive. Lo si reimposta eseguendo l'istruzione.
-        uc.mem_write(SENTINEL + 0x100, b'\x0f\xae\x15' + struct.pack('<I', SENTINEL + 0x200))
-        uc.mem_write(SENTINEL + 0x200, struct.pack('<I', 0x1F80))
-        uc.emu_start(SENTINEL + 0x100, SENTINEL + 0x107)
+        # Lo stesso vale per l'x87: `fninit` e `fldcw` con la parola di controllo di Windows
+        # (0x027F, precisione a 53 bit), poi registri azzerati.
+        uc.mem_write(SENTINEL + 0x100, b'\x0f\xae\x15' + struct.pack('<I', SENTINEL + 0x200)
+                     + b'\xdb\xe3\xd9\x2d' + struct.pack('<I', SENTINEL + 0x204))
+        uc.mem_write(SENTINEL + 0x200, struct.pack('<IH', 0x1F80, 0x027F))
+        uc.emu_start(SENTINEL + 0x100, SENTINEL + 0x10F)
+        for i in range(8):
+            uc.reg_write(UC_X86_REG_FP0 + i, (0, 0))
         self._log, self._insns, self._fault = [], 0, None
         try:
             uc.emu_start(addr, SENTINEL, count=max_insns)
@@ -235,6 +248,7 @@ class Guest:
                                               UC_X86_REG_EBP, UC_X86_REG_ESI, UC_X86_REG_EDI))
         return Result(eax=regs[0], ecx=regs[1], edx=regs[2], regs=regs,
                       xmm=tuple(uc.reg_read(UC_X86_REG_XMM0 + i) for i in range(8)),
+                      x87=self._x87(),
                       st0=uc.reg_read(UC_X86_REG_ST0),
                       popped=(uc.reg_read(UC_X86_REG_ESP) - esp0 - 4) & 0xFFFFFFFF,   # byte tolti dal chiamato
                       insns=self._insns if self.trace else None, imports=list(self._log))

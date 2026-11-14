@@ -71,7 +71,12 @@ pub fn decode(img: &Image, start: u32, hard_start: &dyn Fn(u32) -> bool) -> R<Fu
                 return Err(format!("byte non decodificabili a {:#x}", ins.ip()));
             }
             let addr = ins.ip() as u32;
-            if addr != a && (f.insns.contains_key(&addr) || external(addr)) {
+            if addr != a && external(addr) {
+                // Il codice prosegue dentro un'altra funzione: è una tail call verso di essa.
+                f.calls.insert(addr);
+                break;
+            }
+            if addr != a && f.insns.contains_key(&addr) {
                 break;
             }
             f.insns.insert(addr, ins);
@@ -452,6 +457,10 @@ impl Emitter<'_> {
             FlowControl::Next => {}
         }
 
+        if format!("{m:?}").starts_with('F') {
+            return self.x87(ins);
+        }
+
         // setcc / cmovcc
         if ins.condition_code() != ConditionCode::None {
             let test = cond(ins.condition_code())?;
@@ -795,6 +804,183 @@ impl Emitter<'_> {
             }
             other => return Err(format!("lock {other:?}")),
         })
+    }
+
+    /// x87: stack di registri a 80 bit. Le operazioni sono in `runtime/altair_x87.h`.
+    fn x87(&self, ins: &Instruction) -> R<String> {
+        use Mnemonic::*;
+        let m = ins.mnemonic();
+        let mem = ins.op_count() > 0 && ins.op0_kind() == OpKind::Memory;
+        let msize = if mem { ins.memory_size().size() } else { 0 };
+        let st = |k: u32| -> R<String> {
+            let (r, base) = (ins.op_register(k) as u32, Register::ST0 as u32);
+            if ins.op_kind(k) == OpKind::Register && (base..base + 8).contains(&r) {
+                Ok(format!("ST({})", r - base))
+            } else {
+                Err(format!("{m:?}"))
+            }
+        };
+        let fload = || -> R<String> {
+            let a = ea(ins)?;
+            Ok(match msize {
+                4 => format!("(f80)rdf32(c, {a})"),
+                8 => format!("(f80)rdf64(c, {a})"),
+                10 => format!("rdf80(c, {a})"),
+                _ => return Err(format!("{m:?} con operando di {msize} byte")),
+            })
+        };
+        let iload = || -> R<String> {
+            let a = ea(ins)?;
+            Ok(match msize {
+                2 => format!("(f80)(s16)rd16(c, {a})"),
+                4 => format!("(f80)(s32)rd32(c, {a})"),
+                8 => format!("(f80)(s64)rd64(c, {a})"),
+                _ => return Err(format!("{m:?} con operando di {msize} byte")),
+            })
+        };
+        let push = |v: &str| Ok(format!("fpush(c, {v});"));
+
+        // Aritmetica: (espressione su destinazione d e sorgente s, intera?, pop?)
+        let arith = |expr: &str, int: bool, pop: bool| -> R<String> {
+            let (d, s) = if mem {
+                ("ST(0)".to_string(), if int { iload()? } else { fload()? })
+            } else {
+                match ins.op_count() {
+                    2 => (st(0)?, st(1)?),
+                    1 => ("ST(0)".to_string(), st(0)?),
+                    _ => ("ST(1)".to_string(), "ST(0)".to_string()),
+                }
+            };
+            Ok(format!("{{ f80 s = {s}, d = {d}; {d} = {expr};{} }}", if pop { " fpop(c);" } else { "" }))
+        };
+        // Confronti con ST0: (scrive i flag della CPU?, intero?, numero di pop)
+        let compare = |cpu: bool, int: bool, pops: usize| -> R<String> {
+            let other = if mem {
+                if int { iload()? } else { fload()? }
+            } else if m == Ftst {
+                "0.0L".to_string()
+            } else {
+                match ins.op_count() {
+                    2 => st(1)?,
+                    1 => st(0)?,
+                    _ => "ST(1)".to_string(),
+                }
+            };
+            Ok(format!(
+                "{{ f80 a = ST(0), b = {other}; {}(a, b) }}{}",
+                if cpu { "X_COMI" } else { "X87_COM" },
+                " fpop(c);".repeat(pops)
+            ))
+        };
+        let store_int = |trunc: bool, pop: bool| -> R<String> {
+            let n = msize * 8;
+            if !matches!(n, 16 | 32 | 64) {
+                return Err(format!("{m:?} con operando di {msize} byte"));
+            }
+            Ok(format!(
+                "wr{n}(c, {}, (u{n})x87_toi(ST(0), {n}, {}));{}",
+                ea(ins)?,
+                trunc as u32,
+                if pop { " fpop(c);" } else { "" }
+            ))
+        };
+        let unary = |f: &str| Ok(format!("ST(0) = {f}(ST(0));"));
+
+        match m {
+            Fld if mem => push(&fload()?),
+            Fld => Ok(format!("{{ f80 v = {}; fpush(c, v); }}", st(0)?)),
+            Fild => push(&iload()?),
+            Fst | Fstp => {
+                let pop = if m == Fstp { " fpop(c);" } else { "" };
+                if mem {
+                    let a = ea(ins)?;
+                    Ok(match msize {
+                        4 => format!("wrf32(c, {a}, (float)ST(0));{pop}"),
+                        8 => format!("wrf64(c, {a}, (double)ST(0));{pop}"),
+                        10 => format!("wrf80(c, {a}, ST(0));{pop}"),
+                        _ => return Err(format!("{m:?} con operando di {msize} byte")),
+                    })
+                } else {
+                    Ok(format!("{} = ST(0);{pop}", st(0)?))
+                }
+            }
+            Fist => store_int(false, false),
+            Fistp => store_int(false, true),
+            Fisttp => store_int(true, true),
+            Fadd => arith("d + s", false, false),
+            Faddp => arith("d + s", false, true),
+            Fiadd => arith("d + s", true, false),
+            Fsub => arith("d - s", false, false),
+            Fsubp => arith("d - s", false, true),
+            Fisub => arith("d - s", true, false),
+            Fsubr => arith("s - d", false, false),
+            Fsubrp => arith("s - d", false, true),
+            Fisubr => arith("s - d", true, false),
+            Fmul => arith("d * s", false, false),
+            Fmulp => arith("d * s", false, true),
+            Fimul => arith("d * s", true, false),
+            Fdiv => arith("d / s", false, false),
+            Fdivp => arith("d / s", false, true),
+            Fidiv => arith("d / s", true, false),
+            Fdivr => arith("s / d", false, false),
+            Fdivrp => arith("s / d", false, true),
+            Fidivr => arith("s / d", true, false),
+            Fcom | Fucom | Ftst => compare(false, false, 0),
+            Fcomp | Fucomp => compare(false, false, 1),
+            Fcompp | Fucompp => compare(false, false, 2),
+            Ficom => compare(false, true, 0),
+            Ficomp => compare(false, true, 1),
+            Fcomi | Fucomi => compare(true, false, 0),
+            Fcomip | Fucomip => compare(true, false, 1),
+            Fxch => {
+                let i = match ins.op_count() {
+                    2 => st(1)?,
+                    1 => st(0)?,
+                    _ => "ST(1)".to_string(),
+                };
+                Ok(format!("{{ f80 t = ST(0); ST(0) = {i}; {i} = t; }}"))
+            }
+            Fcmovb | Fcmove | Fcmovbe | Fcmovu | Fcmovnb | Fcmovne | Fcmovnbe | Fcmovnu => {
+                Ok(format!("if ({}) ST(0) = {};", cond(ins.condition_code())?, st(1)?))
+            }
+            Fchs => Ok("ST(0) = -ST(0);".into()),
+            Fabs => unary("fabsl"),
+            Fsqrt => unary("sqrtl"),
+            Frndint => unary("rintl"),
+            Fsin => unary("sinl"),
+            Fcos => unary("cosl"),
+            Fsincos => Ok("{ f80 v = ST(0); ST(0) = sinl(v); fpush(c, cosl(v)); c->fpsw &= ~0x400u; }".into()),
+            Fptan => Ok("{ ST(0) = tanl(ST(0)); fpush(c, 1.0L); c->fpsw &= ~0x400u; }".into()),
+            Fpatan => Ok("{ f80 x = ST(0); fpop(c); ST(0) = atan2l(ST(0), x); }".into()),
+            Fyl2x => Ok("{ f80 x = ST(0); fpop(c); ST(0) = ST(0) * log2l(x); }".into()),
+            Fyl2xp1 => Ok("{ f80 x = ST(0); fpop(c); ST(0) = ST(0) * (log1pl(x) / 0xb.17217f7d1cf79acp-4L); }".into()),
+            F2xm1 => Ok("ST(0) = expm1l(ST(0) * 0xb.17217f7d1cf79acp-4L);".into()),
+            Fscale => Ok("ST(0) = x87_scale(ST(0), ST(1));".into()),
+            Fprem => Ok("x87_prem(c, 0);".into()),
+            Fprem1 => Ok("x87_prem(c, 1);".into()),
+            Fxam => Ok("x87_xam(c);".into()),
+            Fld1 => push("1.0L"),
+            Fldz => push("0.0L"),
+            Fldpi => push("0xc.90fdaa22168c235p-2L"),
+            Fldl2t => push("0xd.49a784bcd1b8afep-2L"),
+            Fldl2e => push("0xb.8aa3b295c17f0bcp-3L"),
+            Fldlg2 => push("0x9.a209a84fbcff799p-5L"),
+            Fldln2 => push("0xb.17217f7d1cf79acp-4L"),
+            Fnstsw => {
+                if mem {
+                    Ok(format!("wr16(c, {}, (u16)X87_SW());", ea(ins)?))
+                } else {
+                    Ok("SET16(c->eax, X87_SW());".into())
+                }
+            }
+            Fnstcw => Ok(format!("wr16(c, {}, (u16)c->fpcw);", ea(ins)?)),
+            Fldcw => Ok(format!("altair_set_fpcw(c, rd16(c, {}));", ea(ins)?)),
+            Fninit => Ok("{ c->fptop = 0; c->fpsw = 0; altair_set_fpcw(c, 0x37f); }".into()),
+            Fnclex | Ffree | Fnop => Ok(String::new()),
+            Fincstp => Ok("fpop(c);".into()),
+            Fdecstp => Ok("c->fptop = (c->fptop - 1) & 7;".into()),
+            other => Err(format!("{other:?}")),
+        }
     }
 
     /// SSE e SSE2 sui registri XMM. Le operazioni sono funzioni di `runtime/altair_sse.h`.

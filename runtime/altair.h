@@ -20,6 +20,9 @@ typedef int64_t s64;
 
 typedef struct Ctx Ctx;
 
+/* Un registro x87: sugli host x86 `long double` è il formato esteso a 80 bit. */
+typedef long double f80;
+
 /* Un registro XMM, visto per corsie. */
 typedef union {
     u8 b[16];
@@ -46,6 +49,10 @@ struct Ctx {
     u32 trap_addr;
     u32 mxcsr;     /* parola di controllo SSE del guest; all'avvio 0x1f80 */
     Xmm xmm[8];
+    f80 fpr[8];    /* registri x87 fisici; ST(i) = fpr[(fptop + i) & 7] */
+    u32 fptop;
+    u32 fpcw;      /* parola di controllo x87 del guest; Windows parte da 0x027f */
+    u32 fpsw;      /* solo i codici di condizione C0-C3 */
 };
 
 typedef void (*AltairFn)(Ctx *c);
@@ -67,6 +74,8 @@ int altair_run(Ctx *c, u32 addr);
 u64 altair_rdtsc(Ctx *c);
 /* `cpuid`: una CPU fissa di classe SSE3, uguale su ogni host. */
 void altair_cpuid(Ctx *c);
+/* `fldcw`: aggiorna la parola di controllo x87 del guest e quella dell'host. */
+void altair_set_fpcw(Ctx *c, u32 v);
 /* `ldmxcsr`: aggiorna la parola di controllo del guest e quella dell'host. */
 void altair_set_mxcsr(Ctx *c, u32 v);
 u8 *altair_mem_create(void);
@@ -110,5 +119,6 @@ _Static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "serve un host little-
 #define F_LOGIC(r, bits) cf = 0; of = 0; af = 0; F_ZSP(r, bits)
 
 #include "altair_sse.h"
+#include "altair_x87.h"
 
 #endif

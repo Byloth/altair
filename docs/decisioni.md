@@ -2,6 +2,20 @@
 
 Voci più recenti in cima. Ogni voce: decisione, motivazione, cosa la farebbe rivedere.
 
+## 2026-11-15 · x87 su `long double` dell'host
+
+**Decisione.** I registri x87 sono `long double` e le operazioni sono aritmetica C; la parola di
+controllo x87 dell'host segue quella del guest. Nessuna emulazione software.
+
+**Perché.** Sugli host x86 `long double` è il formato a 80 bit dell'x87: risultati identici
+all'originale senza scrivere un emulatore, verificati su 4.201 funzioni. Il nativo viene prima
+del web (decisione del 2026-11-14).
+
+**Costo accettato.** Non funziona su ARM né su wasm, dove `long double` è un altro formato:
+per il browser (Fase 5) servirà un x87 software dietro la stessa interfaccia (`f80`, `ST(i)`).
+
+**Si rivede** all'apertura della Fase 5, o se serve un build nativo per ARM.
+
 ## 2026-11-15 · Nome completo: "AC1 Recompiled - Altaïr"
 
 **Decisione.** Il titolo esteso del progetto diventa "AC1 Recompiled - Altaïr" (prima

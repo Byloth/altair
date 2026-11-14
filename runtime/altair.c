@@ -43,6 +43,19 @@ static u32 host_mxcsr(void) { return 0x1f80; }
 static void set_host_mxcsr(u32 v) { (void)v; }
 #endif
 
+#if defined(__x86_64__) || defined(__i386__)
+static u16 host_fpcw(void) { u16 v; __asm__ volatile("fnstcw %0" : "=m"(v)); return v; }
+static void set_host_fpcw(u16 v) { __asm__ volatile("fldcw %0" : : "m"(v)); }
+#else
+static u16 host_fpcw(void) { return 0x37f; }
+static void set_host_fpcw(u16 v) { (void)v; }
+#endif
+
+void altair_set_fpcw(Ctx *c, u32 v) {
+    c->fpcw = v & 0xffff;
+    set_host_fpcw((u16)(v | 0x3f)); /* le eccezioni restano mascherate sull'host */
+}
+
 void altair_set_mxcsr(Ctx *c, u32 v) {
     c->mxcsr = v;
     set_host_mxcsr(v | 0x1f80); /* le eccezioni restano mascherate sull'host */
@@ -52,16 +65,21 @@ int altair_run(Ctx *c, u32 addr) {
     jmp_buf jb;
     void *outer = c->trap_jmp;
     volatile u32 saved = host_mxcsr();
+    volatile u16 saved_cw = host_fpcw();
     c->trap_jmp = &jb;
     c->trap_msg = 0;
-    if (!outer)
+    if (!outer) {
         set_host_mxcsr(c->mxcsr | 0x1f80);
+        set_host_fpcw((u16)(c->fpcw | 0x3f));
+    }
     int trapped = setjmp(jb);
     if (!trapped)
         altair_call_indirect(c, addr);
     c->trap_jmp = outer;
-    if (!outer)
+    if (!outer) {
         set_host_mxcsr(saved);
+        set_host_fpcw(saved_cw);
+    }
     return trapped;
 }
 

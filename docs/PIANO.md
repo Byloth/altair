@@ -116,7 +116,7 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 - [x] Prefisso `lock`, `xadd`, `cmpxchg`, `bts`/`btr`/`btc`: atomiche vere sulla memoria host
 - [x] SSE/SSE2 scalare e impacchettato, MXCSR: copertura al 94,3% delle funzioni, resta non
   traducibile il 2,9% delle istruzioni
-- [ ] x87 a 80 bit con stack, confronti, control word (circa 4.300 funzioni)
+- [x] x87 a 80 bit con stack, confronti, control word: 99,96% delle funzioni si traduce
 - [x] `shld`/`shrd`, `rcl`/`rcr`, `rdtsc`, `cpuid`, `pushfd`/`popfd`, `sahf`/`lahf`,
   `mul`/`div` a 8 e 16 bit, `bsf`/`bsr` (copertura: 89,5% delle funzioni)
 - [ ] Scenari mirati per le istruzioni tradotte ma non ancora verificate (`rcl`, `bt*`,
@@ -128,8 +128,9 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 - [x] Scelta automatica delle funzioni per il test differenziale (`altair candidates`) e
   ingressi generati (`difftest.py --auto`)
 - [x] Confronto di registri XMM, heap, stack e dati globali; tolleranza sui soli NaN
-- [ ] Confronto anche di flag e stato x87
-- [x] Campione ampio: 3.042 funzioni del gioco identiche all'originale su 6.000, 0 diverse
+- [x] Confronto dello stato x87 (cima dello stack e registri a 80 bit)
+- [ ] Confronto dei flag; stack x87 non vuoto in ingresso; x87 trascendenti
+- [x] Campione ampio: 4.201 funzioni del gioco identiche all'originale su 8.000, 0 diverse
 - [ ] Ingressi strutturati per le funzioni oggi saltate (più di metà del campione)
 
 ### 1.4 Immagine intera
@@ -195,7 +196,7 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 ## Prossimi passi concreti
 
-1. **1.2**: x87 a 80 bit (circa 94.000 istruzioni, 6.600 funzioni), con confronto dello stato
-   x87 nel test; poi MMX.
-2. Scenari mirati per le istruzioni non ancora verificate.
-3. **1.4**: immagine intera compilata (in più file), ora che il 94% delle funzioni si traduce.
+1. **1.4**: immagine intera tradotta e compilata in più file; tempo e dimensione misurati.
+   È il gate della Fase 1.
+2. Scenari mirati per le istruzioni non ancora verificate; MMX e le 42 funzioni rimaste.
+3. Poi Fase 2: runtime Win32, per far partire il CRT del gioco.

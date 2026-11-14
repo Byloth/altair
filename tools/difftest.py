@@ -45,7 +45,8 @@ Ctx._fields_ = [(r, ctypes.c_uint32) for r in ('eax', 'ecx', 'edx', 'ebx', 'esp'
                                                 'df', 'fs_base')] + [
     ('mem', ctypes.c_void_p), ('host_call', HOST_CALL), ('trap_jmp', ctypes.c_void_p),
     ('trap_msg', ctypes.c_char_p), ('trap_addr', ctypes.c_uint32), ('mxcsr', ctypes.c_uint32),
-    ('xmm', ctypes.c_uint8 * 128)]
+    ('xmm', ctypes.c_uint8 * 128), ('fpr', ctypes.c_longdouble * 8), ('fptop', ctypes.c_uint32),
+    ('fpcw', ctypes.c_uint32), ('fpsw', ctypes.c_uint32)]
 
 
 class Native:
@@ -154,7 +155,7 @@ class Native:
         esp0 = STACK_TOP - 0x1000 - len(frame)
         self.write(esp0, frame)
         c = Ctx(eax=0, ecx=ecx & 0xFFFFFFFF, edx=edx & 0xFFFFFFFF, ebx=0, esp=esp0, ebp=0, esi=0, edi=0,
-                df=0, fs_base=TEB, mem=self.mem, host_call=self._cb, mxcsr=0x1F80)
+                df=0, fs_base=TEB, mem=self.mem, host_call=self._cb, mxcsr=0x1F80, fpcw=0x027F)
         if xmm:
             ctypes.memmove(c.xmm, b''.join(v.to_bytes(16, 'little') for v in xmm), 128)
         self._log, self._fault = [], None
@@ -162,7 +163,9 @@ class Native:
             raise harness.GuestError(self._fault or f'trap: {c.trap_msg.decode()} ({c.trap_addr:#010x})')
         regs = (c.eax, c.ecx, c.edx, c.ebx, c.ebp, c.esi, c.edi)
         xmm_out = tuple(int.from_bytes(bytes(c.xmm[16 * i:16 * i + 16]), 'little') for i in range(8))
-        return harness.Result(eax=c.eax, edx=c.edx, ecx=c.ecx, regs=regs, st0=None, xmm=xmm_out,
+        raw = ctypes.string_at(ctypes.addressof(c.fpr), 128)
+        x87 = (c.fptop, tuple(raw[16 * i:16 * i + 10] for i in range(8)))
+        return harness.Result(eax=c.eax, edx=c.edx, ecx=c.ecx, regs=regs, st0=None, xmm=xmm_out, x87=x87,
                               popped=(c.esp - esp0 - 4) & 0xFFFFFFFF, insns=None, imports=list(self._log))
 
 
@@ -179,7 +182,7 @@ class Recorder:
     def call(self, addr, args=(), ecx=0, edx=0):
         try:
             r = self.e.call(addr, args, ecx=ecx, edx=edx)
-            self.log.append((addr, tuple(args), r.regs, r.xmm, r.popped, tuple(r.imports)))
+            self.log.append((addr, tuple(args), r.regs, r.xmm, r.x87, r.popped, tuple(r.imports)))
             return r
         except harness.GuestError as err:
             self.log.append((addr, tuple(args), 'errore', str(err)))
@@ -332,7 +335,7 @@ def make_inputs(g, rng):
 
 
 def observe(g, r):
-    return (r.regs, r.xmm, r.popped, tuple(r.imports), g.read(HEAP, max(g.heap_top - HEAP, HEAP_CLEAR)),
+    return (r.regs, r.xmm, r.x87, r.popped, tuple(r.imports), g.read(HEAP, max(g.heap_top - HEAP, HEAP_CLEAR)),
             g.read(STACK_TOP - STACK_CLEAR, STACK_CLEAR), g.image_state())
 
 
@@ -364,11 +367,18 @@ def same_but_nan(a, b):
     return True
 
 
+def x87_same_but_nan(a, b):
+    """Stessa cima dello stack e stessi registri, a meno di registri che sono NaN in entrambi."""
+    def nan(r):
+        return r[9] & 0x7F == 0x7F and r[8] == 0xFF
+    return a[0] == b[0] and all(x == y or (nan(x) and nan(y)) for x, y in zip(a[1], b[1]))
+
+
 def xmm_bytes(regs):
     return b''.join(v.to_bytes(16, 'little') for v in regs)
 
 
-FIELDS = ('registri (eax ecx edx ebx ebp esi edi)', 'registri xmm', 'byte tolti dallo stack', 'import', 'heap', 'stack',
+FIELDS = ('registri (eax ecx edx ebx ebp esi edi)', 'registri xmm', 'stato x87', 'byte tolti dallo stack', 'import', 'heap', 'stack',
           'dati globali')
 
 
@@ -439,7 +449,7 @@ def run_auto(exe, count, cases):
                 # Tolleranza sui soli NaN, per registri XMM e memoria (indici 1, 4, 5, 6).
                 o0 = (obs[0][0], xmm_bytes(obs[0][1])) + obs[0][2:]
                 o1 = (obs[1][0], xmm_bytes(obs[1][1])) + obs[1][2:]
-                if all(same_but_nan(x, y) if k in (1, 4, 5, 6) else x == y
+                if all(same_but_nan(x, y) if k in (1, 5, 6, 7) else x87_same_but_nan(x, y) if k == 2 else x == y
                        for k, (x, y) in enumerate(zip(o0, o1))):
                     nan_only.add(addr)
                     continue
@@ -448,7 +458,10 @@ def run_auto(exe, count, cases):
                     bad = (case, f'il tradotto si ferma: {obs[1][1]}')
                 else:
                     k = next(i for i in range(len(FIELDS)) if obs[0][i] != obs[1][i])
-                    detail = (f'{obs[0][k]} contro {obs[1][k]}' if k in (0, 2, 3) else
+                    detail = (f'{obs[0][k]} contro {obs[1][k]}' if k in (0, 3, 4) else
+                              f'cima {obs[0][2][0]} contro {obs[1][2][0]}; ' + ' '.join(
+                                  f'fp{i}: {a.hex()} contro {b.hex()}' for i, (a, b) in
+                                  enumerate(zip(obs[0][2][1], obs[1][2][1])) if a != b) if k == 2 else
                               ' '.join(f'xmm{i}: {a:032x} contro {b:032x}' for i, (a, b) in
                                        enumerate(zip(obs[0][1], obs[1][1])) if a != b) if k == 1 else '')
                     bad = (case, f'{FIELDS[k]} {detail}')

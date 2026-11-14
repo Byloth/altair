@@ -82,3 +82,9 @@
   Test rifatti dopo il cambio: selftest e scenari OK, 820 funzioni identiche su 1.500.
   La cartella va rinominata dall'utente a sessione chiusa → `ambiente.md`.
 - Titolo esteso del progetto cambiato in "AC1 Recompiled - Altaïr" (repository e documento online) → `decisioni.md`.
+- **x87** nel traduttore (`runtime/altair_x87.h`): registri `long double` a 80 bit, parola di
+  controllo dell'host allineata a quella del guest. Copertura: **116.048 funzioni su 116.090
+  (99,96%)**, non traducibili 336 istruzioni su 3,2 milioni.
+- Il test confronta anche lo stato x87. Campione di 8.000 funzioni: **4.201 identiche, 0
+  diverse** (6 a meno di un NaN). Corretto un caso: codice che dopo una `call` prosegue dentro
+  un'altra funzione (routine matematiche del CRT) → `analisi/traduttore.md`, `decisioni.md`.

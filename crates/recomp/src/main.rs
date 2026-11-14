@@ -303,6 +303,12 @@ fn candidates_cmd(img: &Image, max: usize) {
             }
         }
     }
+    // Risultati non confrontabili con l'emulatore: tempo, identità della CPU, e le funzioni
+    // trascendenti dell'x87, che l'emulatore calcola in doppia precisione.
+    const UNCOMPARABLE: [Mnemonic; 12] = [
+        Mnemonic::Rdtsc, Mnemonic::Cpuid, Mnemonic::Fsin, Mnemonic::Fcos, Mnemonic::Fsincos, Mnemonic::Fptan,
+        Mnemonic::Fpatan, Mnemonic::Fyl2x, Mnemonic::Fyl2xp1, Mnemonic::F2xm1, Mnemonic::Fprem, Mnemonic::Fprem1,
+    ];
     // Chiusura sulle chiamate dirette: piccola, tutta traducibile, senza destinazioni ignote.
     let mut good: Vec<(u32, BTreeSet<Mnemonic>)> = Vec::new();
     for (&a, root) in &info {
@@ -319,8 +325,7 @@ fn candidates_cmd(img: &Image, max: usize) {
                 continue;
             }
             match info.get(&t) {
-                // `rdtsc` e `cpuid` danno risultati diversi dall'emulatore: non confrontabili.
-                Some(i) if !i.opaque && !i.mnemonics.contains(&Mnemonic::Rdtsc) && !i.mnemonics.contains(&Mnemonic::Cpuid) => {
+                Some(i) if !i.opaque && !i.mnemonics.iter().any(|m| UNCOMPARABLE.contains(m)) => {
                     total += i.insns;
                     mn.extend(i.mnemonics.iter().copied());
                     pending.extend(i.calls.iter().copied());
