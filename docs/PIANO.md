@@ -167,8 +167,10 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 **Gate:** menu e tutorial nell'Animus giocabili.
 
-- [ ] `IDirect3D9` e device "registratore": contano metodi, formati e shader senza disegnare
-- [ ] Verificare l'uso della GPU da WSL con wgpu
+- [x] `IDirect3D9` e device "registratore": il gioco presenta 3.000 fotogrammi; censimento
+  in `analisi/d3d9.md` (79 metodi, solo shader model 3.0, DXT, 54 draw per fotogramma)
+- [ ] Verificare l'uso della GPU da WSL con wgpu (`/dev/dxg` c'è, RTX 4070 Ti visibile)
+- [ ] Input simulato per superare la schermata iniziale e censire menu e gioco
 - [ ] D3D9 su wgpu: device, stati, risorse, formati, render target
 - [ ] Traduttore shader SM2/SM3 → WGSL
 - [ ] Video Bink, DirectSound (EAX opzionale), DirectInput, XInput
@@ -207,7 +209,8 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 ## Prossimi passi concreti
 
-1. **Fase 3**: `IDirect3D9` e device registratore, per censire ciò che il gioco chiede.
+1. **Fase 3**: provare wgpu da WSL; poi il traduttore shader SM3 → WGSL e il primo
+   fotogramma vero.
 2. Lettore `.forge` in Rust.
 3. Punti aperti della Fase 1: scenari mirati per le istruzioni non verificate, limiti della
    scoperta.

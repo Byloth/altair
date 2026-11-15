@@ -120,5 +120,7 @@ I numeri sopra sono del prototipo in Python. `altair discover` oggi dà **116.07
 3.221.462 istruzioni**, con 641 jump table. Tra le partenze scartate ci sono ora anche le
 tabelle di indici degli switch a due livelli, che si decodificavano come `push es`/`pop es`:
 vedi `traduttore.md`, "Le ultime 42 funzioni". Dal runtime è poi emersa una tabella di puntatori
-non allineata in `.data` (routine matematiche del CRT): con quelle le funzioni sono 116.142
-(`runtime.md`).
+non allineata in `.data` (routine matematiche del CRT): con quelle le funzioni sono 116.142.
+Eseguendo il gioco sono emersi altri casi (serie non allineate, callback di solo `ret`, falsi
+inizi da immediati, `pushad`): oggi le funzioni sono **117.159**, di cui 93 aggiunte da
+`altair image` perché chiamate ma non scoperte (`runtime.md`).

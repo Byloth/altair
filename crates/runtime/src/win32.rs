@@ -40,6 +40,7 @@ pub struct Runtime {
     pub wndproc: u32,
     pub com_vtables: HashMap<&'static str, u32>,
     pub ds_buffers: HashMap<u32, crate::dsound::Buffer>,
+    pub d3d: crate::d3d9::D3d,
     start: Instant,
     cmdline: u32,
     env_a: u32,
@@ -86,6 +87,8 @@ static TABLE: OnceLock<Vec<(String, Option<(u32, Shim)>)>> = OnceLock::new();
 static RUN: OnceLock<RunFn> = OnceLock::new();
 pub type TrailFn = unsafe extern "C" fn(*mut u32, i32) -> i32;
 static TRAIL: OnceLock<TrailFn> = OnceLock::new();
+pub type CallFn = unsafe extern "C" fn(*mut Ctx, u32);
+static CALL: OnceLock<CallFn> = OnceLock::new();
 static TRACE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Funzioni host registrate a runtime (i metodi degli oggetti COM), dopo i trampolini degli import.
@@ -116,14 +119,15 @@ fn rt() -> MutexGuard<'static, Runtime> {
     RT.get().expect("runtime non installato").lock().unwrap_or_else(|e| e.into_inner())
 }
 
-pub fn install(rt: Runtime, img: &Image, run: RunFn, trail: TrailFn) {
+pub fn install(rt: Runtime, img: &Image, run: RunFn, trail: TrailFn, call: CallFn) {
     let _ = TRAIL.set(trail);
+    let _ = CALL.set(call);
     let table = img
         .imports
         .iter()
         .map(|imp| {
             let key = if imp.name.starts_with('#') { format!("{}!{}", imp.dll, imp.name) } else { imp.name.clone() };
-            let shim = SHIMS.iter().chain(crate::system::SHIMS).chain(crate::user32::SHIMS).chain(crate::input::SHIMS).chain(EXTRA).find(|s| s.0 == key).map(|s| (s.1, s.2));
+            let shim = SHIMS.iter().chain(crate::system::SHIMS).chain(crate::user32::SHIMS).chain(crate::input::SHIMS).chain(crate::d3d9::SHIMS).chain(EXTRA).find(|s| s.0 == key).map(|s| (s.1, s.2));
             (format!("{}!{}", imp.dll, imp.name), shim)
         })
         .collect();
@@ -156,6 +160,7 @@ impl Runtime {
             wndproc: 0,
             com_vtables: HashMap::new(),
             ds_buffers: HashMap::new(),
+            d3d: Default::default(),
             fs: fs::FsState::new(
                 std::path::Path::new(exe).parent().map(Into::into).unwrap_or_default(),
                 std::env::current_dir().unwrap_or_default().join("run").join("c"),
@@ -180,6 +185,10 @@ impl Runtime {
         let a = self.halloc(data.len() as u32 + zeros, true);
         self.mem.write(a, data);
         a
+    }
+
+    pub fn hfree(&mut self, addr: u32) {
+        self.heap.free(addr);
     }
 
     pub fn halloc(&mut self, size: u32, zero: bool) -> u32 {
@@ -215,7 +224,28 @@ impl Runtime {
 
 
 /// Import implementati in altri moduli.
-static EXTRA: &[(&str, u32, Shim)] = &[("dsound.dll!#11", 3, L(crate::dsound::direct_sound_create8))];
+static EXTRA: &[(&str, u32, Shim)] = &[
+    ("EnumDisplayMonitors", 4, F(crate::user32::enum_display_monitors)),
+   ("dsound.dll!#11", 3, L(crate::dsound::direct_sound_create8))];
+
+/// Chiama una funzione guest `stdcall` da uno shim e ne ritorna `eax`. Lo shim deve essere di
+/// tipo `F`: il lucchetto del runtime non va tenuto mentre gira codice guest.
+pub fn call_guest(c: &mut Call, addr: u32, args: &[u32]) -> u32 {
+    let saved = c.ctx.esp;
+    // Sotto la cima dello stack, lasciando spazio a ciò che lo shim può averci messo.
+    let mut sp = saved - 0x100;
+    for a in args.iter().rev() {
+        sp -= 4;
+        c.mem.w32(sp, *a);
+    }
+    sp -= 4;
+    c.mem.w32(sp, 0); // indirizzo di ritorno: la funzione C tradotta torna qui da sola
+    c.ctx.esp = sp;
+    // SAFETY: `addr` è una funzione guest; il contesto è quello del thread corrente.
+    unsafe { (CALL.get().unwrap())(c.ctx, addr) };
+    c.ctx.esp = saved;
+    c.ctx.eax
+}
 
 thread_local! {
     /// Impostato da `ExitThread`: la trap che segue è un'uscita normale del thread.
@@ -282,6 +312,7 @@ pub fn report_stop(ctx: &Ctx) {
         p += 4;
     }
     eprintln!("  possibili indirizzi di ritorno sullo stack: {}", frames.join(" "));
+    crate::d3d9::report(&rt);
     // Va chiamata dal thread che si è fermato: la traccia è per thread.
     let mut trail = [0u32; 32];
     let n = TRAIL.get().map_or(0, |f| unsafe { f(trail.as_mut_ptr(), 32) });

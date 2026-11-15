@@ -118,3 +118,12 @@
 - Il gioco ora crea la finestra "Assassin's Creed" e chiama **`Direct3DCreate9`**: lì si ferma,
   tre corse su tre. È il confine con la Fase 3. Test differenziale: 1.616 identiche su 3.000,
   0 diverse → `analisi/runtime.md`.
+- **Direct3D 9 registratore** (`d3d9.rs`): 17 + 119 metodi dichiarati, più risorse e tabella
+  delle costanti D3DX. **Il gioco gira nel suo ciclo principale e presenta 3.000 fotogrammi**
+  (54 draw l'uno) senza fermarsi: carica stanza di caricamento e mondo del menu, salta i filmati.
+  Censimento in `analisi/d3d9.md`: 79 metodi usati, 3.412 shader tutti SM 3.0, texture DXT.
+- Cinque funzioni non scoperte emerse eseguendo, e la scoperta migliorata di conseguenza
+  (serie non allineate, rete di sicurezza sulle `call`, callback di solo `ret`, falsi inizi da
+  immediati, `pushad`): 117.159 funzioni. `call_guest` per le callback verso il gioco.
+- GPU: `/dev/dxg` presente, RTX 4070 Ti visibile da WSL; wgpu ancora da provare.
+- Test differenziale: 3.084 identiche su 6.000, 0 diverse.

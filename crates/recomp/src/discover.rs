@@ -84,7 +84,7 @@ fn never_executed(m: Mnemonic) -> bool {
         m,
         In | Out | Insb | Insd | Insw | Outsb | Outsd | Outsw | Les | Lds | Aaa | Aas | Aam | Aad | Daa | Das
             | Iret | Iretd | Hlt | Cli | Sti | Salc | Int1 | Into | Bound | Arpl | Retf | Int | Lgdt | Lidt
-            | Xlatb | Popa | Popad | Pusha | Pushad | Enter | Clts | Loopne | Loope
+            | Enter | Clts | Loopne | Loope
     )
 }
 
@@ -332,8 +332,18 @@ impl<'a> Discovery<'a> {
             return true;
         }
         let t = self.text;
+        // Una funzione che è solo `ret` o `ret n`: spesso è la coda di un'altra, usata come
+        // callback che non fa nulla.
+        if matches!(t[o], 0xC3 | 0xC2) {
+            return true;
+        }
         // Allineata a 16, oppure subito dopo padding, `ret`, `ret n`.
-        if a % 16 == 0 || matches!(t[o - 1], 0xCC | 0xC3 | 0x90) || t[o - 3] == 0xC2 {
+        if a % 16 == 0 || matches!(t[o - 1], 0xCC | 0xC3) || t[o - 3] == 0xC2 {
+            return true;
+        }
+        // Dopo dei `nop` di riempimento: almeno due, o uno dopo un `ret`. Un solo 0x90 è spesso
+        // il byte ModRM di un'istruzione (`mov edx, [eax+…]`).
+        if t[o - 1] == 0x90 && (matches!(t[o - 2], 0x90 | 0xC3) || t[o - 4] == 0xC2) {
             return true;
         }
         // Regola larga: anche subito dopo `jmp rel32` o `jmp rel8`.
@@ -389,23 +399,34 @@ impl<'a> Discovery<'a> {
             .flat_map(|s| img.words(s))
             .filter(|&(_, v)| d.in_text(v))
             .collect();
+        // Due passate. Nella prima una parola nei dati deve "sembrare un inizio"; solo quando
+        // questa non trova più nulla, la seconda accetta anche le voci di tabelle di puntatori a
+        // funzione che non lo sembrano. L'ordine conta: un falso inizio accettato per primo
+        // occupa i byte di una funzione vera e la fa scartare.
         let mut seen: HashSet<u32> = HashSet::new();
-        for round in 1..=8 {
-            let before = d.starts.len();
-            let mut fresh: Vec<u32> = d.imms.difference(&seen).copied().collect();
-            fresh.sort_unstable();
-            for v in fresh {
-                seen.insert(v);
-                d.weak(v, Kind::Immediate, true);
-            }
-            for &(a, v) in &data_words {
-                if !d.table_slots.contains(&a) {
-                    d.weak(v, Kind::DataWord, true);
+        for relaxed in [false, true] {
+            for round in 1..=8 {
+                let before = d.starts.len();
+                for (i, &(a, v)) in data_words.iter().enumerate() {
+                    if d.table_slots.contains(&a) {
+                        continue;
+                    }
+                    let neighbour = |j: usize, addr: u32| data_words.get(j).is_some_and(|&(b, w)| b == addr && d.starts.contains_key(&w));
+                    let in_table = relaxed && ((i > 0 && neighbour(i - 1, a - 4)) || neighbour(i + 1, a + 4));
+                    d.weak(v, Kind::DataWord, !in_table);
                 }
-            }
-            say(&d, &format!("giro {round}: immediati e dati"));
-            if d.starts.len() == before {
-                break;
+                // Gli immediati dopo i dati: sono la fonte con più falsi positivi (costanti
+                // numeriche che cadono per caso nell'intervallo del codice).
+                let mut fresh: Vec<u32> = d.imms.difference(&seen).copied().collect();
+                fresh.sort_unstable();
+                for v in fresh {
+                    seen.insert(v);
+                    d.weak(v, Kind::Immediate, true);
+                }
+                say(&d, &format!("giro {round}{}: immediati e dati", if relaxed { " (tabelle)" } else { "" }));
+                if d.starts.len() == before {
+                    break;
+                }
             }
         }
 
@@ -429,6 +450,30 @@ impl<'a> Discovery<'a> {
                 let after_transfer = o > 5 && (t[o - 1] == 0xC3 || t[o - 3] == 0xC2 || t[o - 5] == 0xE9 || t[o - 2] == 0xEB);
                 if after_transfer {
                     d.weak(v, Kind::Unaligned, false);
+                }
+            }
+            // Tabelle vere e proprie: almeno tre puntatori a codice consecutivi, a passo 4, a un
+            // indirizzo non allineato. Le loro voci sono etichette qualsiasi dentro le routine.
+            for residue in 1..4usize {
+                let mut run: Vec<u32> = Vec::new();
+                let mut off = residue;
+                loop {
+                    let v = bytes.get(off..off + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+                    match v {
+                        Some(v) if d.in_text(v) => run.push(v),
+                        _ => {
+                            if run.len() >= 3 {
+                                for &t in &run {
+                                    d.weak(t, Kind::Unaligned, false);
+                                }
+                            }
+                            run.clear();
+                            if v.is_none() {
+                                break;
+                            }
+                        }
+                    }
+                    off += 4;
                 }
             }
             say(&d, "parole non allineate in .data");

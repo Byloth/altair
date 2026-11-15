@@ -456,7 +456,31 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
             Err(e) => eprintln!("non decodificata {a:#010x}: {e}"),
         }
     }
-    let known = |a: u32| funcs.contains_key(&a);
+    // Rete di sicurezza: ogni destinazione di una `call` diretta nel codice tradotto deve essere
+    // una funzione tradotta, anche se la scoperta non l'aveva trovata (il traduttore segue le
+    // jump table in modo un po' diverso e raggiunge qualche caso in più).
+    let mut extra = 0;
+    loop {
+        let missing: BTreeSet<u32> =
+            funcs.values().flat_map(|f| f.calls.iter().copied()).filter(|t| !funcs.contains_key(t) && d.lo <= *t && *t < d.hi).collect();
+        if missing.is_empty() {
+            break;
+        }
+        for a in missing {
+            match translate::decode(img, a, &is_hard).and_then(|f| translate::emit(&f, &|_| true).map(|_| f)) {
+                Ok(f) => {
+                    funcs.insert(a, f);
+                    extra += 1;
+                }
+                Err(e) => {
+                    eprintln!("destinazione di call non traducibile {a:#010x}: {e}");
+                    // Una funzione vuota evita di riprovare all'infinito; a runtime sarà una trap.
+                    funcs.insert(a, translate::Func::empty(a));
+                }
+            }
+        }
+    }
+    let known = |a: u32| funcs.contains_key(&a) && !funcs[&a].insns.is_empty();
 
     // Un file per finestra di indirizzi: una funzione sta nel file della finestra in cui inizia.
     let mut parts: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
@@ -470,6 +494,9 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
         let mut protos: BTreeSet<u32> = BTreeSet::new();
         for a in addrs {
             let f = &funcs[a];
+            if f.insns.is_empty() {
+                continue;
+            }
             protos.insert(*a);
             protos.extend(f.calls.iter().copied().filter(|&t| known(t)));
             let n = f.insns.len();
@@ -499,14 +526,15 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
     }
 
     let mut table = String::from("/* Generato da `altair image`: tabella indirizzo -> funzione, ordinata. */\n#include \"altair.h\"\n\n");
-    for a in funcs.keys() {
+    let emitted: Vec<u32> = funcs.iter().filter(|(_, f)| !f.insns.is_empty()).map(|(a, _)| *a).collect();
+    for a in &emitted {
         table.push_str(&format!("void {}(Ctx *c);\n", translate::fn_name(*a)));
     }
     table.push_str("\nconst AltairEntry altair_functions[] = {\n");
-    for a in funcs.keys() {
+    for a in &emitted {
         table.push_str(&format!("    {{{a:#x}u, {}}},\n", translate::fn_name(*a)));
     }
-    table.push_str(&format!("}};\nconst u32 altair_function_count = {};\n", funcs.len()));
+    table.push_str(&format!("}};\nconst u32 altair_function_count = {};\n", emitted.len()));
     bytes += table.len();
     written += write_if_changed(&out.join("table.c"), &table)? as usize;
     names.insert("table.c".into());
@@ -542,7 +570,7 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
     );
     write_if_changed(&out.join("Makefile"), &makefile)?;
 
-    println!("funzioni            {}", funcs.len());
+    println!("funzioni            {} (di cui {extra} aggiunte perché chiamate ma non scoperte)", funcs.len());
     println!("istruzioni          {insns} (contate per funzione)");
     println!("file                {} da {} KB di indirizzi, più table.c", parts.len(), window / 1024);
     println!("dimensione          {:.1} MB di C", bytes as f64 / 1e6);

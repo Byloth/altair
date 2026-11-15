@@ -65,6 +65,17 @@ fn post_quit_message(_: &mut Runtime, c: &mut Call) -> u32 {
     0
 }
 
+/// Un solo monitor, grande quanto lo schermo dichiarato. La callback è codice guest.
+pub fn enum_display_monitors(c: &mut Call) -> u32 {
+    let rect = c.ctx.esp - 0x40;
+    for (i, v) in [0, 0, SCREEN.0, SCREEN.1].iter().enumerate() {
+        c.mem.w32(rect + 4 * i as u32, *v);
+    }
+    let (callback, data) = (c.arg(2), c.arg(3));
+    crate::win32::call_guest(c, callback, &[0x0001_0001, 0, rect, data]);
+    1
+}
+
 pub static SHIMS: &[(&str, u32, Shim)] = &[
     ("SetWindowsHookExA", 4, L(fake_handle)),
     ("UnhookWindowsHookEx", 1, L(one)),

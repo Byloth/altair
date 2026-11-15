@@ -29,6 +29,10 @@ pub struct Func {
 }
 
 impl Func {
+    pub fn empty(start: u32) -> Func {
+        Func { start, insns: BTreeMap::new(), labels: BTreeSet::new(), tables: HashMap::new(), calls: BTreeSet::new() }
+    }
+
     /// Contiene chiamate o salti indiretti la cui destinazione non è nota staticamente.
     pub fn has_opaque_indirect(&self) -> bool {
         self.insns.values().any(|i| match i.flow_control() {
@@ -534,6 +538,12 @@ impl Emitter<'_> {
                 Ok(format!("{{ u32 v = rd32(c, c->esp); c->esp += 4; {} }}", write(ins, 0, 32, "v")?))
             }
             Leave => Ok("c->esp = c->ebp; c->ebp = rd32(c, c->esp); c->esp += 4;".into()),
+            Pushad => Ok("{ u32 sp = c->esp; wr32(c, sp - 4, c->eax); wr32(c, sp - 8, c->ecx); wr32(c, sp - 12, c->edx); \
+                          wr32(c, sp - 16, c->ebx); wr32(c, sp - 20, sp); wr32(c, sp - 24, c->ebp); wr32(c, sp - 28, c->esi); \
+                          wr32(c, sp - 32, c->edi); c->esp = sp - 32; }".into()),
+            Popad => Ok("{ u32 sp = c->esp; c->edi = rd32(c, sp); c->esi = rd32(c, sp + 4); c->ebp = rd32(c, sp + 8); \
+                         c->ebx = rd32(c, sp + 16); c->edx = rd32(c, sp + 20); c->ecx = rd32(c, sp + 24); \
+                         c->eax = rd32(c, sp + 28); c->esp = sp + 32; }".into()),
             Add => binary("r = (u(BITS))(a + b); F_ADD(a, b, r, BITS)", true),
             Sub => binary("r = (u(BITS))(a - b); F_SUB(a, b, r, BITS)", true),
             Cmp => binary("r = (u(BITS))(a - b); F_SUB(a, b, r, BITS)", false),

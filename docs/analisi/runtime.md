@@ -43,6 +43,7 @@ ferma dicendo quale import serve e da dove è stato chiamato. È il ciclo di lav
 | `com.rs` | oggetti COM: vtable in memoria guest i cui slot sono funzioni host |
 | `dsound.rs` | DirectSound 8 muto |
 | `input.rs` | DirectInput 8 e XInput senza dispositivi |
+| `d3d9.rs` | Direct3D 9 "registratore": conta e non disegna (vedi `d3d9.md`) |
 | `system.rs` | registro, file INI, data e ora, rete, Bink, numeri casuali |
 | `user32.rs` | una finestra senza schermo |
 
@@ -88,11 +89,13 @@ Con 234 shim di import e 87 metodi COM, senza alcuna modifica al codice tradotto
 7. **L'input**: crea DirectInput, mouse e tastiera, e li interroga dal ciclo principale.
 8. **La finestra**: registra la classe `ScimitarEngineWindowClass` (procedura `0x004013E3`) e
    crea la finestra "Assassin's Creed" 1280x720, da un thread del motore.
-9. **Direct3D**: chiama `Direct3DCreate9(0x20)` da `0x00A0FD32`.
+9. **Direct3D**: crea il device (1280x720, D24S8), 3.412 shader, texture e render target.
+10. **Il ciclo principale**: carica la stanza di caricamento e il mondo del menu, salta i
+    filmati iniziali e **presenta fotogrammi**: 3.000 di fila, con circa 54 draw ciascuno,
+    senza fermarsi. Il thread del mixer audio usa il codice MMX tradotto.
 
-**Si ferma lì**, in modo ripetibile (tre corse su tre): `Direct3DCreate9` non c'è. È il
-confine con la Fase 3. Circa 6.000 chiamate a import nel thread principale; nessun arresto
-anomalo prima.
+Il gioco non si ferma più da solo: gira finché non lo si interrompe (`ALTAIR_FRAMES=N`).
+Non disegna nulla: Direct3D è un registratore.
 
 Cose notate lungo la strada:
 - Il gioco cerca `DataPC_StreamedSoundsEng.forge`, che in questa installazione non esiste
@@ -124,10 +127,25 @@ Cose notate lungo la strada:
 - **Letture sovrapposte.** Il thread di caricamento aspettava per sempre l'evento di
   completamento di `ReadFile`: va segnalato anche se la lettura è già finita.
 
+- **Altre funzioni che la scoperta non vedeva**, emerse solo eseguendo:
+  - una seconda etichetta del CRT in una tabella non allineata: ora si riconoscono le *serie*
+    di tre o più puntatori a codice a indirizzi non allineati;
+  - una funzione chiamata con una `call` diretta ma raggiunta dal traduttore e non dalla
+    scoperta: `altair image` ora aggiunge ogni destinazione di `call` che manca (93 funzioni);
+  - una callback che è solo `ret 8`, la coda di un'altra funzione; e la sua vicina di tabella,
+    nascosta da due **falsi inizi** nati da costanti numeriche. La scoperta ora elabora i dati
+    prima degli immediati, richiede due `nop` (un solo `0x90` è spesso un byte ModRM) e accetta
+    le voci delle tabelle di puntatori solo in una seconda passata;
+  - un mixer audio MMX scartato perché conteneva `pushad`, che la scoperta considerava
+    "istruzione che un gioco non esegue".
+  In tutto le funzioni sono passate da 116.142 a **117.159**.
+- **Callback verso il gioco**: `EnumDisplayMonitors` chiama una funzione guest. `call_guest`
+  lo permette agli shim che non tengono il lucchetto del runtime.
+
 ## Prossimi passi
 
-1. **Fase 3: Direct3D 9.** Prima un `IDirect3D9` e un device che registrano e contano le
-   chiamate senza disegnare, per vedere quali metodi, formati e shader usa il gioco; poi il
-   renderer vero su wgpu.
-2. Verificare se la GPU è utilizzabile da WSL.
-3. Punti aperti di questa fase: SEH, file INI veri, lingua, prima pagina protetta.
+1. **Vedere qualcosa.** Verificare se wgpu trova la GPU da WSL; poi il renderer vero, partendo
+   da ciò che questa scena usa: shader model 3.0 → WGSL, DXT, render target A8R8G8B8 e R32F.
+2. Input simulato (un tasto premuto) per superare la schermata iniziale e censire i menu.
+3. Riciclo degli oggetti COM rilasciati: oggi non si libera nulla.
+4. Punti aperti: SEH, file INI veri, lingua, prima pagina protetta.

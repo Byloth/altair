@@ -309,8 +309,8 @@ static BUFFER: &[Method] = &[
     ("Stop", 1, Some(L(buf_stop))),
     ("Unlock", 5, Some(L(com::ok))),
     ("Restore", 1, Some(L(com::ok))),
-    ("SetFX", 4, None),
-    ("AcquireResources", 4, None),
+    ("SetFX", 4, Some(L(com::ok))),
+    ("AcquireResources", 4, Some(L(com::ok))),
     ("GetObjectInPath", 5, None),
 ];
 

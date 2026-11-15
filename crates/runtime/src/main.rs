@@ -1,6 +1,7 @@
 //! `altair-run`: carica l'immagine del gioco, la collega alla libreria tradotta e la esegue.
 
 mod com;
+mod d3d9;
 mod dsound;
 mod fs;
 mod input;
@@ -63,6 +64,7 @@ fn run() -> Result<i32, String> {
     let altair_run: RunFn = sym(lib, "altair_run")?;
     let mem_create: MemCreateFn = sym(lib, "altair_mem_create")?;
     let trail: win32::TrailFn = sym(lib, "altair_trail")?;
+    let call: win32::CallFn = sym(lib, "altair_call_indirect")?;
 
     let base = unsafe { mem_create() };
     if base.is_null() {
@@ -85,7 +87,7 @@ fn run() -> Result<i32, String> {
 
     let mut rt = win32::Runtime::new(mem, &img, exe, trace);
     rt.setup_static_tls(&img, TEB);
-    win32::install(rt, &img, altair_run, trail);
+    win32::install(rt, &img, altair_run, trail, call);
 
     let mut ctx = Ctx::new(base);
     ctx.fs_base = TEB;

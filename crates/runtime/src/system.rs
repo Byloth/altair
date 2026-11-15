@@ -168,6 +168,21 @@ fn crypt_gen_random(rt: &mut Runtime, c: &mut Call) -> u32 {
     ok as u32
 }
 
+fn bswap32(_: &mut Runtime, c: &mut Call) -> u32 {
+    c.arg(0).swap_bytes()
+}
+fn bswap16(_: &mut Runtime, c: &mut Call) -> u32 {
+    (c.arg(0) as u16).swap_bytes() as u32
+}
+fn inet_addr(rt: &mut Runtime, c: &mut Call) -> u32 {
+    eprintln!("[rete] il gioco chiede l'indirizzo \"{}\": rete non disponibile", rt.mem.cstr(c.arg(0)));
+    0xffff_ffff // INADDR_NONE
+}
+fn gethostbyname(rt: &mut Runtime, c: &mut Call) -> u32 {
+    eprintln!("[rete] il gioco cerca l'host \"{}\": rete non disponibile", rt.mem.cstr(c.arg(0)));
+    0
+}
+
 pub static SHIMS: &[(&str, u32, Shim)] = &[
     ("CoInitialize", 1, L(zero)),
     ("CoUninitialize", 0, L(zero)),
@@ -192,7 +207,6 @@ pub static SHIMS: &[(&str, u32, Shim)] = &[
     ("ws2_32.dll!#115", 2, L(wsa_startup)),
     ("ws2_32.dll!#116", 0, L(zero)),
     ("ws2_32.dll!#111", 0, L(wsa_get_last_error)),
-    ("ws2_32.dll!#23", 3, L(socket_error)),
     ("GetAdaptersInfo", 2, L(get_adapters_info)),
     ("InternetGetCookieW", 4, L(zero)),
     ("InternetSetCookieW", 3, L(zero)),
@@ -216,4 +230,32 @@ pub static SHIMS: &[(&str, u32, Shim)] = &[
     ("CryptAcquireContextA", 5, L(crypt_acquire_context_a)),
     ("CryptGenRandom", 3, L(crypt_gen_random)),
     ("CryptReleaseContext", 2, L(one)),
+    ("ws2_32.dll!#1", 3, L(socket_error)),
+    ("ws2_32.dll!#2", 3, L(socket_error)),
+    ("ws2_32.dll!#3", 1, L(socket_error)),
+    ("ws2_32.dll!#4", 3, L(socket_error)),
+    ("ws2_32.dll!#5", 3, L(socket_error)),
+    ("ws2_32.dll!#6", 3, L(socket_error)),
+    ("ws2_32.dll!#7", 5, L(socket_error)),
+    ("ws2_32.dll!#10", 3, L(socket_error)),
+    ("ws2_32.dll!#13", 2, L(socket_error)),
+    ("ws2_32.dll!#16", 4, L(socket_error)),
+    ("ws2_32.dll!#17", 6, L(socket_error)),
+    ("ws2_32.dll!#18", 5, L(socket_error)),
+    ("ws2_32.dll!#19", 4, L(socket_error)),
+    ("ws2_32.dll!#20", 6, L(socket_error)),
+    ("ws2_32.dll!#21", 5, L(socket_error)),
+    ("ws2_32.dll!#22", 2, L(socket_error)),
+    ("ws2_32.dll!#23", 3, L(socket_error)),
+    ("ws2_32.dll!#57", 2, L(socket_error)),
+    ("ws2_32.dll!#101", 4, L(socket_error)),
+    ("ws2_32.dll!#8", 1, L(bswap32)),
+    ("ws2_32.dll!#14", 1, L(bswap32)),
+    ("ws2_32.dll!#9", 1, L(bswap16)),
+    ("ws2_32.dll!#15", 1, L(bswap16)),
+    ("ws2_32.dll!#11", 1, L(inet_addr)),
+    ("ws2_32.dll!#12", 1, L(zero)),
+    ("ws2_32.dll!#51", 3, L(zero)),
+    ("ws2_32.dll!#52", 1, L(gethostbyname)),
+    ("ws2_32.dll!#151", 2, L(zero)),
 ];
