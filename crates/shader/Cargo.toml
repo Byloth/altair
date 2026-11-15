@@ -1,0 +1,12 @@
+[package]
+name = "altair-shader"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "altair-shaderc"
+path = "src/main.rs"
+
+[dependencies]
+naga = { version = "24", features = ["wgsl-in"] }

@@ -572,6 +572,19 @@ fn create_shader(rt: &mut Runtime, c: &mut Call, iface: &'static str) -> u32 {
     let v = u32::from_le_bytes(code[..4].try_into().unwrap());
     let name = format!("{}_{}_{}", if v >> 16 == 0xfffe { "vs" } else { "ps" }, (v >> 8) & 0xff, v & 0xff);
     *rt.d3d.shader_versions.entry(name).or_default() += 1;
+    // ALTAIR_DUMP_SHADERS=cartella: salva ogni shader distinto (contenuto del gioco: va in private/).
+    if let Some(dir) = std::env::var_os("ALTAIR_DUMP_SHADERS") {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in &code {
+            h = (h ^ *b as u64).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        let dir = std::path::PathBuf::from(dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let file = dir.join(format!("{}_{h:016x}.bin", if v >> 16 == 0xfffe { "vs" } else { "ps" }));
+        if !file.exists() {
+            let _ = std::fs::write(file, &code);
+        }
+    }
     let obj = com::create(rt, iface, SHADER, 0);
     rt.d3d.res.insert(obj, Res::Shader { code });
     rt.mem.w32(c.arg(2), obj);
