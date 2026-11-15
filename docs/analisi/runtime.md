@@ -179,7 +179,27 @@ Percorso verificato con il canale di comando, profilo "Claude", lingua italiana:
 Schermate in `run/scatti/` (ignorata da git: sono immagini del gioco). In tutta la sessione,
 10 milioni di draw, nessun draw saltato e nessun errore di validazione.
 
-Non ancora fatto: completare i passi del tutorial (richiedono combinazioni di tasti e mouse).
+### Il tutorial, passo per passo (2026-11-15 mattina)
+
+Con i comandi simulati di tastiera e mouse (`tools/ctl.sh`), dopo `tools/avvia.sh --animus`:
+
+| Passo | Cosa chiede il gioco | Comando | Esito |
+|---|---|---|---|
+| Soggettiva | "Premi Testa da fermo" | `key 18 60` (E) | accettato, cambia scena |
+| Scostare | "Tieni premuto Mano nuda mentre cammini", raggiungere l'indicatore | `key 42 300` + `key 17 300` (Maiusc + W) | Altaïr attraversa la fila di monaci e raggiunge la luce |
+| Alto/basso profilo | "Premi senza rilasciare" Alto profilo | `button 1 300` (tasto destro) | accettato, compare un bersaglio |
+
+La barra di sincronia sale di una tacca a ogni passo (da 1 a 4). Quindi tastiera, pulsanti e
+movimento del mouse arrivano tutti al gioco e il tutorial è percorribile. Mi sono fermato al
+bersaglio: i passi successivi (combattimento) è meglio giocarli che scriverli.
+
+Difetti visti:
+
+- **La scena con la folla è lenta**: 3.800 draw, 9 fotogrammi al secondo (51 ms nel renderer,
+  di cui 35 di invio; il resto del fotogramma è il gioco stesso).
+- **Il nome del tasto nei messaggi è vuoto**: "Premi senza rilasciare ( )". Il gioco prende
+  il nome dagli oggetti del dispositivo; `EnumObjects` della tastiera non elenca nulla e
+  `GetObjectInfo` non è implementato. Da fare.
 
 ## Registro e lingua
 

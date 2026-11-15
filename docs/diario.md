@@ -238,3 +238,6 @@ renderer per le città e robustezza.
   fino al corridoio senza accessi non validi. **File INI veri**: il gioco scrive
   `Assassin.ini` (ultimo profilo) e `DARE.INI` → `analisi/runtime.md`.
 - Sei minuti di gioco con l'audio acceso: zero blocchi scartati.
+- **Tutorial**: superati tre passi con i comandi simulati (E per la soggettiva, Maiusc + W
+  tra i monaci fino all'indicatore, tasto destro per l'alto profilo). Barra di sincronia a 4.
+  Difetti: folla a 9 fps, nome del tasto vuoto nei messaggi → `analisi/runtime.md`.
