@@ -38,6 +38,7 @@ caso lo si mette in una cartella ignorata da `.gitignore`.
 | `private/` | Materiale derivato da binari Ubisoft (nomi, dump, progetto Ghidra) | no |
 | `build/` | Output generato (C tradotto, oggetti) | no |
 | `.venv/`, `opt/` | venv Python, strumenti scaricati (es. Ghidra) | no |
+| `run/` | Il disco `C:` scrivibile del gioco in esecuzione (profili, salvataggi) | no |
 
 - Gioco (Windows): `E:\Giochi\Steam\steamapps\common\Assassins Creed`
 - Da WSL: `/mnt/e/Giochi/Steam/steamapps/common/Assassins Creed` → nei comandi usa `$AC1`
@@ -64,6 +65,8 @@ source ~/.bash_exports                     # cargo non è nel PATH delle shell n
 cargo build --release                      # produce target/release/altair
 .venv/bin/python tools/harness.py "$AC1/AssassinsCreed_Dx9.exe" selftest
 .venv/bin/python tools/difftest.py "$AC1/AssassinsCreed_Dx9.exe"   # da rifare dopo ogni modifica al traduttore
+tools/build-image.sh                       # rigenera e ricompila l'immagine tradotta (incrementale)
+tools/run.sh [--trace]                     # avvia il gioco tradotto; si ferma al primo import mancante
 ```
 
 Ogni istruzione nuova nel traduttore va accompagnata da uno scenario nel test differenziale.

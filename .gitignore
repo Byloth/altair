@@ -21,3 +21,6 @@ private/
 
 __pycache__/
 *.pyc
+
+# Cartella scrivibile del gioco in esecuzione (profili, salvataggi)
+run/

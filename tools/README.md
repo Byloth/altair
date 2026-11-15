@@ -112,3 +112,9 @@ Code, poi ricrea il venv e ricompila. Va lanciato a sessione chiusa. Vedi `docs/
 
 `difftest.py --funcs 0xA,0xB --cases 40` prova funzioni scelte a mano, anche non candidate.
 `difftest.py --auto N --lib build/libaltair_ac1-clang.so` usa la libreria dell'immagine intera.
+
+## `build-image.sh`, `run.sh`
+
+`tools/build-image.sh` rigenera l'immagine tradotta (`altair image`) e ricompila solo i file
+cambiati; accetta argomenti per `make` (es. `CC=gcc`). `tools/run.sh [--trace]` avvia il gioco
+tradotto con `altair-run`. Vedi `docs/analisi/runtime.md`.

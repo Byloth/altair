@@ -119,4 +119,6 @@ Anomalie nelle partenze **forti** (codice sicuramente vero), da risolvere in Fas
 I numeri sopra sono del prototipo in Python. `altair discover` oggi dà **116.077 funzioni e
 3.221.462 istruzioni**, con 641 jump table. Tra le partenze scartate ci sono ora anche le
 tabelle di indici degli switch a due livelli, che si decodificavano come `push es`/`pop es`:
-vedi `traduttore.md`, "Le ultime 42 funzioni".
+vedi `traduttore.md`, "Le ultime 42 funzioni". Dal runtime è poi emersa una tabella di puntatori
+non allineata in `.data` (routine matematiche del CRT): con quelle le funzioni sono 116.142
+(`runtime.md`).

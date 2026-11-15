@@ -125,7 +125,7 @@ fn discover_cmd(img: &Image, strict: bool, out: Option<&str>) -> std::io::Result
     println!("istruzioni          {}", d.n_insn);
     println!("jump table          {} (di cui {} con limite dal cmp)", d.tables, d.bounded_tables);
     println!("per origine:");
-    let kinds = [Kind::Entry, Kind::Export, Kind::Tls, Kind::Vtable, Kind::Immediate, Kind::DataWord];
+    let kinds = [Kind::Entry, Kind::Export, Kind::Tls, Kind::Vtable, Kind::Immediate, Kind::DataWord, Kind::Unaligned];
     for k in kinds {
         let direct = d.starts.values().filter(|o| o.kind == k && !o.via_call).count();
         let called = d.starts.values().filter(|o| o.kind == k && o.via_call).count();

@@ -22,6 +22,8 @@ pub enum Kind {
     Vtable,
     Immediate,
     DataWord,
+    /// Parola nei dati a un indirizzo non allineato a 4: tabelle compatte del CRT.
+    Unaligned,
 }
 
 impl Kind {
@@ -33,6 +35,7 @@ impl Kind {
             Kind::Vtable => "vtable",
             Kind::Immediate => "immediato",
             Kind::DataWord => "parola nei dati",
+            Kind::Unaligned => "parola non allineata",
         }
     }
 }
@@ -404,6 +407,31 @@ impl<'a> Discovery<'a> {
             if d.starts.len() == before {
                 break;
             }
+        }
+
+        // Le routine matematiche del CRT saltano attraverso tabelle di puntatori impacchettate
+        // senza allineamento (le destinazioni sono etichette dentro le routine). Si cercano
+        // solo in `.data`, e solo destinazioni che seguono un `ret` o un `jmp`.
+        if let Some(data) = img.section(".data") {
+            let bytes = img.section_bytes(data);
+            let mut found = Vec::new();
+            for off in (0..bytes.len().saturating_sub(4)).filter(|o| o % 4 != 0) {
+                let v = u32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+                if d.in_text(v) && v % 16 != 0 && !d.starts.contains_key(&v) {
+                    found.push(v);
+                }
+            }
+            found.sort_unstable();
+            found.dedup();
+            for v in found {
+                let o = (v - d.lo) as usize;
+                let t = d.text;
+                let after_transfer = o > 5 && (t[o - 1] == 0xC3 || t[o - 3] == 0xC2 || t[o - 5] == 0xE9 || t[o - 2] == 0xEB);
+                if after_transfer {
+                    d.weak(v, Kind::Unaligned, false);
+                }
+            }
+            say(&d, "parole non allineate in .data");
         }
         (d, r)
     }

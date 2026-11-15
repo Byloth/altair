@@ -100,3 +100,13 @@
   candidate, 0 diverse, con entrambi i compilatori. **Gate della Fase 1 raggiunto** →
   `analisi/immagine.md`. (Primo tentativo compilato per sbaglio con gcc: `CC ?=` nel Makefile
   non scavalca il `cc` predefinito di make.)
+- **Fase 2 aperta: `altair-run`.** Runtime Win32 in Rust (`crates/runtime`), 170 shim. Al primo
+  avvio il gioco tradotto ha eseguito l'intero avvio del CRT (588 chiamate a import) fermandosi
+  su `CreateEventA`. Con thread, eventi, file, registro, INI e una finestra senza schermo
+  arriva a: inizializzatori statici, `WinMain`, 8 thread del motore (`Loading`,
+  `TaskThread1`…), inizializzazione dell'audio.
+- Si ferma sull'audio: senza dispositivo il gioco mostra "Cannot initialize Sound Driver" e
+  chiama un oggetto nullo. Serve un DirectSound muto. Nessun `.forge` aperto finora.
+- Trovata dal runtime una funzione non scoperta (`0xFB2451`, tabella non allineata in `.data`):
+  la scoperta ora la vede, +65 funzioni. Ricompilazione incrementale: 26 file, 10 secondi.
+  Test differenziale dopo la modifica: 2.110 identiche su 4.000, 0 diverse → `analisi/runtime.md`.

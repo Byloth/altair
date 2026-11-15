@@ -22,9 +22,11 @@ supporto del codice generato (`runtime/altair.h`). Il nome completo è "AC1 Reco
 | `docs/analisi/` | Fatti verificati sui file del gioco |
 | `crates/` | Il ricompilatore in Rust: `altair` (vedi `docs/analisi/traduttore.md`) |
 | `runtime/` | Supporto in C del codice generato |
+| `crates/runtime/` | `altair-run`: il runtime Win32 che esegue il gioco tradotto (vedi `docs/analisi/runtime.md`) |
 | `tools/` | Script di analisi e di test (vedi `tools/README.md`) |
 | `ref/`, `build/`, `private/`, `.venv/`, `opt/` | Riferimenti clonati, output generato, materiale non pubblicabile, strumenti locali: ignorati da git |
 
 ## Stato
 
-Fase 0 (fondamenta) chiusa il 2026-11-14. Fase 1 (il ricompilatore): gate raggiunto il 2026-11-15, tutto il codice del gioco si traduce in C e compila. Vedi `docs/PIANO.md`.
+Fase 0 (fondamenta) chiusa il 2026-11-14. Fase 1 (il ricompilatore): gate raggiunto il 2026-11-15, tutto il codice del gioco si traduce in C e compila.
+Fase 2 (il runtime Win32) in corso: il gioco tradotto esegue l'avvio, crea i suoi thread e arriva all'audio. Vedi `docs/PIANO.md`.

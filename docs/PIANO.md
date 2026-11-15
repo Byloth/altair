@@ -144,16 +144,22 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
   funzioni identiche su 19.043 candidate, 0 diverse
 - [ ] Lettore `.forge` in Rust (portato da `tools/forge.py`) e inventario completo delle classi
 
-## Fase 2 · Runtime Win32
+## Fase 2 · Runtime Win32 (in corso)
 
-**Gate:** il gioco ricompilato parte, inizializza il CRT e apre i `.forge`.
+**Gate:** il gioco ricompilato parte, inizializza il CRT e apre i `.forge`. Stato in
+`analisi/runtime.md`.
 
-- [ ] Memoria guest (2 GB, immagine a `0x400000`), heap, `VirtualAlloc`
-- [ ] Thread, TEB, TLS, SEH, sincronizzazione
-- [ ] File e percorsi (cartella del gioco in sola lettura, salvataggi in una cartella nostra)
-- [ ] Registro emulato, `USER32` minimo (finestra, messaggi), tempo
+- [x] `crates/runtime` (`altair-run`): caricamento dell'immagine, IAT, TEB, TLS statica
+- [x] Memoria guest, heap, `VirtualAlloc`
+- [x] Thread, TLS, sezioni critiche, eventi, semafori, attese
+- [x] File e percorsi (cartella del gioco in sola lettura, il resto in `run/c/`)
+- [x] Registro (vuoto), file INI (solo valori predefiniti), `USER32` senza schermo, tempo
+- [x] Avvio del CRT, inizializzatori statici, `WinMain`, 8 thread del motore
 - [ ] Oggetti COM come vtable di funzioni host
-- [ ] Stub tracciati per tutto ciò che manca, con log della prima chiamata
+- [ ] DirectSound muto: senza, il gioco chiama un oggetto nullo dopo il suo messaggio d'errore
+- [ ] Apertura dei `.forge` (il gate)
+- [ ] SEH ed eccezioni C++; file INI veri; `WaitForMultipleObjects` con attesa di tutti
+- [ ] Proteggere la prima pagina dello spazio guest, per vedere subito i puntatori nulli
 
 ## Fase 3 · Grafica, audio, input
 
@@ -197,10 +203,7 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 ## Prossimi passi concreti
 
-Il gate della Fase 1 è raggiunto: tutto `.text` tradotto, compila, 9.892 funzioni verificate.
-Restano aperti, in 1.2–1.4, alcuni punti che non bloccano la Fase 2.
-
-1. **Fase 2**: runtime Win32 in Rust, per caricare l'immagine, avviare il CRT del gioco e
-   arrivare all'apertura dei `.forge`. Ogni import mancante si ferma dicendo quale serve.
+1. **Fase 2**: oggetti COM e DirectSound muto, poi avanti fino all'apertura dei `.forge`.
 2. Lettore `.forge` in Rust.
-3. Scenari mirati per le istruzioni non ancora verificate; limiti della scoperta.
+3. Punti aperti della Fase 1: scenari mirati per le istruzioni non verificate, limiti della
+   scoperta.

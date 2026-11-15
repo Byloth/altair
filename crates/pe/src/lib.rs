@@ -75,6 +75,8 @@ pub struct Image {
     pub imports: Vec<Import>,
     pub exports: Vec<Export>,
     pub tls_callbacks: Vec<u32>,
+    /// (inizio e fine del modello, indirizzo dell'indice, byte a zero in coda)
+    tls: Option<(u32, u32, u32, u32)>,
 }
 
 fn rd16(d: &[u8], o: usize) -> Result<u16> {
@@ -143,6 +145,7 @@ impl Image {
             imports: Vec::new(),
             exports: Vec::new(),
             tls_callbacks: Vec::new(),
+            tls: None,
         };
         let (imp_rva, _) = (rd32(&img.data, opt + 96 + 8)?, 0);
         let (exp_rva, _) = (rd32(&img.data, opt + 96)?, 0);
@@ -154,6 +157,10 @@ impl Image {
             img.exports = img.parse_exports(base + exp_rva)?;
         }
         if tls_rva != 0 {
+            let d = base + tls_rva;
+            if let (Some(start), Some(end), Some(index), Some(zero)) = (img.u32(d), img.u32(d + 4), img.u32(d + 8), img.u32(d + 16)) {
+                img.tls = Some((start, end, index, zero));
+            }
             let mut cb = img.u32(base + tls_rva + 12).unwrap_or(0);
             while cb != 0 {
                 match img.u32(cb) {
@@ -223,6 +230,11 @@ impl Image {
         }
         out.sort_by_key(|e| e.addr);
         Ok(out)
+    }
+
+    /// La directory TLS: (inizio e fine del modello, indirizzo dell'indice, byte a zero in coda).
+    pub fn tls_directory(&self) -> Option<(u32, u32, u32, u32)> {
+        self.tls
     }
 
     pub fn sha1(&self) -> String {
