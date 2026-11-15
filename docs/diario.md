@@ -241,3 +241,13 @@ renderer per le città e robustezza.
 - **Tutorial**: superati tre passi con i comandi simulati (E per la soggettiva, Maiusc + W
   tra i monaci fino all'indicatore, tasto destro per l'alto profilo). Barra di sincronia a 4.
   Difetti: folla a 9 fps, nome del tasto vuoto nei messaggi → `analisi/runtime.md`.
+
+## 2026-11-15, pomeriggio
+
+Secondo piano approvato: nomi dei tasti, folla, tutorial e salvataggi, finestra, debiti della
+Fase 1, lettore `.forge`, e un **decodificatore Bink nostro** al posto di `ffmpeg`
+(`~/.claude/plans/eager-plotting-clarke.md`).
+
+- **Nomi dei tasti**: la causa non era quella ipotizzata. Il gioco usa `IDirectInput8W`; i
+  nomi vanno in UTF-16. Letta la callback `0x009091C0` nel C generato per capirlo. Ora
+  "(Mouse destro)" compare nel messaggio del tutorial → `analisi/runtime.md`.

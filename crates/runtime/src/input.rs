@@ -92,32 +92,79 @@ fn dev_get_device_state(rt: &mut Runtime, c: &mut Call) -> u32 {
     }
     0
 }
-/// `EnumObjects(callback, contesto, flag)`: per il mouse, tre assi relativi e otto pulsanti,
-/// come li descrive `c_dfDIMouse2`. La callback è codice del gioco. La tastiera non elenca
-/// nulla: il gioco la legge comunque per codice DIK.
+/// Nome di un tasto per codice DIK, come lo mostrerebbe una tastiera italiana.
+fn key_name(dik: u32) -> Option<String> {
+    const LETTERS: [(u32, &str); 4] = [(16, "QWERTYUIOP"), (30, "ASDFGHJKL"), (44, "ZXCVBNM"), (2, "1234567890")];
+    for (first, row) in LETTERS {
+        if (first..first + row.len() as u32).contains(&dik) {
+            return Some(row[(dik - first) as usize..][..1].to_string());
+        }
+    }
+    let name = match dik {
+        1 => "Esc", 14 => "Backspace", 15 => "Tab", 28 => "Invio", 29 => "Ctrl sinistro", 42 => "Maiusc sinistro",
+        54 => "Maiusc destro", 56 => "Alt", 57 => "Spazio", 58 => "Bloc Maiusc", 157 => "Ctrl destro", 184 => "Alt Gr",
+        200 => "Freccia su", 208 => "Freccia giù", 203 => "Freccia sinistra", 205 => "Freccia destra",
+        199 => "Home", 207 => "Fine", 201 => "Pag su", 209 => "Pag giù", 210 => "Ins", 211 => "Canc",
+        12 => "'", 13 => "ì", 26 => "è", 27 => "+", 39 => "ò", 40 => "à", 41 => "\\", 43 => "ù", 51 => ",", 52 => ".", 53 => "-",
+        59..=68 => return Some(format!("F{}", dik - 58)),
+        87 => "F11", 88 => "F12",
+        71..=73 => return Some(format!("Tn {}", dik - 64)),
+        75..=77 => return Some(format!("Tn {}", dik - 71)),
+        79..=81 => return Some(format!("Tn {}", dik - 78)),
+        82 => "Tn 0", 156 => "Tn Invio",
+        _ => return None,
+    };
+    Some(name.to_string())
+}
+
+/// `EnumObjects(callback, contesto, flag)`: per il mouse tre assi relativi e otto pulsanti
+/// (come `c_dfDIMouse2`), per la tastiera i tasti con il loro nome. La callback è codice del
+/// gioco (`0x009091C0`): copia il nome di ogni pulsante e di ogni tasto in una tabella, da cui
+/// prende ciò che scrive nei messaggi ("Premi senza rilasciare (Mouse destro)").
+///
+/// Il gioco crea `IDirectInput8W`: la struttura è `DIDEVICEOBJECTINSTANCEW`, con il nome in
+/// UTF-16.
 fn dev_enum_objects(c: &mut Call) -> u32 {
     let (dev, callback, context) = (c.arg(0), c.arg(1), c.arg(2));
-    let Some(item) = crate::win32::with_runtime(|rt| (dev == rt.mouse && callback != 0).then(|| rt.halloc(0x140, true))) else { return 0 };
+    let (mouse, keyboard) = crate::win32::with_runtime(|rt| (dev == rt.mouse, dev == rt.keyboard));
+    if callback == 0 || !(mouse || keyboard) {
+        return 0;
+    }
     const AXIS: [u8; 16] = [0xe0, 0x02, 0x6d, 0xa3, 0xf3, 0xc9, 0xcf, 0x11, 0xbf, 0xc7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00];
+    const KEY: [u8; 16] = [0x20, 0x82, 0x72, 0x55, 0x3c, 0xd3, 0xcf, 0x11, 0xbf, 0xc7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00];
     let mut objects: Vec<([u8; 16], u32, u32, String)> = Vec::new();
-    for (i, name) in ["X-axis", "Y-axis", "Wheel"].iter().enumerate() {
-        let mut guid = AXIS;
-        guid[0] += i as u8; // GUID_XAxis, GUID_YAxis, GUID_ZAxis
-        objects.push((guid, 4 * i as u32, 0x01 | (i as u32) << 8, name.to_string())); // DIDFT_RELAXIS
+    if mouse {
+        for (i, name) in ["Asse X", "Asse Y", "Rotella"].iter().enumerate() {
+            let mut guid = AXIS;
+            guid[0] += i as u8; // GUID_XAxis, GUID_YAxis, GUID_ZAxis
+            objects.push((guid, 4 * i as u32, 0x01 | (i as u32) << 8, name.to_string())); // DIDFT_RELAXIS
+        }
+        for i in 0..8u32 {
+            let mut guid = AXIS;
+            guid[0] = 0xf0; // GUID_Button
+            let name = match i {
+                0 => "Mouse sinistro".to_string(),
+                1 => "Mouse destro".to_string(),
+                2 => "Mouse centrale".to_string(),
+                _ => format!("Mouse {}", i + 1),
+            };
+            objects.push((guid, 12 + i, 0x04 | (3 + i) << 8, name)); // DIDFT_PSHBUTTON
+        }
+    } else {
+        objects.extend((0..256).filter_map(|dik| key_name(dik).map(|name| (KEY, dik, 0x04 | dik << 8, name))));
     }
-    for i in 0..8u32 {
-        let mut guid = AXIS;
-        guid[0] = 0xf0; // GUID_Button
-        objects.push((guid, 12 + i, 0x04 | (3 + i) << 8, format!("Button {i}"))); // DIDFT_PSHBUTTON
-    }
+    const SIZE: u32 = 0x240; // DIDEVICEOBJECTINSTANCEW
+    let item = crate::win32::with_runtime(|rt| rt.halloc(SIZE, true));
     for (guid, offset, kind, name) in objects {
-        // DIDEVICEOBJECTINSTANCEA: dwSize, guidType, dwOfs, dwType, dwFlags, tszName[260], …
-        c.mem.fill(item, 0x140, 0);
-        c.mem.w32(item, 0x13c);
+        // dwSize, guidType, dwOfs, dwType, dwFlags, tszName[260] in UTF-16, …
+        c.mem.fill(item, SIZE, 0);
+        c.mem.w32(item, SIZE);
         c.mem.write(item + 4, &guid);
         c.mem.w32(item + 20, offset);
         c.mem.w32(item + 24, kind);
-        c.mem.write_cstr(item + 32, name.as_bytes());
+        for (i, unit) in name.encode_utf16().take(259).enumerate() {
+            c.mem.w16(item + 32 + 2 * i as u32, unit);
+        }
         if crate::win32::call_guest(c, callback, &[item, context]) == 0 {
             break; // DIENUM_STOP
         }

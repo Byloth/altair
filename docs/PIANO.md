@@ -187,8 +187,7 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 - [x] Primi tre passi del tutorial superati con tastiera e mouse simulati (soggettiva,
   scostare i passanti, alto profilo): barra di sincronia da 1 a 4
 - [ ] Completare il tutorial dell'Animus e arrivare a Masyaf: serve giocare davvero
-- [ ] Nomi dei tasti nei messaggi del tutorial (oggi vuoti): oggetti della tastiera in
-  `EnumObjects`, `GetObjectInfo`
+- [x] Nomi dei tasti nei messaggi del tutorial: `EnumObjects` in UTF-16, tasti della tastiera compresi
 - [ ] Scena con la folla a 9 fps (3.800 draw): costo dell'invio e del gioco stesso
 - [x] Canale di comando per pilotare il gioco mentre gira (`ALTAIR_CTL`, `tools/avvia.sh`, `tools/ctl.sh`)
 - [x] Finestra vera (`ALTAIR_WINDOW=1`, `tools/gioca.sh`): si apre via Wayland e mostra il gioco

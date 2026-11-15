@@ -1635,7 +1635,8 @@ pub fn report(rt: &Runtime) {
         }
     }
     eprintln!("fotogrammi (Present): {}; draw: {} (massimo {} in un fotogramma); primitive: {}", d.frames, d.draws, d.max_draws_per_frame, d.primitives);
-    let mut calls: Vec<(&String, &u64)> = rt.calls.iter().filter(|(k, _)| k.starts_with("IDirect3D") || k.starts_with("ID3DX") || k.contains("D3DX")).collect();
+    let all = crate::win32::call_counts();
+    let mut calls: Vec<(&String, &u64)> = all.iter().map(|(k, n)| (k, n)).filter(|(k, _)| k.starts_with("IDirect3D") || k.starts_with("ID3DX") || k.contains("D3DX")).collect();
     calls.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
     eprintln!("metodi chiamati ({} distinti):", calls.len());
     for (k, n) in &calls {

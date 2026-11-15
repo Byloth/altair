@@ -197,9 +197,13 @@ Difetti visti:
 
 - **La scena con la folla è lenta**: 3.800 draw, 9 fotogrammi al secondo (51 ms nel renderer,
   di cui 35 di invio; il resto del fotogramma è il gioco stesso).
-- **Il nome del tasto nei messaggi è vuoto**: "Premi senza rilasciare ( )". Il gioco prende
-  il nome dagli oggetti del dispositivo; `EnumObjects` della tastiera non elenca nulla e
-  `GetObjectInfo` non è implementato. Da fare.
+- ~~Il nome del tasto nei messaggi è vuoto~~ **Risolto.** Il gioco crea `IDirectInput8W`
+  (interfaccia Unicode, GUID `BF798031-…`), quindi `EnumObjects` consegna
+  `DIDEVICEOBJECTINSTANCEW` con il nome in UTF-16; noi lo scrivevamo in ASCII. La callback del
+  gioco (`0x009091C0`) copia il nome dei pulsanti (`GUID_Button`, indice `dwOfs - 12`) e dei
+  tasti (`GUID_Key`, indice `dwOfs` = codice DIK) in una tabella da 0x208 byte per voce. Ora
+  elenchiamo anche i tasti della tastiera, con nomi italiani: il messaggio dice "Premi senza
+  rilasciare (Mouse destro)".
 
 ## Registro e lingua
 

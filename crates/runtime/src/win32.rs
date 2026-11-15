@@ -63,8 +63,6 @@ pub struct Runtime {
     cmdline: u32,
     env_a: u32,
     env_w: u32,
-    /// Import chiamati almeno una volta, con il conteggio.
-    pub calls: HashMap<String, u64>,
 }
 
 /// Una chiamata in corso: argomenti sullo stack guest sopra l'indirizzo di ritorno.
@@ -101,7 +99,24 @@ type RunFn = unsafe extern "C" fn(*mut Ctx, u32) -> i32;
 
 static RT: OnceLock<Mutex<Runtime>> = OnceLock::new();
 /// Per indice di trampolino: (nome, numero di argomenti, shim), o None se manca.
-static TABLE: OnceLock<Vec<(String, Option<(u32, Shim)>)>> = OnceLock::new();
+/// Una funzione host raggiungibile dal codice tradotto: un import o un metodo COM.
+/// Le voci vivono per tutto il processo: così `host_call`, che gira centinaia di migliaia di
+/// volte per fotogramma, le trova senza copiare stringhe né prendere lock per contarle.
+pub struct Entry {
+    pub name: String,
+    shim: Option<(u32, Shim)>,
+    count: std::sync::atomic::AtomicU64,
+}
+fn entry(name: String, shim: Option<(u32, Shim)>) -> &'static Entry {
+    Box::leak(Box::new(Entry { name, shim, count: Default::default() }))
+}
+static TABLE: OnceLock<Vec<&'static Entry>> = OnceLock::new();
+
+/// Quante volte è stata chiamata ogni funzione host (solo quelle chiamate almeno una volta).
+pub fn call_counts() -> Vec<(String, u64)> {
+    let dynamic = DYN.read().unwrap();
+    TABLE.get().into_iter().flatten().chain(dynamic.iter()).map(|e| (e.name.clone(), e.count.load(Ordering::Relaxed))).filter(|(_, n)| *n > 0).collect()
+}
 static RUN: OnceLock<RunFn> = OnceLock::new();
 pub type TrailFn = unsafe extern "C" fn(*mut u32, i32) -> i32;
 static TRAIL: OnceLock<TrailFn> = OnceLock::new();
@@ -111,26 +126,24 @@ static TRACE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new
 
 /// Funzioni host registrate a runtime (i metodi degli oggetti COM), dopo i trampolini degli import.
 const DYN_BASE: u32 = HOST_BASE + 0x10_0000;
-static DYN: RwLock<Vec<(String, u32, Option<Shim>)>> = RwLock::new(Vec::new());
+static DYN: RwLock<Vec<&'static Entry>> = RwLock::new(Vec::new());
 
 /// Registra una funzione host e ne ritorna l'indirizzo guest. `shim` None = non implementata.
 pub fn register_host_fn(name: String, nargs: u32, shim: Option<Shim>) -> u32 {
     let mut d = DYN.write().unwrap();
-    d.push((name, nargs, shim));
+    d.push(entry(name, shim.map(|s| (nargs, s))));
     DYN_BASE + 16 * (d.len() as u32 - 1)
 }
 
 /// (nome, argomenti e shim se implementata) per un indirizzo host.
-fn lookup(addr: u32) -> Option<(String, Option<(u32, Shim)>)> {
+fn lookup(addr: u32) -> Option<&'static Entry> {
     if addr % 16 != 0 || addr < HOST_BASE {
         return None;
     }
     if addr >= DYN_BASE {
-        let d = DYN.read().unwrap();
-        let (name, nargs, shim) = d.get(((addr - DYN_BASE) / 16) as usize)?;
-        return Some((name.clone(), shim.map(|s| (*nargs, s))));
+        return DYN.read().unwrap().get(((addr - DYN_BASE) / 16) as usize).copied();
     }
-    TABLE.get()?.get(((addr - HOST_BASE) / 16) as usize).cloned()
+    TABLE.get()?.get(((addr - HOST_BASE) / 16) as usize).copied()
 }
 
 /// Accesso breve al runtime per gli shim di tipo `F`.
@@ -151,7 +164,7 @@ pub fn install(rt: Runtime, img: &Image, run: RunFn, trail: TrailFn, call: CallF
         .map(|imp| {
             let key = if imp.name.starts_with('#') { format!("{}!{}", imp.dll, imp.name) } else { imp.name.clone() };
             let shim = SHIMS.iter().chain(crate::system::SHIMS).chain(crate::bink::SHIMS).chain(crate::user32::SHIMS).chain(crate::input::SHIMS).chain(crate::d3d9::SHIMS).chain(EXTRA).find(|s| s.0 == key).map(|s| (s.1, s.2));
-            (format!("{}!{}", imp.dll, imp.name), shim)
+            entry(format!("{}!{}", imp.dll, imp.name), shim)
         })
         .collect();
     TRACE.store(rt.trace, Ordering::Relaxed);
@@ -203,7 +216,6 @@ impl Runtime {
             cmdline: 0,
             env_a: 0,
             env_w: 0,
-            calls: HashMap::new(),
         };
         let mut cmd = vec![b'"'];
         cmd.extend_from_slice(GUEST_EXE);
@@ -291,11 +303,12 @@ thread_local! {
 pub unsafe extern "C" fn host_call(ctx: *mut Ctx, addr: u32) -> i32 {
     let ctx = unsafe { &mut *ctx };
     let mem = Mem(ctx.mem);
-    let Some((name, shim)) = lookup(addr) else {
+    let Some(found) = lookup(addr) else {
         eprintln!("\nchiamata a {addr:#010x}: non è una funzione tradotta né un import");
         return 1;
     };
-    let Some((nargs, shim)) = shim else {
+    let name = &found.name;
+    let Some((nargs, shim)) = found.shim else {
         let ret = mem.r32(ctx.esp);
         let args: Vec<String> = (0..6).map(|i| format!("{:#x}", mem.r32(ctx.esp + 4 + 4 * i))).collect();
         let what = if addr >= DYN_BASE { "METODO COM MANCANTE" } else { "IMPORT MANCANTE" };
@@ -310,11 +323,13 @@ pub unsafe extern "C" fn host_call(ctx: *mut Ctx, addr: u32) -> i32 {
     }
     let eax = match shim {
         L(f) => {
-            let mut rt = rt();
-            *rt.calls.entry(name.clone()).or_default() += 1;
-            f(&mut rt, &mut call)
+            found.count.fetch_add(1, Ordering::Relaxed);
+            f(&mut rt(), &mut call)
         }
-        F(f) => f(&mut call),
+        F(f) => {
+            found.count.fetch_add(1, Ordering::Relaxed);
+            f(&mut call)
+        }
     };
     if EXITING.with(|e| e.get()).is_some() {
         return 1;
@@ -335,7 +350,7 @@ pub fn trail_text() -> String {
     trail[..n as usize]
         .iter()
         .map(|&a| match lookup(a) {
-            Some((name, _)) => name.rsplit('!').next().unwrap_or(&name).to_string(),
+            Some(e) => e.name.rsplit('!').next().unwrap_or(&e.name).to_string(),
             None => format!("{a:#010x}"),
         })
         .collect::<Vec<_>>()
@@ -368,14 +383,14 @@ pub fn report_stop(ctx: &Ctx) {
     let names: Vec<String> = trail[..n as usize]
         .iter()
         .map(|&a| match lookup(a) {
-            Some((name, _)) => name.rsplit('!').next().unwrap_or(&name).to_string(),
+            Some(e) => e.name.rsplit('!').next().unwrap_or(&e.name).to_string(),
             None => format!("{a:#010x}"),
         })
         .collect();
     eprintln!("  ultime destinazioni indirette (dalla più recente): {}", names.join(" "));
-    let mut calls: Vec<_> = rt.calls.iter().collect();
-    calls.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
-    let total: u64 = calls.iter().map(|(_, n)| **n).sum();
+    let mut calls = call_counts();
+    calls.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+    let total: u64 = calls.iter().map(|(_, n)| *n).sum();
     eprintln!("  import chiamati: {} distinti, {total} chiamate; heap vivo {:.1} MB", calls.len(), rt.heap.bytes_live as f64 / 1e6);
 }
 
@@ -497,8 +512,9 @@ fn load_library_a(rt: &mut Runtime, c: &mut Call) -> u32 {
 }
 fn exit_process(rt: &mut Runtime, c: &mut Call) -> u32 {
     eprintln!("\nExitProcess({}) chiamato da {:#010x}", c.arg(0), c.ret_addr());
-    let mut calls: Vec<_> = rt.calls.iter().collect();
-    calls.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
+    let _ = rt;
+    let mut calls = call_counts();
+    calls.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
     eprintln!("import chiamati: {}", calls.iter().take(40).map(|(k, n)| format!("{k}×{n}")).collect::<Vec<_>>().join(" "));
     std::process::exit(c.arg(0) as i32 & 0xff);
 }
