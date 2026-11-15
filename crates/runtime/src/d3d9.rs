@@ -438,6 +438,7 @@ fn dev_present(rt: &mut Runtime, _: &mut Call) -> u32 {
         eprintln!("[d3d] Present n. {} ({in_frame} draw in questo fotogramma)", d.frames);
     }
     let frame = d.frames;
+    crate::profile::watch_current_thread();
     with_gfx(rt, |g, d, _| g.present(d, frame));
     sweep(rt);
     // Ogni cinque secondi, il ritmo: fotogrammi al secondo, tempo passato nel renderer, invii.
@@ -455,7 +456,8 @@ fn dev_present(rt: &mut Runtime, _: &mut Call) -> u32 {
             gpu = g.take_stats();
             prof = g.take_profile().iter().map(|ms| format!("{:.1}", ms / frames as f64)).collect::<Vec<_>>().join("/");
             let (end, finish) = g.take_submit_split();
-            prof += &format!(" (invio: chiusura del pass {:.1}, finish {:.1})", end / frames as f64, finish / frames as f64);
+            let _ = (end, finish);
+            prof += &format!("; thread di invio {:.1} ms", g.take_submit_ms() / frames as f64);
         }
         let d = &mut rt.d3d;
         d.last_stats = format!("{:.1} fps, {draws} draw, {gfx_ms:.1} ms nel renderer, {shim_ms:.1} negli shim, {} invii e {} KB di buffer per fotogramma; fasi {prof}", frames as f64 / since.as_secs_f64(), gpu.0 / frames, gpu.1 / frames / 1024);
@@ -571,6 +573,11 @@ fn control(rt: &mut Runtime, frame: u64) {
                 eprintln!("[ctl] fotogramma {frame}: {} {:?}", file.display(), saved);
             }
             Some("stats") => eprintln!("[ctl] fotogramma {frame}: {}", rt.d3d.last_stats),
+            // `profile reset` azzera i campioni, `profile` stampa il resoconto (ALTAIR_PROFILE=1).
+            Some("profile") => match words.next() {
+                Some("reset") => crate::profile::reset(),
+                _ => crate::profile::report(),
+            },
             Some("quit") => {
                 report(rt);
                 eprintln!("\n[ctl] quit al fotogramma {frame}");

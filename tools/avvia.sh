@@ -9,9 +9,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export GALLIUM_DRIVER="${GALLIUM_DRIVER:-d3d12}" LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-/usr/lib/wsl/lib}"
 mkdir -p run/ctl
-if pgrep -f "^target/release/altair-run" >/dev/null; then ALTAIR_CTL_WAIT=100 tools/ctl.sh quit >/dev/null 2>&1 || pkill -f "^target/release/altair-run" || true; sleep 1; fi
+# Si chiude solo l'istanza avviata da questo script (il suo pid sta in run/ctl/pid): un gioco
+# aperto a mano con tools/gioca.sh non va toccato.
+if [ -f run/ctl/pid ] && kill -0 "$(cat run/ctl/pid)" 2>/dev/null; then ALTAIR_CTL_WAIT=100 tools/ctl.sh quit >/dev/null 2>&1 || kill "$(cat run/ctl/pid)" 2>/dev/null || true; sleep 1; fi
 rm -f run/ctl/stato run/ctl/cmd
 ALTAIR_STATS=1 ALTAIR_CTL=run/ctl ALTAIR_AUDIO_DUMP="${ALTAIR_AUDIO_DUMP:-run/ctl/audio.raw}" setsid nohup tools/run.sh > run/ctl/log.txt 2>&1 < /dev/null &
+echo $! > run/ctl/pid
 case "${1:-}" in --partita|--animus|--tutorial) ;; *) exit 0 ;; esac
 # Dopo i loghi parte il filmato introduttivo: lo si salta con Invio, poi si aspetta il titolo.
 until tools/ctl.sh 2>/dev/null | grep -q "video=DemoIntro"; do sleep 1; done

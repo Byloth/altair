@@ -273,3 +273,18 @@ Fase 1, lettore `.forge`, e un **decodificatore Bink nostro** al posto di `ffmpe
   fotogrammi. Audio: mancava solo il fattore 2/N della DCT, trovato confrontando; poi errore
   massimo 4 × 10⁻⁷ su otto tracce. Integrato nel runtime: il gioco mostra loghi e intro senza
   `ffmpeg` (`ALTAIR_BINK=ffmpeg` per tornare indietro) → `analisi/bink.md`, `decisioni.md`.
+
+## 2026-11-15, sera: ottimizzare il rendering
+
+Richiesta dell'utente mentre prova `tools/gioca.sh`.
+
+- `avvia.sh` chiudeva qualunque istanza del gioco: ora solo la sua (`run/ctl/pid`).
+- **Profilatore a campionamento** nel runtime (`profile.rs`): il 42% del thread di rendering è
+  dentro la chiamata di draw di OpenGL, il 30% in un punto del driver NVIDIA; GPU al 40%.
+- Quattro ipotesi provate con misure, tre senza effetto (byte delle costanti, buffer
+  per-fotogramma a rotazione, vertex buffer in uso) e una parziale (cambio del buffer delle
+  costanti: un quarto dell'invio).
+- **Thread di invio**: il gioco non aspetta più il driver. Laboratorio 59 → 106 fps, elica
+  30 → 65, folla 12 → 20. Per arrivarci: un cancello tra i thread (wgpu su OpenGL va in errore
+  o si blocca se un thread crea risorse mentre l'altro usa la coda) e una riserva di buffer
+  riusati → `analisi/d3d9.md`.

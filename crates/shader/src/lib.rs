@@ -2,7 +2,9 @@
 //!
 //! Convenzioni del WGSL prodotto, che il renderer deve rispettare:
 //!  - costanti: `@group(0) @binding(0)` per il vertex shader, `@binding(1)` per il pixel shader,
-//!    entrambe `Consts { c: array<vec4f, 256>, i: array<vec4i, 16>, b: vec4u, misc: vec4f }`;
+//!    entrambe `Consts { misc: vec4f, b: vec4u, i: array<vec4i, 16>, c: array<vec4f, 256> }`:
+//!    le costanti float stanno in fondo, così il renderer può caricarne solo il tratto che
+//!    lo shader usa (`Shader::float_consts`);
 //!    `b.x` ha un bit per registro booleano; `misc.xy` è la correzione di mezzo pixel, in unità
 //!    di clip, che il vertex shader somma alla posizione;
 //!  - texture: `@group(1) @binding(2n)` la texture del campionatore `sN`, `@binding(2n+1)` il
@@ -139,6 +141,8 @@ pub struct Shader {
     defi: BTreeMap<u32, [i32; 4]>,
     defb: BTreeMap<u32, bool>,
     pub opcodes: BTreeMap<u32, usize>,
+    /// Numero di registri costanti float che lo shader può leggere, da c0 (al più 256).
+    pub float_consts: u32,
 }
 
 pub type R<T> = Result<T, String>;
@@ -181,6 +185,7 @@ pub fn parse(code: &[u8]) -> R<Shader> {
         defi: BTreeMap::new(),
         defb: BTreeMap::new(),
         opcodes: BTreeMap::new(),
+        float_consts: 0,
     };
     let mut p = 1;
     while p < toks.len() {
@@ -258,6 +263,9 @@ pub fn parse(code: &[u8]) -> R<Shader> {
             }
         }
     }
+    // Quanti registri float legge: con l'indirizzamento relativo, tutti. Le istruzioni a
+    // matrice leggono fino a tre registri oltre quello nominato.
+    sh.float_consts = sh.ins.iter().flat_map(|i| &i.src).filter(|s| s.reg == Reg::Const).map(|s| if s.rel.is_some() { 256 } else { (s.num + 4).min(256) }).max().unwrap_or(0);
     Ok(sh)
 }
 
@@ -568,7 +576,7 @@ fn float(v: f32) -> String {
     }
 }
 
-const CONSTS: &str = "struct Consts { c: array<vec4f, 256>, i: array<vec4i, 16>, b: vec4u, misc: vec4f }\n";
+const CONSTS: &str = "struct Consts { misc: vec4f, b: vec4u, i: array<vec4i, 16>, c: array<vec4f, 256> }\n";
 
 /// Varianti di uno stesso shader, decise dallo stato del device al momento del draw.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]

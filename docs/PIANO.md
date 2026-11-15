@@ -189,8 +189,11 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 - [ ] Completare il tutorial dell'Animus e arrivare a Masyaf: serve giocare davvero
 - [x] Nomi dei tasti nei messaggi del tutorial: `EnumObjects` in UTF-16, tasti della tastiera compresi
 - [x] Folla: gioco tradotto quasi due volte più veloce (`-O2`, `restrict`): da 9 a 12 fps
-- [ ] Folla: l'invio dei draw (34 ms) è nel driver OpenGL-su-D3D12 di WSL; da rimisurare su
-  un sistema con Vulkan o D3D12 nativi prima di ottimizzare oltre
+- [x] Invio alla GPU su un thread a parte: laboratorio 106 fps, elica del DNA 65, folla 20
+  (erano 55, 30 e 12) → `analisi/d3d9.md`
+- [x] Profilatore a campionamento nel runtime (`ALTAIR_PROFILE=1`)
+- [ ] Folla: il costo per draw resta nel driver OpenGL-su-D3D12 di WSL; da rimisurare con
+  Vulkan o D3D12 nativi. Leve rimaste: costanti legate una volta sola, registrazione dei draw
 - [x] Canale di comando per pilotare il gioco mentre gira (`ALTAIR_CTL`, `tools/avvia.sh`, `tools/ctl.sh`)
 - [x] Finestra vera (`ALTAIR_WINDOW=1`, `tools/gioca.sh`): si apre via Wayland e mostra il gioco
 - [ ] Tastiera e mouse veri nella finestra: provata tutta la strada tranne il primo tratto

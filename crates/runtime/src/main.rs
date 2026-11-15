@@ -8,6 +8,7 @@ mod fs;
 mod gfx;
 mod input;
 mod machine;
+mod profile;
 mod sync;
 mod system;
 mod user32;

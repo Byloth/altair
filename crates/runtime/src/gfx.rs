@@ -56,6 +56,99 @@ struct PipeKey {
     states: [u32; 30],
 }
 
+/// Una scrittura da fare sulla coda prima dei comandi del fotogramma.
+enum Write {
+    Buffer(wgpu::Buffer, u64, Vec<u8>),
+    Texture { texture: wgpu::Texture, level: u32, origin: wgpu::Origin3d, bytes: Vec<u8>, layout: wgpu::TexelCopyBufferLayout, extent: wgpu::Extent3d },
+}
+
+/// Ciò che il thread del gioco consegna al thread di invio: le scritture, i comandi
+/// registrati, e l'immagine della finestra da presentare a cose fatte.
+struct Batch {
+    writes: Vec<Write>,
+    commands: Option<wgpu::CommandBuffer>,
+    present: Option<wgpu::SurfaceTexture>,
+}
+
+enum Job {
+    Batch(Batch),
+    /// Risponde quando tutto ciò che precede è stato inviato.
+    Sync(std::sync::mpsc::Sender<()>),
+}
+
+/// Il cancello tra i due thread che parlano con wgpu. Con OpenGL wgpu protegge il contesto con
+/// un lock che, se aspetta più di un secondo, manda il programma in errore: un invio lungo
+/// (un caricamento) e la creazione di una risorsa dall'altro thread bastano a superarlo. Chi
+/// invia e chi crea risorse passano prima da qui, dove si aspetta senza limite di tempo.
+static GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+fn gate() -> std::sync::MutexGuard<'static, ()> {
+    GATE.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Tempo passato dal thread di invio dentro la coda, in nanosecondi dall'ultima lettura.
+static SUBMIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn run_batch(queue: &wgpu::Queue, batch: Batch) {
+    let start = std::time::Instant::now();
+    // Tutto ciò che tocca la coda avviene con il cancello in mano: così non si sovrappone mai
+    // alla creazione di una risorsa sull'altro thread (i lock interni di wgpu non reggono
+    // quell'incrocio: il gioco si fermava in caricamento). Le scritture grosse partono a pezzi,
+    // rilasciando il cancello tra l'uno e l'altro, perché chi crea non aspetti troppo.
+    const CHUNK: usize = 8 << 20;
+    let mut writes = batch.writes.into_iter().peekable();
+    loop {
+        let _gate = gate();
+        let mut staged = 0usize;
+        while staged < CHUNK {
+            let Some(w) = writes.next() else { break };
+            match w {
+                Write::Buffer(buffer, offset, data) => {
+                    staged += data.len();
+                    queue.write_buffer(&buffer, offset, &data)
+                }
+                Write::Texture { texture, level, origin, bytes, layout, extent } => {
+                    staged += bytes.len();
+                    queue.write_texture(wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: level, origin, aspect: wgpu::TextureAspect::All }, &bytes, layout, extent)
+                }
+            }
+        }
+        if writes.peek().is_some() {
+            queue.submit([]);
+            continue;
+        }
+        queue.submit(batch.commands);
+        if let Some(frame) = batch.present {
+            frame.present();
+        }
+        break;
+    }
+    SUBMIT_NS.fetch_add(start.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Il thread di invio. Eseguire i comandi (per OpenGL: le chiamate vere al driver) costa quanto
+/// tutto il resto del fotogramma: farlo qui lascia il thread del gioco libero di preparare il
+/// fotogramma successivo. La coda è corta, così il gioco non corre troppo avanti.
+fn spawn_submitter(queue: wgpu::Queue) -> Option<std::sync::mpsc::SyncSender<Job>> {
+    if std::env::var("ALTAIR_SUBMIT_THREAD").is_ok_and(|v| v == "0") {
+        return None;
+    }
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Job>(1);
+    std::thread::Builder::new()
+        .name("invio-gpu".into())
+        .spawn(move || {
+            for job in rx {
+                match job {
+                    Job::Batch(batch) => run_batch(&queue, batch),
+                    Job::Sync(done) => {
+                        let _ = done.send(());
+                    }
+                }
+            }
+        })
+        .ok()?;
+    Some(tx)
+}
+
 /// Lo stato già impostato nel pass aperto.
 #[derive(Default)]
 struct PassState {
@@ -73,6 +166,10 @@ struct PassState {
 pub struct Gfx {
     device: wgpu::Device,
     queue: wgpu::Queue,
+    /// Verso il thread di invio (`None`: si invia da qui) e le scritture in attesa.
+    submitter: Option<std::sync::mpsc::SyncSender<Job>>,
+    writes: Vec<Write>,
+    blit_sampler: Option<wgpu::Sampler>,
     encoder: Option<wgpu::CommandEncoder>,
     pass: Option<wgpu::RenderPass<'static>>,
     pass_key: ([u32; 4], u32),
@@ -88,6 +185,8 @@ pub struct Gfx {
     g0_layout: wgpu::BindGroupLayout,
     g0: wgpu::BindGroup,
     ubuf: wgpu::Buffer,
+    /// Le altre copie di (costanti, bind group, appoggio), in attesa del loro turno.
+    ring: std::collections::VecDeque<(wgpu::Buffer, wgpu::BindGroup, wgpu::Buffer)>,
     ubuf_off: u64,
     /// Contenuto in attesa del buffer uniforme e di quello di appoggio: scritti all'invio.
     ubuf_cpu: Vec<u8>,
@@ -103,6 +202,15 @@ pub struct Gfx {
     /// appoggio); buffer veri rimasti indietro rispetto alla memoria guest.
     used: std::collections::HashSet<u32>,
     shadow: HashMap<u32, u64>,
+    /// Riserva di buffer vuoti per (dimensione, indici o vertici); quelli scartati in questo
+    /// invio; quelli scartati negli invii precedenti, in attesa di tornare nella riserva.
+    pool: HashMap<(u64, bool), Vec<wgpu::Buffer>>,
+    retiring: Vec<((u64, bool), wgpu::Buffer)>,
+    retired: std::collections::VecDeque<Vec<((u64, bool), wgpu::Buffer)>>,
+    /// Buffer usati dagli ultimi invii (il più recente per primo), e se evitarne la riscrittura.
+    recent: [std::collections::HashSet<u32>; 3],
+    avoid_busy: bool,
+    orphaned: u64,
     /// Intervallo di ogni buffer vero non ancora caricato dalla memoria guest.
     pending: HashMap<u32, (u64, u64)>,
     stale: std::collections::HashSet<u32>,
@@ -301,13 +409,22 @@ impl Gfx {
             label: None,
             entries: &[uniform(0, wgpu::ShaderStages::VERTEX), uniform(1, wgpu::ShaderStages::FRAGMENT)],
         });
-        let ubuf = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: UBUF_SIZE, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
-        let binding = |b| wgpu::BindGroupEntry {
-            binding: b,
-            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: &ubuf, offset: 0, size: wgpu::BufferSize::new(CONSTS_SIZE) }),
+        // I buffer riscritti a ogni invio (costanti e dati di appoggio) esistono in più copie,
+        // usate a rotazione: riscrivere un buffer che la GPU sta ancora leggendo per il
+        // fotogramma precedente obbliga il driver ad aspettarla.
+        let frame_set = || {
+            let ubuf = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: UBUF_SIZE, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+            let binding = |b| wgpu::BindGroupEntry {
+                binding: b,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: &ubuf, offset: 0, size: wgpu::BufferSize::new(CONSTS_SIZE) }),
+            };
+            let g0 = device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &g0_layout, entries: &[binding(0), binding(1)] });
+            let scratch = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: SCRATCH_SIZE, usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+            (ubuf, g0, scratch)
         };
-        let g0 = device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &g0_layout, entries: &[binding(0), binding(1)] });
-        let scratch = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: SCRATCH_SIZE, usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let ring_len = std::env::var("ALTAIR_RING").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(4).max(1);
+        let ring: std::collections::VecDeque<_> = (1..ring_len).map(|_| frame_set()).collect();
+        let (ubuf, g0, scratch) = frame_set();
         let zero_vb = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: 64, usage: wgpu::BufferUsages::VERTEX, mapped_at_creation: false });
         let dummy = |dim, layers, depth, view_dim| {
             let t = device.create_texture(&wgpu::TextureDescriptor {
@@ -329,6 +446,9 @@ impl Gfx {
         ];
         Some(Gfx {
             device,
+            submitter: spawn_submitter(queue.clone()),
+            writes: Vec::new(),
+            blit_sampler: None,
             queue,
             encoder: None,
             pass: None,
@@ -345,6 +465,7 @@ impl Gfx {
             g0_layout,
             g0,
             ubuf,
+            ring,
             ubuf_off: 0,
             ubuf_cpu: Vec::new(),
             scratch_cpu: Vec::new(),
@@ -356,6 +477,12 @@ impl Gfx {
             blit: None,
             used: Default::default(),
             shadow: HashMap::new(),
+            pool: HashMap::new(),
+            retiring: Vec::new(),
+            retired: Default::default(),
+            recent: Default::default(),
+            avoid_busy: std::env::var("ALTAIR_BUSY").is_ok_and(|v| v == "1"),
+            orphaned: 0,
             pending: HashMap::new(),
             stale: Default::default(),
             flushes: 0,
@@ -410,6 +537,7 @@ impl Gfx {
             2 => (wgpu::TextureDimension::D3, depth.max(1), wgpu::TextureViewDimension::D3),
             _ => (wgpu::TextureDimension::D2, 1, wgpu::TextureViewDimension::D2),
         };
+        let _gate = gate();
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: None,
             size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: layers },
@@ -459,12 +587,15 @@ impl Gfx {
         // I livelli più piccoli di un blocco vanno comunque scritti come un blocco intero.
         let extent = if t.format.is_compressed() { wgpu::Extent3d { width: w.div_ceil(4) * 4, height: h.div_ceil(4) * 4, depth_or_array_layers: 1 } } else { wgpu::Extent3d { width: w, height: h, depth_or_array_layers: depth } };
         let extent = wgpu::Extent3d { width: extent.width.min(w.max(4)), height: extent.height.min(h.max(4)), ..extent };
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo { texture: &t.texture, mip_level: level, origin: wgpu::Origin3d { x: 0, y: 0, z: face }, aspect: wgpu::TextureAspect::All },
-            &bytes,
-            wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(rows) },
-            if t.format.is_compressed() { wgpu::Extent3d { width: w.max(4).min(extent.width.max(w)), height: h.max(4).min(extent.height.max(h)), depth_or_array_layers: 1 } } else { extent },
-        );
+        let write = Write::Texture {
+            texture: t.texture.clone(),
+            level,
+            origin: wgpu::Origin3d { x: 0, y: 0, z: face },
+            bytes: bytes.to_vec(),
+            layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(rows) },
+            extent: if t.format.is_compressed() { wgpu::Extent3d { width: w.max(4).min(extent.width.max(w)), height: h.max(4).min(extent.height.max(h)), depth_or_array_layers: 1 } } else { extent },
+        };
+        self.writes.push(write);
     }
 
     fn end_pass(&mut self) {
@@ -474,43 +605,81 @@ impl Gfx {
     }
 
     fn flush(&mut self) {
+        self.flush_and_present(None);
+    }
+
+    /// Consegna al thread di invio tutto ciò che è stato registrato finora.
+    fn flush_and_present(&mut self, present: Option<wgpu::SurfaceTexture>) {
         let start = std::time::Instant::now();
         self.end_pass();
-        self.prof_end += start.elapsed();
         if !self.ubuf_cpu.is_empty() {
-            self.queue.write_buffer(&self.ubuf, 0, &self.ubuf_cpu);
-            self.ubuf_cpu.clear();
+            let data = std::mem::take(&mut self.ubuf_cpu);
+            self.writes.push(Write::Buffer(self.ubuf.clone(), 0, data));
         }
         if !self.scratch_cpu.is_empty() {
-            self.queue.write_buffer(&self.scratch, 0, &self.scratch_cpu);
-            self.scratch_cpu.clear();
+            let data = std::mem::take(&mut self.scratch_cpu);
+            self.writes.push(Write::Buffer(self.scratch.clone(), 0, data));
         }
-        if let Some(e) = self.encoder.take() {
-            let t = std::time::Instant::now();
-            let commands = e.finish();
-            self.prof_finish += t.elapsed();
-            self.queue.submit([commands]);
-            self.flushes += 1;
+        let commands = self.encoder.take().map(|e| e.finish());
+        if self.writes.is_empty() && commands.is_none() && present.is_none() {
+            return;
+        }
+        self.flushes += 1;
+        let batch = Batch { writes: std::mem::take(&mut self.writes), commands, present };
+        match &self.submitter {
+            // Se il thread di invio è indietro di due lotti, qui si aspetta: è il freno.
+            Some(tx) => {
+                let _ = tx.send(Job::Batch(batch));
+            }
+            None => run_batch(&self.queue, batch),
         }
         self.prof[7] += start.elapsed();
+        // I buffer scartati tornano disponibili dopo quattro invii, quando nessun lotto in
+        // viaggio li usa più.
+        self.retired.push_back(std::mem::take(&mut self.retiring));
+        if self.retired.len() > 4 {
+            for (key, buffer) in self.retired.pop_front().unwrap() {
+                let list = self.pool.entry(key).or_default();
+                if list.len() < 32 {
+                    list.push(buffer);
+                } else {
+                    let _gate = gate();
+                    drop(buffer);
+                }
+            }
+        }
+        // Il prossimo invio scrive in un'altra copia dei buffer per-fotogramma.
+        if let Some((ubuf, g0, scratch)) = self.ring.pop_front() {
+            let old = (std::mem::replace(&mut self.ubuf, ubuf), std::mem::replace(&mut self.g0, g0), std::mem::replace(&mut self.scratch, scratch));
+            self.ring.push_back(old);
+        }
         self.ubuf_off = 0;
         self.scratch_off = 0;
         self.consts_last[0].1 = None;
         self.consts_last[1].1 = None;
         // Le versioni di appoggio non valgono più: i buffer veri vanno riallineati.
-        self.used.clear();
+        self.recent.rotate_right(1);
+        self.recent[0] = std::mem::take(&mut self.used);
         self.stale.extend(self.shadow.drain().map(|(obj, _)| obj));
     }
 
     /// Dimentica una risorsa D3D9 liberata: il suo indirizzo potrà essere riusato da un'altra.
     /// Va chiamata a fine fotogramma, senza pass aperti.
     pub fn forget(&mut self, obj: u32) {
-        self.buffers.remove(&obj);
+        // Un buffer rilasciato dal gioco passa per la stessa strada di quelli scartati.
+        if let Some(old) = self.buffers.remove(&obj) {
+            let usage = old.usage();
+            self.retiring.push(((old.size(), usage.contains(wgpu::BufferUsages::INDEX)), old));
+        }
         self.shadow.remove(&obj);
         self.pending.remove(&obj);
         self.stale.remove(&obj);
         self.used.remove(&obj);
-        if self.textures.remove(&obj).is_some() {
+        let removed = self.textures.remove(&obj);
+        if removed.is_some() {
+            // Distruggere una texture è una chiamata al driver: si passa dal cancello.
+            let _gate = gate();
+            drop(removed);
             // I bind group che la nominano tengono viva la texture wgpu e, peggio, verrebbero
             // riusati per la texture che prenderà il suo indirizzo.
             self.groups.retain(|key, _| !key.iter().skip(1).any(|e| e[2] == obj));
@@ -519,8 +688,27 @@ impl Gfx {
         self.pending_depth_clear.remove(&obj);
     }
 
+    /// Aspetta che il thread di invio abbia eseguito tutto ciò che gli è stato consegnato.
+    fn sync(&mut self) {
+        self.flush();
+        if let Some(tx) = &self.submitter {
+            let (done, wait) = std::sync::mpsc::channel();
+            if tx.send(Job::Sync(done)).is_ok() {
+                let _ = wait.recv();
+            }
+        }
+    }
+
+    /// Millisecondi passati dal thread di invio dentro la coda dall'ultima lettura.
+    pub fn take_submit_ms(&mut self) -> f64 {
+        SUBMIT_NS.swap(0, std::sync::atomic::Ordering::Relaxed) as f64 / 1e6
+    }
+
     /// Contatori dall'ultima lettura: (invii alla GPU, byte di buffer caricati).
     pub fn take_stats(&mut self) -> (u64, u64) {
+        if std::env::var_os("ALTAIR_STATS").is_some() && self.orphaned > 0 {
+            eprintln!("[gfx] buffer sostituiti perché ancora in uso dalla GPU: {}", std::mem::take(&mut self.orphaned));
+        }
         (std::mem::take(&mut self.flushes), std::mem::take(&mut self.uploaded))
     }
 
@@ -684,6 +872,7 @@ impl Gfx {
             self.parsed.insert(obj, parsed);
         }
         if !self.modules.contains_key(&(obj, opts)) {
+            let _gate = gate();
             let module = self.parsed[&obj].as_ref().and_then(|p| sh::translate_with(p, &opts).ok()).map(|wgsl| ShaderGpu {
                 module: self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: None, source: wgpu::ShaderSource::Wgsl(wgsl.into()) }),
             });
@@ -732,6 +921,7 @@ impl Gfx {
             _ => wgpu::AddressMode::Repeat,
         };
         let filter = |f: u32| if f >= 2 { wgpu::FilterMode::Linear } else { wgpu::FilterMode::Nearest };
+        let _gate = gate();
         let s = self.device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: address(key[0]),
             address_mode_v: address(key[1]),
@@ -800,26 +990,32 @@ impl Gfx {
 
     /// Scrive un blocco di costanti nel buffer uniforme e ne ritorna l'offset. Se è identico
     /// all'ultimo scritto per quello stadio (capita spesso tra draw consecutivi) lo riusa.
-    fn write_consts(&mut self, stage: usize, f: &[f32], i: &[i32], b: u32, misc: [f32; 4]) -> u32 {
+    fn write_consts(&mut self, stage: usize, f: &[f32], i: &[i32], b: u32, misc: [f32; 4], floats: usize) -> u32 {
+        // Solo i registri float che lo shader legge: stanno in fondo al blocco apposta. Il
+        // blocco intero pesa 4,4 KB e ne partono due per draw; la gran parte degli shader ne usa
+        // una frazione.
+        let f = &f[..(4 * floats).min(f.len())];
         // SAFETY: f32 e i32 non hanno byte di riempimento; l'host è little-endian come il formato atteso.
         let (fb, ib) = unsafe { (std::slice::from_raw_parts(f.as_ptr() as *const u8, f.len() * 4), std::slice::from_raw_parts(i.as_ptr() as *const u8, i.len() * 4)) };
         let mut bytes = std::mem::take(&mut self.consts_tmp);
         bytes.clear();
-        bytes.extend_from_slice(fb);
-        bytes.extend_from_slice(ib);
-        bytes.extend([b, 0, 0, 0].iter().flat_map(|v| v.to_le_bytes()));
         bytes.extend(misc.iter().flat_map(|v| v.to_le_bytes()));
+        bytes.extend([b, 0, 0, 0].iter().flat_map(|v| v.to_le_bytes()));
+        bytes.extend_from_slice(ib);
+        bytes.extend_from_slice(fb);
+        // Un blocco già scritto che comincia con gli stessi byte va bene anche se è più lungo.
         let last = &mut self.consts_last[stage];
-        if let Some(off) = last.1.filter(|_| last.0 == bytes) {
+        if let Some(off) = last.1.filter(|_| last.0.len() >= bytes.len() && last.0[..bytes.len()] == bytes[..]) {
             self.consts_tmp = bytes;
             return off;
         }
         // Le scritture si accumulano e partono tutte insieme all'invio: migliaia di piccole
         // `write_buffer` per fotogramma costavano più dei draw.
         let off = self.ubuf_off;
+        let slot = (bytes.len() as u64).next_multiple_of(256);
         self.ubuf_cpu.extend_from_slice(&bytes);
-        self.ubuf_cpu.resize((off + CONSTS_SLOT) as usize, 0);
-        self.ubuf_off += CONSTS_SLOT;
+        self.ubuf_cpu.resize((off + slot) as usize, 0);
+        self.ubuf_off += slot;
         let last = &mut self.consts_last[stage];
         std::mem::swap(&mut last.0, &mut bytes);
         last.1 = Some(off as u32);
@@ -833,6 +1029,25 @@ impl Gfx {
         self.scratch_cpu.resize(self.scratch_cpu.len().next_multiple_of(4), 0);
         self.scratch_off = self.scratch_cpu.len() as u64;
         off
+    }
+
+    /// Dà a `obj` un buffer GPU vuoto, preso dalla riserva se ce n'è uno della stessa misura.
+    /// Quello di prima non si distrugge: resta ai draw già registrati e, dopo qualche invio,
+    /// torna nella riserva. Creare e distruggere buffer a ogni fotogramma costava caro: sono
+    /// chiamate al driver, e passano dal cancello condiviso con il thread di invio.
+    fn replace_buffer(&mut self, obj: u32, padded: u64, index: bool) {
+        let key = (padded, index);
+        let fresh = match self.pool.get_mut(&key).and_then(Vec::pop) {
+            Some(b) => b,
+            None => {
+                let usage = if index { wgpu::BufferUsages::INDEX } else { wgpu::BufferUsages::VERTEX } | wgpu::BufferUsages::COPY_DST;
+                let _gate = gate();
+                self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: padded, usage, mapped_at_creation: false })
+            }
+        };
+        if let Some(old) = self.buffers.insert(obj, fresh) {
+            self.retiring.push((key, old));
+        }
     }
 
     /// Il buffer GPU di un vertex o index buffer D3D9, con l'offset a cui stanno i suoi dati.
@@ -851,17 +1066,13 @@ impl Gfx {
         let fresh = !self.buffers.contains_key(&obj);
         let dirty = d.dirty_buffers.borrow_mut().remove(&obj);
         let stale = self.stale.remove(&obj);
-        let new_buffer = |g: &Gfx| {
-            let usage = if index { wgpu::BufferUsages::INDEX } else { wgpu::BufferUsages::VERTEX } | wgpu::BufferUsages::COPY_DST;
-            g.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: padded, usage, mapped_at_creation: false })
-        };
         // `pending`: la parte del buffer vero non ancora allineata alla memoria guest.
         let widen = |g: &mut Gfx, lo: u64, hi: u64| {
             let e = g.pending.entry(obj).or_insert((lo, hi));
             *e = (e.0.min(lo), e.1.max(hi));
         };
         if fresh {
-            self.buffers.insert(obj, new_buffer(self));
+            self.replace_buffer(obj, padded, index);
             self.pending.insert(obj, (0, padded));
         } else if stale || dirty.is_some() {
             let had_shadow = self.shadow.remove(&obj).is_some();
@@ -872,14 +1083,22 @@ impl Gfx {
             };
             let (lo, hi) = ((lo & !3) as u64, (hi as u64).next_multiple_of(4).min(padded));
             let in_use = self.used.contains(&obj);
+            // Usato da un invio recente: la GPU può starlo ancora leggendo, e scriverci sopra
+            // costringe il driver ad aspettarla. Meglio un buffer nuovo, riempito man mano
+            // con ciò che i draw leggono.
+            let busy = self.avoid_busy && self.recent.iter().any(|set| set.contains(&obj));
             if hi <= lo {
                 // Lock senza scrittura utile.
+            } else if busy && !in_use {
+                self.replace_buffer(obj, padded, index);
+                self.pending.insert(obj, (0, padded));
+                self.orphaned += 1;
             } else if !in_use || append {
                 // Nessun draw in sospeso legge quell'intervallo: si potrà aggiornare sul posto.
                 widen(self, lo, hi);
             } else if discard {
                 // Il gioco rinuncia al vecchio contenuto: buffer nuovo, il vecchio resta ai draw in sospeso.
-                self.buffers.insert(obj, new_buffer(self));
+                self.replace_buffer(obj, padded, index);
                 self.pending.insert(obj, (lo, hi));
             } else if padded <= SHADOW_MAX && self.scratch_off + padded + (4 << 20) <= SCRATCH_SIZE {
                 let off = self.scratch_write(mem.bytes(data, padded as u32));
@@ -887,7 +1106,7 @@ impl Gfx {
                 self.uploaded += padded;
                 return Some((self.scratch.clone(), off));
             } else {
-                self.buffers.insert(obj, new_buffer(self));
+                self.replace_buffer(obj, padded, index);
                 self.pending.insert(obj, (0, padded));
             }
         }
@@ -901,7 +1120,7 @@ impl Gfx {
             let (a, b) = (need.0 & !3, need.1.next_multiple_of(4).min(padded));
             if b > lo && a < hi {
                 let (from, to, rest) = if a > lo && b >= hi { (a, hi, (lo, a)) } else { (lo, b.min(hi), (b.min(hi), hi)) };
-                self.queue.write_buffer(&self.buffers[&obj], from, mem.bytes(data + from as u32, (to - from) as u32));
+                self.writes.push(Write::Buffer(self.buffers[&obj].clone(), from, mem.bytes(data + from as u32, (to - from) as u32).to_vec()));
                 self.uploaded += to - from;
                 if rest.1 > rest.0 {
                     self.pending.insert(obj, rest);
@@ -1023,6 +1242,8 @@ impl Gfx {
         if !self.module(d, vs, opts_vs) || !self.module(d, ps, opts_ps) {
             return self.skip("shader non traducibile");
         }
+        let vs_floats = self.parsed[&vs].as_ref().unwrap().float_consts as usize;
+        let ps_floats = self.parsed[&ps].as_ref().unwrap().float_consts as usize;
         let (vs_inputs, vs_samplers): (Vec<sh::Decl>, Vec<(u32, u32)>) = {
             let p = self.parsed[&vs].as_ref().unwrap();
             (p.inputs.clone(), p.samplers.iter().map(|(k, v)| (*k | 0x100, *v)).collect())
@@ -1071,6 +1292,7 @@ impl Gfx {
         ];
         let key = PipeKey { vs, ps, decl, strides, opts_vs, opts_ps, colors, depth: depth_format, topology: prim_type, index16, states };
         if !self.pipelines.contains_key(&key) {
+            let _gate = gate();
             let ps_layout = self.tex_layout(&ps_samplers, wgpu::ShaderStages::FRAGMENT);
             let vs_layout = self.tex_layout(&vs_samplers, wgpu::ShaderStages::VERTEX);
             let layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&self.g0_layout, &ps_layout, &vs_layout], push_constant_ranges: &[] });
@@ -1160,8 +1382,8 @@ impl Gfx {
         lap!(4);
         let (w, h) = self.pass_size;
         let half = [1.0 / w as f32, -1.0 / h as f32, rs(24, 0) as f32 / 255.0, 0.0];
-        let vs_off = self.write_consts(0, &d.vs_f, &d.vs_i, d.vs_b, half);
-        let ps_off = self.write_consts(1, &d.ps_f, &d.ps_i, d.ps_b, half);
+        let vs_off = self.write_consts(0, &d.vs_f, &d.vs_i, d.vs_b, half, vs_floats);
+        let ps_off = self.write_consts(1, &d.ps_f, &d.ps_i, d.ps_b, half, ps_floats);
 
         lap!(5);
         // Ogni comando del pass costa all'invio (wgpu lo ripete a OpenGL, Mesa a D3D12): si
@@ -1264,6 +1486,7 @@ impl Gfx {
 
     /// Disegna una vista su un'altra con un triangolo a tutto schermo.
     fn blit_views(&mut self, sv: &wgpu::TextureView, dv: &wgpu::TextureView, df: wgpu::TextureFormat) {
+        let _gate = gate();
         if self.blit.is_none() {
             let m = self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: None, source: wgpu::ShaderSource::Wgsl(BLIT.into()) });
             self.blit = Some((m, HashMap::new()));
@@ -1282,7 +1505,8 @@ impl Gfx {
                 cache: None,
             })
         });
-        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, ..Default::default() });
+        let sampler = self.blit_sampler.get_or_insert_with(|| self.device.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, ..Default::default() })).clone();
+        drop(_gate);
         let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
@@ -1306,12 +1530,18 @@ impl Gfx {
         let Some((surface, mut config, window)) = self.surface.take() else { return };
         self.end_pass();
         let size = window.inner_size();
-        if size.width > 0 && size.height > 0 && (size.width, size.height) != (config.width, config.height) {
-            config.width = size.width;
-            config.height = size.height;
-            surface.configure(&self.device, &config);
-        }
-        match surface.get_current_texture() {
+        // Il cancello si tiene solo per le operazioni sulla superficie: mai mentre si consegna
+        // un lotto, o i due thread si aspetterebbero a vicenda.
+        let acquired = {
+            let _gate = gate();
+            if size.width > 0 && size.height > 0 && (size.width, size.height) != (config.width, config.height) {
+                config.width = size.width;
+                config.height = size.height;
+                surface.configure(&self.device, &config);
+            }
+            surface.get_current_texture()
+        };
+        match acquired {
             Ok(frame) => {
                 let (obj, ..) = Self::owner(d, d.backbuffer);
                 if self.ensure_texture(d, obj) {
@@ -1320,11 +1550,15 @@ impl Gfx {
                         self.blit_views(&sv, &dv, config.format);
                     }
                 }
-                self.flush();
-                frame.present();
+                // La presentazione avviene dopo l'invio, sul thread di invio: se aspetta lo
+                // schermo, non ferma il gioco.
+                self.flush_and_present(Some(frame));
             }
             // Superficie persa o cambiata (ridimensionamento): si riconfigura e si salta un fotogramma.
-            Err(_) => surface.configure(&self.device, &config),
+            Err(_) => {
+                let _gate = gate();
+                surface.configure(&self.device, &config)
+            }
         }
         self.surface = Some((surface, config, window));
     }
@@ -1351,6 +1585,9 @@ impl Gfx {
         if !self.ensure_texture(d, obj) {
             return None;
         }
+        // La lettura passa dalla coda: prima deve essere arrivato tutto il resto.
+        self.sync();
+        let _gate = gate();
         let t = &self.textures[&obj];
         if t.format != wgpu::TextureFormat::Bgra8Unorm {
             return None;
