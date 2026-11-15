@@ -75,6 +75,9 @@ pub struct Gfx {
     g0: wgpu::BindGroup,
     ubuf: wgpu::Buffer,
     ubuf_off: u64,
+    /// Contenuto in attesa del buffer uniforme e di quello di appoggio: scritti all'invio.
+    ubuf_cpu: Vec<u8>,
+    scratch_cpu: Vec<u8>,
     tex_layouts: HashMap<Vec<(u32, u32)>, wgpu::BindGroupLayout>,
     scratch: wgpu::Buffer,
     scratch_off: u64,
@@ -256,6 +259,9 @@ impl Gfx {
             if let Some(f) = caps.formats.iter().find(|f| !f.is_srgb()) {
                 config.format = *f;
             }
+            // Senza attesa del refresh: il gioco disegna da un thread solo, e aspettare lo schermo
+            // dentro `Present` gli toglie tempo.
+            config.present_mode = wgpu::PresentMode::AutoNoVsync;
             s.configure(&device, &config);
             eprintln!("[gfx] finestra: {}x{} {:?}", config.width, config.height, config.format);
             Some((s, config, w))
@@ -320,6 +326,8 @@ impl Gfx {
             g0,
             ubuf,
             ubuf_off: 0,
+            ubuf_cpu: Vec::new(),
+            scratch_cpu: Vec::new(),
             tex_layouts: HashMap::new(),
             scratch,
             scratch_off: 0,
@@ -443,6 +451,14 @@ impl Gfx {
     fn flush(&mut self) {
         let start = std::time::Instant::now();
         self.end_pass();
+        if !self.ubuf_cpu.is_empty() {
+            self.queue.write_buffer(&self.ubuf, 0, &self.ubuf_cpu);
+            self.ubuf_cpu.clear();
+        }
+        if !self.scratch_cpu.is_empty() {
+            self.queue.write_buffer(&self.scratch, 0, &self.scratch_cpu);
+            self.scratch_cpu.clear();
+        }
         if let Some(e) = self.encoder.take() {
             self.queue.submit([e.finish()]);
             self.flushes += 1;
@@ -455,6 +471,22 @@ impl Gfx {
         // Le versioni di appoggio non valgono più: i buffer veri vanno riallineati.
         self.used.clear();
         self.stale.extend(self.shadow.drain().map(|(obj, _)| obj));
+    }
+
+    /// Dimentica una risorsa D3D9 liberata: il suo indirizzo potrà essere riusato da un'altra.
+    /// Va chiamata a fine fotogramma, senza pass aperti.
+    pub fn forget(&mut self, obj: u32) {
+        self.buffers.remove(&obj);
+        self.shadow.remove(&obj);
+        self.stale.remove(&obj);
+        self.used.remove(&obj);
+        if self.textures.remove(&obj).is_some() {
+            // I bind group che la nominano tengono viva la texture wgpu e, peggio, verrebbero
+            // riusati per la texture che prenderà il suo indirizzo.
+            self.groups.retain(|key, _| !key.iter().skip(1).any(|e| e[2] == obj));
+        }
+        self.pending_clear.remove(&obj);
+        self.pending_depth_clear.remove(&obj);
     }
 
     /// Contatori dall'ultima lettura: (invii alla GPU, byte di buffer caricati).
@@ -747,8 +779,11 @@ impl Gfx {
             self.consts_tmp = bytes;
             return off;
         }
+        // Le scritture si accumulano e partono tutte insieme all'invio: migliaia di piccole
+        // `write_buffer` per fotogramma costavano più dei draw.
         let off = self.ubuf_off;
-        self.queue.write_buffer(&self.ubuf, off, &bytes);
+        self.ubuf_cpu.extend_from_slice(&bytes);
+        self.ubuf_cpu.resize((off + CONSTS_SLOT) as usize, 0);
         self.ubuf_off += CONSTS_SLOT;
         let last = &mut self.consts_last[stage];
         std::mem::swap(&mut last.0, &mut bytes);
@@ -759,16 +794,9 @@ impl Gfx {
 
     fn scratch_write(&mut self, data: &[u8]) -> u64 {
         let off = self.scratch_off;
-        let mut padded;
-        let data = if data.len() % 4 != 0 {
-            padded = data.to_vec();
-            padded.resize(data.len().next_multiple_of(4), 0);
-            &padded[..]
-        } else {
-            data
-        };
-        self.queue.write_buffer(&self.scratch, off, data);
-        self.scratch_off += data.len() as u64;
+        self.scratch_cpu.extend_from_slice(data);
+        self.scratch_cpu.resize(self.scratch_cpu.len().next_multiple_of(4), 0);
+        self.scratch_off = self.scratch_cpu.len() as u64;
         off
     }
 

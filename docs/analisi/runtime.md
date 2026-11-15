@@ -156,6 +156,26 @@ tools/ctl.sh "key 28" "shot a.png"
 tools/ctl.sh quit
 ```
 
+## Dal laboratorio all'Animus (2026-11-15)
+
+Percorso verificato con il canale di comando, profilo "Claude", lingua italiana:
+
+1. `CONTINUA` dal menu principale carica `DataPC_Present_Room.forge`: scena nel laboratorio
+   Abstergo, Vidic parla a Desmond seduto sull'Animus (circa due minuti).
+2. Compare "PREMERE QUALUNQUE PULSANTE PER INTERAGIRE" e **la scena aspetta**: senza un tasto
+   non prosegue (verificato: ferma per oltre cinque minuti). Con Spazio prosegue.
+3. Schermata dell'Animus vista dal lettino: "CRONOLOGIA MEMORIA GENETICA", l'elica del DNA,
+   "Ricordo bloccato", i volti di Lucy e Vidic; poi "IN ATTESA DI INPUT". Un altro tasto, e le
+   frecce spostano il puntatore sull'elica.
+4. Il gioco apre `DataPC_Memory_Corridor.forge` e `DataPC_extra.forge`: **Altaïr nel corridoio
+   dell'Animus**, con la barra di sincronizzazione; parte il tutorial "SISTEMA DI CONTROLLO"
+   (Testa, Mano nuda, Mano armata, Gambe) e compaiono due personaggi. Con W Altaïr cammina.
+
+Schermate in `run/scatti/` (ignorata da git: sono immagini del gioco). In tutta la sessione,
+10 milioni di draw, nessun draw saltato e nessun errore di validazione.
+
+Non ancora fatto: completare i passi del tutorial (richiedono combinazioni di tasti e mouse).
+
 ## Registro e lingua
 
 Verificato con `ALTAIR_TRACE`: il gioco apre una sola chiave, `HKLM\SOFTWARE\Ubisoft\Assassin's Creed`
@@ -239,7 +259,9 @@ dimensione della finestra. Gli eventi si accumulano in uno stato condiviso:
   `WM_KEYDOWN`/`WM_KEYUP` con il carattere pronto per `ToUnicode`;
 - mouse → `DIMOUSESTATE` (spostamento dall'ultima lettura, rotella, pulsanti), `GetCursorPos`
   e messaggi `WM_MOUSEMOVE`, `WM_xBUTTONDOWN/UP`;
-- chiusura della finestra → uscita immediata del processo.
+- chiusura della finestra → uscita immediata del processo;
+- **F10** cattura o libera il puntatore (non arriva al gioco): catturato, il mouse muove la
+  visuale senza fermarsi ai bordi; libero, serve per i menu.
 
 Senza la variabile tutto resta fuori schermo, come prima. `tools/gioca.sh` la imposta.
 
@@ -298,7 +320,8 @@ dei dispositivi con `EnumObjects`: per il mouse elenchiamo tre assi e otto pulsa
 
 ## Prossimi passi
 
-1. Proseguire nel gioco: premere il tasto nel laboratorio, entrare nell'Animus, il tutorial.
-2. Una finestra vera con tastiera e mouse, per giocare invece di scrivere copioni.
-3. Renderer: stencil, scissor, depth bias, riciclo delle risorse; confronto con l'originale.
-4. Punti aperti: SEH, file INI veri, lingua, prima pagina protetta, audio vero, Bink.
+1. Giocare davvero con `tools/gioca.sh`: tastiera e mouse veri non sono mai stati provati.
+2. Uscita audio: capire perché PulseAudio di WSLg consuma a singhiozzo (sezione Audio).
+3. Completare il tutorial dell'Animus e arrivare a Masyaf; controllare che il salvataggio
+   automatico funzioni lungo il percorso.
+4. Punti aperti: SEH, file INI veri, prima pagina protetta, suono 3D, controller.

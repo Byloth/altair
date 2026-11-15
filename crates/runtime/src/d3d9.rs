@@ -58,6 +58,9 @@ pub struct D3d {
     pub viewport: [u32; 6],
     /// Rettangolo di ritaglio (`SetScissorRect`): sinistra, alto, destra, basso.
     pub scissor: [u32; 4],
+    /// Risorse arrivate a zero riferimenti, in attesa di essere liberate; quante liberate finora.
+    pub dead: std::collections::HashSet<u32>,
+    pub freed: u64,
     /// Misure di ritmo (vedi `dev_present`).
     pub stats_since: Option<std::time::Instant>,
     pub stats_frame: u64,
@@ -436,6 +439,7 @@ fn dev_present(rt: &mut Runtime, _: &mut Call) -> u32 {
     }
     let frame = d.frames;
     with_gfx(rt, |g, d, _| g.present(d, frame));
+    sweep(rt);
     // Ogni cinque secondi, il ritmo: fotogrammi al secondo, tempo passato nel renderer, invii.
     let d = &mut rt.d3d;
     let since = d.stats_since.get_or_insert_with(std::time::Instant::now).elapsed();
@@ -1016,12 +1020,94 @@ fn res_get_device(rt: &mut Runtime, c: &mut Call) -> u32 {
     out_obj(rt, c.arg(1), o)
 }
 
+/// `Release` di una risorsa (texture, superficie, buffer, query): a zero finisce tra quelle da
+/// liberare. La liberazione avviene a fine fotogramma, e solo se il device non la usa più:
+/// Direct3D tiene vive le risorse ancora legate, anche se il gioco le ha rilasciate.
+fn res_release(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let n = rt.mem.r32(c.arg(0) + 4).saturating_sub(1);
+    rt.mem.w32(c.arg(0) + 4, n);
+    if n == 0 {
+        rt.d3d.dead.insert(c.arg(0));
+    }
+    n
+}
+
+/// Libera le risorse rilasciate dal gioco e non più legate al device: memoria guest, voci
+/// delle tabelle, oggetti wgpu. Senza, una partita lunga esaurirebbe l'heap guest e la memoria
+/// della GPU (il gioco crea e rilascia buffer e texture in continuazione).
+fn sweep(rt: &mut Runtime) {
+    if rt.d3d.dead.is_empty() {
+        return;
+    }
+    let mem = rt.mem;
+    let d = &rt.d3d;
+    let count = |obj: u32| mem.r32(obj + 4);
+    let is_target = |s: &u32| d.render_targets.contains(s) || d.depth_target == *s;
+    let mut kill = Vec::new();
+    let mut alive = Vec::new();
+    for &obj in &d.dead {
+        if count(obj) != 0 {
+            alive.push(obj); // ripresa prima di essere liberata
+            continue;
+        }
+        let busy = match d.res.get(&obj) {
+            Some(Res::Buffer { .. }) => d.streams.iter().any(|s| s.0 == obj) || d.indices == obj,
+            // I livelli di una texture nascono con un riferimento nostro: oltre quello, li tiene il gioco.
+            Some(Res::Texture { surfaces, .. }) => d.textures.values().any(|t| *t == obj) || surfaces.values().any(|s| count(*s) > 1 || is_target(s)),
+            // Back buffer e depth impliciti non si liberano; i livelli seguono la loro texture.
+            Some(Res::Surface { .. }) => obj == d.backbuffer || obj == d.depth || d.surface_parent.contains_key(&obj) || is_target(&obj),
+            Some(Res::Query { .. }) => false,
+            _ => {
+                alive.push(obj); // shader, dichiarazioni e il resto restano
+                continue;
+            }
+        };
+        if !busy {
+            kill.push(obj);
+        }
+    }
+    for obj in alive {
+        rt.d3d.dead.remove(&obj);
+    }
+    for obj in kill {
+        rt.d3d.dead.remove(&obj);
+        let mut free = vec![obj];
+        match rt.d3d.res.remove(&obj) {
+            Some(Res::Buffer { mem, .. }) => {
+                free.push(mem);
+                rt.d3d.dirty_buffers.borrow_mut().remove(&obj);
+            }
+            Some(Res::Texture { surfaces, .. }) => {
+                for s in surfaces.into_values() {
+                    if let Some(Res::Surface { mem, .. }) = rt.d3d.res.remove(&s) {
+                        free.push(mem);
+                    }
+                    rt.d3d.surface_parent.remove(&s);
+                    rt.d3d.dead.remove(&s);
+                    free.push(s);
+                }
+            }
+            Some(Res::Surface { mem, .. }) => free.push(mem),
+            _ => {}
+        }
+        if let Some(g) = rt.gfx.as_mut() {
+            for a in &free {
+                g.forget(*a);
+            }
+        }
+        for a in free.into_iter().filter(|a| *a != 0) {
+            rt.hfree(a);
+        }
+        rt.d3d.freed += 1;
+    }
+}
+
 macro_rules! resource_head {
     () => {
         [
             ("QueryInterface", 3, Some(L(com::no_interface))),
             ("AddRef", 1, Some(L(com::add_ref))),
-            ("Release", 1, Some(L(com::release))),
+            ("Release", 1, Some(L(res_release))),
             ("GetDevice", 2, Some(L(res_get_device))),
             ("SetPrivateData", 5, OK),
             ("GetPrivateData", 4, None),
@@ -1308,7 +1394,7 @@ fn query_data_size(_: &mut Runtime, _: &mut Call) -> u32 {
 static QUERY: &[Method] = &[
     ("QueryInterface", 3, Some(L(com::no_interface))),
     ("AddRef", 1, Some(L(com::add_ref))),
-    ("Release", 1, Some(L(com::release))),
+    ("Release", 1, Some(L(res_release))),
     ("GetDevice", 2, Some(L(res_get_device))),
     ("GetType", 1, None),
     ("GetDataSize", 1, Some(L(query_data_size))),
@@ -1492,6 +1578,7 @@ pub fn report(rt: &Runtime) {
         g.report();
     }
     eprintln!("\n===== censimento Direct3D 9 =====");
+    eprintln!("risorse liberate: {}; ancora in tabella: {}; in attesa: {}", d.freed, d.res.len(), d.dead.len());
     eprintln!("flag dei Lock sui buffer: {}", d.lock_flags.iter().map(|(f, n)| format!("{f:#x} × {n}")).collect::<Vec<_>>().join(", "));
     for (k, n) in &d.partial_rects {
         if k.0 == u32::MAX {

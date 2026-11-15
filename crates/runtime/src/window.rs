@@ -2,6 +2,8 @@
 //! soltanto. Il renderer ci presenta sopra il back buffer; tastiera e mouse arrivano al gioco
 //! per le sue due strade, lo stato di DirectInput e i messaggi della finestra.
 //!
+//! F10 cattura o libera il puntatore del mouse.
+//!
 //! Qui non si tocca il runtime: gli eventi si accumulano in `State`, e gli shim li leggono
 //! quando il gioco li chiede.
 
@@ -33,13 +35,14 @@ pub struct State {
     pub motion: (i32, i32, i32),
     pub buttons: [bool; 8],
     raw_motion: bool,
+    grabbed: bool,
     last_cursor: Option<(f64, f64)>,
 }
 
 static WINDOW: OnceLock<Arc<Window>> = OnceLock::new();
 static FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(|| {
-    Mutex::new(State { keys: [0; 256], events: VecDeque::new(), cursor: (SCREEN.0 / 2, SCREEN.1 / 2), motion: (0, 0, 0), buttons: [false; 8], raw_motion: false, last_cursor: None })
+    Mutex::new(State { keys: [0; 256], events: VecDeque::new(), cursor: (SCREEN.0 / 2, SCREEN.1 / 2), motion: (0, 0, 0), buttons: [false; 8], raw_motion: false, grabbed: false, last_cursor: None })
 });
 
 pub fn enabled() -> bool {
@@ -123,6 +126,20 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 let PhysicalKey::Code(code) = event.physical_key else { return };
+                // F10 non va al gioco: cattura o libera il puntatore. Catturato, il mouse muove la
+                // visuale senza fermarsi ai bordi della finestra; libero, serve per i menu.
+                if code == KeyCode::F10 {
+                    if event.state == ElementState::Pressed && !event.repeat {
+                        s.grabbed = !s.grabbed;
+                        if let Some(w) = WINDOW.get() {
+                            use winit::window::CursorGrabMode::{Confined, Locked, None};
+                            let ok = if s.grabbed { w.set_cursor_grab(Locked).or_else(|_| w.set_cursor_grab(Confined)).is_ok() } else { w.set_cursor_grab(None).is_ok() };
+                            w.set_cursor_visible(!s.grabbed);
+                            eprintln!("[finestra] puntatore {}{}", if s.grabbed { "catturato (F10 per liberarlo)" } else { "libero" }, if ok { "" } else { " (il compositore ha rifiutato la cattura)" });
+                        }
+                    }
+                    return;
+                }
                 let Some((dik, vk)) = map(code) else { return };
                 let down = event.state == ElementState::Pressed;
                 s.keys[dik as usize] = if down { 0x80 } else { 0 };

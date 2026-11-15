@@ -180,10 +180,21 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
   del profilo (salvato su disco) → menu principale
 - [x] `NEW`: il gioco carica il primo livello e **disegna il laboratorio Abstergo** (917 draw
   per fotogramma, nessun errore)
-- [ ] Proseguire: interazione nel laboratorio, Animus, tutorial
-- [ ] Finestra vera con tastiera e mouse
-- [ ] Stencil, scissor, depth bias, rettangoli parziali, `ColorFill`, riciclo delle risorse
-- [ ] Video Bink, DirectSound (EAX opzionale), DirectInput, XInput
+- [x] Interazione nel laboratorio (il gioco aspettava un tasto), schermata dell'Animus, ingresso
+  nel ricordo: **Altaïr nel corridoio dell'Animus, con HUD e tutorial "Sistema di controllo"**;
+  si muove con W (10 milioni di draw senza errori) → `analisi/runtime.md`, `run/scatti/`
+- [ ] Completare il tutorial dell'Animus e arrivare a Masyaf: serve giocare davvero
+- [x] Canale di comando per pilotare il gioco mentre gira (`ALTAIR_CTL`, `tools/avvia.sh`, `tools/ctl.sh`)
+- [x] Finestra vera (`ALTAIR_WINDOW=1`, `tools/gioca.sh`): si apre via Wayland e mostra il gioco
+- [ ] Tastiera e mouse veri nella finestra: scritti, **non ancora provati da una persona**
+- [x] Stencil, scissor, depth bias, `ColorFill`, riciclo delle risorse
+- [ ] Rettangoli parziali in `StretchRect`/`Clear` (mai visti finora), `GetRenderTargetData`
+- [x] Prestazioni del renderer: da 2-25 a 27-190 fotogrammi al secondo secondo la scena
+- [x] Video Bink veri, decodificati da `ffmpeg` (loghi e filmato introduttivo)
+- [x] DirectSound su un mixer nostro: il gioco suona (verificato sul miscelato salvato)
+- [ ] Uscita audio su PulseAudio: scritta, **non verificata a orecchio**; in WSLg va a
+  singhiozzo → `analisi/runtime.md`, sezione Audio
+- [ ] Suono 3D, EAX, XInput (controller)
 - [ ] Confronto visivo con la DX10 originale, che sull'hardware attuale funziona: serve uno
   screenshot dell'utente della stessa scena (laboratorio Abstergo)
 - [ ] (facoltativo, solo se una differenza di rendering non si chiarisce con la DX10) Far
@@ -220,8 +231,9 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 ## Prossimi passi concreti
 
-1. **Fase 3**: finestra vera con input, per giocare; intanto proseguire con il copione
-   oltre il laboratorio e completare il renderer (stencil, scissor, riciclo).
+1. **Fase 3, con una persona alla tastiera**: `tools/gioca.sh`, provare tastiera, mouse e audio
+   nella finestra, completare il tutorial dell'Animus e annotare cosa non va.
+   Poi: uscita audio affidabile, costo dell'invio dei draw, confronto visivo con la DX10.
 2. Lettore `.forge` in Rust.
 3. Punti aperti della Fase 1: scenari mirati per le istruzioni non verificate, limiti della
    scoperta.

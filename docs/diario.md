@@ -196,3 +196,25 @@ lingua italiana; finestre di prova permesse; a fine lavoro aggiornare il piano o
   Invio lo salta → `analisi/runtime.md`.
 - **Finestra vera** (`window.rs`, `ALTAIR_WINDOW=1`): winit sul thread principale, superficie
   wgpu, tastiera e mouse reali verso DirectInput e i messaggi della finestra.
+- **Altaïr.** Dalla schermata dell'Animus il gioco carica `DataPC_Memory_Corridor.forge` e
+  mostra Altaïr nel corridoio dell'Animus, con la barra di sincronizzazione e il tutorial
+  ("SISTEMA DI CONTROLLO", "BARRA DI SINCRONIA"); con W cammina. 11,5 milioni di draw nella
+  sessione più lunga, nessun draw saltato, nessun errore → `analisi/runtime.md`.
+- Renderer, secondo giro: scritture di costanti e dati di appoggio raggruppate in due per
+  invio. Laboratorio 22 → 45 fps, corridoio 70-117 fps, elica del DNA 2 → 27 fps. Misure per
+  fase in `analisi/d3d9.md`.
+- **Riciclo delle risorse**: `Release` a zero + liberazione a fine fotogramma se il device non
+  le usa più. In una sessione: 25.967 risorse liberate, texture wgpu vive 760 invece di 1.231,
+  immagine invariata.
+- **Finestra**: si apre via Wayland e mostra il gioco (non più di ~60 fps: `Present` aspetta
+  lo schermo anche chiedendo di non farlo). Su X11 a winit manca `libxkbcommon-x11.so`: in
+  quel caso si prosegue fuori schermo. `EnumObjects` del mouse (3 assi, 8 pulsanti), F10 per
+  catturare il puntatore, `tools/gioca.sh`. **Tastiera e mouse veri non provati**: non c'è
+  modo di iniettare tasti in una finestra Wayland da qui.
+- **Audio, problema aperto**: il mixer funziona (miscelato non muto per 400 s), ma l'uscita su
+  PulseAudio di WSLg accetta un quinto del tempo reale e a un certo punto il server ha smesso
+  di rispondere anche ad altri programmi (errore 8, timeout). Non so se l'ho mandato in crisi
+  io con i test o se era già così. Da Windows `wsl --shutdown` lo riavvia → `analisi/runtime.md`.
+- Errori miei da ricordare: `pkill -f testo` e `pgrep -f testo` trovano anche la shell che li
+  lancia, se il testo compare nella sua riga di comando (mi sono ucciso il comando due volte):
+  usare `"altair-ru[n]"`. `sleep` lunghi in primo piano sono bloccati: usare un ciclo `until`.
