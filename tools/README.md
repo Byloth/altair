@@ -153,3 +153,13 @@ tools/ctl.sh quit           # censimento ed uscita
 Comandi: `key DIK [fotogrammi]`, `text TESTO`, `shot FILE.png`, `stats`, `quit`. `ctl.sh` aspetta
 che il gioco li abbia eseguiti e stampa fotogramma, ritmo e filmato in corso. Non lanciare `avvia.sh` sotto
 `timeout`: ucciderebbe anche il gioco.
+
+## `gioca.sh`
+
+Avvia il gioco in una finestra, con tastiera, mouse e audio veri (`ALTAIR_WINDOW=1`).
+
+```sh
+tools/gioca.sh                      # chiudere la finestra per uscire
+ALTAIR_AUDIO=0 tools/gioca.sh       # senza uscita audio
+ALTAIR_LANG=English tools/gioca.sh  # lingua del gioco (predefinita: Italian)
+```

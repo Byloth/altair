@@ -82,8 +82,11 @@ impl Pulse {
             let new: New = std::mem::transmute(new);
             // pa_sample_spec { format, rate, channels }: S16LE (3), 48 kHz, stereo.
             let spec = [3u32, RATE, 2];
-            // pa_buffer_attr { maxlength, tlength, prebuf, minreq, fragsize }: 60 ms di coda.
-            let attr = [u32::MAX, RATE * 4 * 60 / 1000, u32::MAX, u32::MAX, u32::MAX];
+            // pa_buffer_attr { maxlength, tlength, prebuf, minreq, fragsize }. La coda è lunga
+            // (`ALTAIR_AUDIO_MS`, 200 ms): con 60 ms il sink di WSLg rallenta fino a un quinto
+            // del tempo reale, per tutti i programmi.
+            let ms = std::env::var("ALTAIR_AUDIO_MS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(200).clamp(20, 2000);
+            let attr = [u32::MAX, RATE * 4 / 1000 * ms, u32::MAX, u32::MAX, u32::MAX];
             let mut err = 0;
             let handle = new(std::ptr::null(), c"altair".as_ptr(), 1, std::ptr::null(), c"Assassin's Creed".as_ptr(), spec.as_ptr(), std::ptr::null(), attr.as_ptr(), &mut err);
             if handle.is_null() {

@@ -67,6 +67,8 @@ cargo build --release                      # produce target/release/altair
 .venv/bin/python tools/difftest.py "$AC1/AssassinsCreed_Dx9.exe"   # da rifare dopo ogni modifica al traduttore
 tools/build-image.sh                       # rigenera e ricompila l'immagine tradotta (incrementale)
 tools/run.sh [--trace]                     # avvia il gioco tradotto; si ferma al primo import mancante
+tools/gioca.sh                             # lo stesso, in una finestra con tastiera, mouse e audio
+tools/avvia.sh --partita; tools/ctl.sh "shot a.png"   # in background, pilotato da comandi (run/ctl/)
 ```
 
 Ogni istruzione nuova nel traduttore va accompagnata da uno scenario nel test differenziale.

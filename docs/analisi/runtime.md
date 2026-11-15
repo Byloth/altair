@@ -186,10 +186,27 @@ flussi, la miscelazione finale la fa DirectSound. Quindi:
 - `ALTAIR_AUDIO=0` spegne l'uscita; `ALTAIR_AUDIO_DUMP=file.raw` salva il miscelato
   (S16LE, 48 kHz, stereo).
 
-Misurato: nel menu il miscelato ha picchi intorno a 15.000 su 32.767, quindi il gioco decodifica
-e suona davvero. Il server PulseAudio di WSLg, senza una finestra aperta, consuma a singhiozzo
-(circa un sesto del tempo reale): da riprovare con la finestra vera. Non fatto: suono 3D
-(posizione, distanza), EAX.
+Misurato: nel menu e nel laboratorio il miscelato ha picchi tra 15.000 e 30.000 su 32.767 per
+tutti i 400 secondi di una sessione, quindi il gioco decodifica e suona davvero (musica, voci,
+ambiente). Non fatto: suono 3D (posizione, distanza), EAX.
+
+**L'uscita su PulseAudio non è verificata a orecchio, e in WSLg si è comportata male.** Fatti
+osservati la notte del 2026-11-15, senza nessuno ad ascoltare:
+
+- con il gioco in esecuzione `pa_simple_write` accetta circa un quinto del tempo reale (il
+  mixer scarta il resto: "uscita in ritardo: N blocchi scartati"), con o senza finestra
+  aperta, con coda di 60 o di 200 ms;
+- nello stesso momento anche un altro programma (`ffmpeg -f pulse`) va a rilento; a gioco
+  chiuso, o con `ALTAIR_AUDIO=0`, `ffmpeg` torna veloce;
+- dopo vari avvii e arresti il server ha smesso di rispondere (`pa_simple_new` fallisce con
+  errore 8, timeout). Il server gira nella distribuzione di sistema di WSLg: da qui non si
+  riavvia; da Windows, `wsl --shutdown`.
+
+Ipotesi non verificate: il sink RDP di WSLg consuma solo quando il client RDP sta davvero
+riproducendo; oppure il nostro modo di scrivere (blocchi da 10 ms in tempo reale) lo mette in
+crisi. Il gioco non ne risente in nessun caso: i cursori li muove il mixer, e l'uscita sta in
+un thread suo. Se il suono non si sente o gracchia: `ALTAIR_AUDIO=0`, e questa sezione è il
+punto da cui ripartire (alternative: API asincrona di PulseAudio, ALSA, uscita su file).
 
 ## Video Bink
 
@@ -224,7 +241,15 @@ dimensione della finestra. Gli eventi si accumulano in uno stato condiviso:
   e messaggi `WM_MOUSEMOVE`, `WM_xBUTTONDOWN/UP`;
 - chiusura della finestra → uscita immediata del processo.
 
-Senza la variabile tutto resta fuori schermo, come prima.
+Senza la variabile tutto resta fuori schermo, come prima. `tools/gioca.sh` la imposta.
+
+Stato delle verifiche: la finestra si apre via **Wayland** (WSLg) e mostra il gioco; i tasti
+del canale di comando funzionano anche con la finestra aperta. La tastiera e il mouse **veri
+non sono stati provati**: di notte non c'era nessuno a premere tasti, e non c'è modo di
+iniettarli (su X11, dove esisterebbe XTEST, a winit manca `libxkbcommon-x11.so` e la finestra
+non si apre: in quel caso il runtime prosegue fuori schermo). Il gioco legge il mouse come
+stato immediato `DIMOUSESTATE2` (20 byte) a ogni fotogramma, e all'avvio enumera gli oggetti
+dei dispositivi con `EnumObjects`: per il mouse elenchiamo tre assi e otto pulsanti.
 
 ## Cosa ha insegnato
 

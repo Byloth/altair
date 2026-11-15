@@ -79,6 +79,40 @@ fn dev_get_device_state(rt: &mut Runtime, c: &mut Call) -> u32 {
     }
     0
 }
+/// `EnumObjects(callback, contesto, flag)`: per il mouse, tre assi relativi e otto pulsanti,
+/// come li descrive `c_dfDIMouse2`. La callback è codice del gioco. La tastiera non elenca
+/// nulla: il gioco la legge comunque per codice DIK.
+fn dev_enum_objects(c: &mut Call) -> u32 {
+    let (dev, callback, context) = (c.arg(0), c.arg(1), c.arg(2));
+    let Some(item) = crate::win32::with_runtime(|rt| (dev == rt.mouse && callback != 0).then(|| rt.halloc(0x140, true))) else { return 0 };
+    const AXIS: [u8; 16] = [0xe0, 0x02, 0x6d, 0xa3, 0xf3, 0xc9, 0xcf, 0x11, 0xbf, 0xc7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00];
+    let mut objects: Vec<([u8; 16], u32, u32, String)> = Vec::new();
+    for (i, name) in ["X-axis", "Y-axis", "Wheel"].iter().enumerate() {
+        let mut guid = AXIS;
+        guid[0] += i as u8; // GUID_XAxis, GUID_YAxis, GUID_ZAxis
+        objects.push((guid, 4 * i as u32, 0x01 | (i as u32) << 8, name.to_string())); // DIDFT_RELAXIS
+    }
+    for i in 0..8u32 {
+        let mut guid = AXIS;
+        guid[0] = 0xf0; // GUID_Button
+        objects.push((guid, 12 + i, 0x04 | (3 + i) << 8, format!("Button {i}"))); // DIDFT_PSHBUTTON
+    }
+    for (guid, offset, kind, name) in objects {
+        // DIDEVICEOBJECTINSTANCEA: dwSize, guidType, dwOfs, dwType, dwFlags, tszName[260], …
+        c.mem.fill(item, 0x140, 0);
+        c.mem.w32(item, 0x13c);
+        c.mem.write(item + 4, &guid);
+        c.mem.w32(item + 20, offset);
+        c.mem.w32(item + 24, kind);
+        c.mem.write_cstr(item + 32, name.as_bytes());
+        if crate::win32::call_guest(c, callback, &[item, context]) == 0 {
+            break; // DIENUM_STOP
+        }
+    }
+    crate::win32::with_runtime(|rt| rt.hfree(item));
+    0
+}
+
 /// Dati bufferizzati: nessun evento.
 fn dev_get_device_data(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.mem.w32(c.arg(3), 0);
@@ -114,7 +148,7 @@ static DEVICE: &[Method] = &[
     ("AddRef", 1, Some(L(com::add_ref))),
     ("Release", 1, Some(L(com::release))),
     ("GetCapabilities", 2, Some(L(dev_get_capabilities))),
-    ("EnumObjects", 4, Some(L(com::ok))),
+    ("EnumObjects", 4, Some(Shim::F(dev_enum_objects))),
     ("GetProperty", 3, None),
     ("SetProperty", 3, Some(L(com::ok))),
     ("Acquire", 1, Some(L(com::ok))),

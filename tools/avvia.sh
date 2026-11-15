@@ -9,7 +9,7 @@ export GALLIUM_DRIVER="${GALLIUM_DRIVER:-d3d12}" LD_LIBRARY_PATH="${LD_LIBRARY_P
 mkdir -p run/ctl
 if pgrep -f "^target/release/altair-run" >/dev/null; then ALTAIR_CTL_WAIT=100 tools/ctl.sh quit >/dev/null 2>&1 || pkill -f "^target/release/altair-run" || true; sleep 1; fi
 rm -f run/ctl/stato run/ctl/cmd
-ALTAIR_CTL=run/ctl ALTAIR_AUDIO_DUMP="${ALTAIR_AUDIO_DUMP:-run/ctl/audio.raw}" setsid nohup tools/run.sh > run/ctl/log.txt 2>&1 < /dev/null &
+ALTAIR_STATS=1 ALTAIR_CTL=run/ctl ALTAIR_AUDIO_DUMP="${ALTAIR_AUDIO_DUMP:-run/ctl/audio.raw}" setsid nohup tools/run.sh > run/ctl/log.txt 2>&1 < /dev/null &
 [ "${1:-}" = "--partita" ] || exit 0
 # Dopo i loghi parte il filmato introduttivo: lo si salta con Invio, poi si aspetta il titolo.
 until tools/ctl.sh 2>/dev/null | grep -q "video=DemoIntro"; do sleep 1; done

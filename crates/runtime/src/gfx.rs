@@ -89,6 +89,7 @@ pub struct Gfx {
     stale: std::collections::HashSet<u32>,
     flushes: u64,
     uploaded: u64,
+    prof: [std::time::Duration; 8],
     /// Bind group delle texture già creati, per (stadio, texture e stati dei campionatori).
     groups: HashMap<Vec<[u32; 9]>, wgpu::BindGroup>,
     /// Ultimo blocco di costanti scritto per vertex e pixel shader, con il suo offset.
@@ -330,6 +331,7 @@ impl Gfx {
             stale: Default::default(),
             flushes: 0,
             uploaded: 0,
+            prof: Default::default(),
             groups: HashMap::new(),
             consts_last: Default::default(),
             consts_tmp: Vec::new(),
@@ -439,11 +441,13 @@ impl Gfx {
     }
 
     fn flush(&mut self) {
+        let start = std::time::Instant::now();
         self.end_pass();
         if let Some(e) = self.encoder.take() {
             self.queue.submit([e.finish()]);
             self.flushes += 1;
         }
+        self.prof[7] += start.elapsed();
         self.ubuf_off = 0;
         self.scratch_off = 0;
         self.consts_last[0].1 = None;
@@ -456,6 +460,13 @@ impl Gfx {
     /// Contatori dall'ultima lettura: (invii alla GPU, byte di buffer caricati).
     pub fn take_stats(&mut self) -> (u64, u64) {
         (std::mem::take(&mut self.flushes), std::mem::take(&mut self.uploaded))
+    }
+
+    /// Tempo passato nelle fasi di un draw dall'ultima lettura, in millisecondi: buffer,
+    /// dichiarazione e shader, bind group, apertura del pass, pipeline, costanti, comandi del
+    /// pass; per ultimo l'invio alla GPU.
+    pub fn take_profile(&mut self) -> [f64; 8] {
+        std::mem::take(&mut self.prof).map(|d| d.as_secs_f64() * 1000.0)
     }
 
     fn view_of(&self, d: &D3d, surface: u32) -> Option<(wgpu::TextureView, wgpu::TextureFormat, u32, u32)> {
@@ -830,6 +841,14 @@ impl Gfx {
         if self.ubuf_off + 2 * CONSTS_SLOT > UBUF_SIZE || self.scratch_off + (4 << 20) > SCRATCH_SIZE {
             self.flush();
         }
+        let mut mark = std::time::Instant::now();
+        macro_rules! lap {
+            ($i:expr) => {{
+                let now = std::time::Instant::now();
+                self.prof[$i] += now - mark;
+                mark = now;
+            }};
+        }
         let (vs, ps, decl) = (d.vshader, d.pshader, d.decl);
         if vs == 0 || ps == 0 || decl == 0 {
             return self.skip("senza shader o dichiarazione (pipeline fissa)");
@@ -882,6 +901,7 @@ impl Gfx {
             None
         };
 
+        lap!(0);
         // Dichiarazione dei vertici: attributi e scala per tipo.
         let Some(Res::Decl { elements }) = d.res.get(&decl) else { return self.skip("dichiarazione sconosciuta") };
         let mut attrs: [Vec<wgpu::VertexAttribute>; 4] = Default::default();
@@ -938,11 +958,14 @@ impl Gfx {
         if (0..4).any(|s| !attrs[s].is_empty() && vbs[s].is_none()) {
             return self.skip("flusso di vertici senza buffer");
         }
+        lap!(1);
         let ps_group = self.tex_group(d, &ps_samplers, 0, wgpu::ShaderStages::FRAGMENT);
         let vs_group = self.tex_group(d, &vs_samplers, 257 - 0x100, wgpu::ShaderStages::VERTEX);
         let (Some(ps_group), Some(vs_group)) = (ps_group, vs_group) else { return self.skip("texture usata anche come render target") };
 
+        lap!(2);
         let Some((colors, depth_format)) = self.begin_pass(d) else { return self.skip("render target non utilizzabile") };
+        lap!(3);
 
         // Da 14 in poi: stencil (52 attivo, 53-56 fronte, 58/59 maschere, 185 due facce,
         // 186-189 retro) e scostamento di profondità (195 costante, 175 pendenza; sono float).
@@ -1043,11 +1066,13 @@ impl Gfx {
         }
         let Some(pipeline) = self.pipelines[&key].clone() else { return self.skip("pipeline rifiutata da wgpu") };
 
+        lap!(4);
         let (w, h) = self.pass_size;
         let half = [1.0 / w as f32, -1.0 / h as f32, rs(24, 0) as f32 / 255.0, 0.0];
         let vs_off = self.write_consts(0, &d.vs_f, &d.vs_i, d.vs_b, half);
         let ps_off = self.write_consts(1, &d.ps_f, &d.ps_i, d.ps_b, half);
 
+        lap!(5);
         let pass = self.pass.as_mut().unwrap();
         pass.set_pipeline(&pipeline);
         // D3DRS_BLENDFACTOR (193), in formato ARGB.
@@ -1089,6 +1114,8 @@ impl Gfx {
             (None, None) => pass.draw(start..start + vcount, 0..1),
         }
         self.drawn += 1;
+        lap!(6);
+        let _ = mark;
     }
 
     /// `StretchRect` e simili: copia una superficie su un'altra, scalando.

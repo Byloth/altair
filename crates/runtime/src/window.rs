@@ -37,6 +37,7 @@ pub struct State {
 }
 
 static WINDOW: OnceLock<Arc<Window>> = OnceLock::new();
+static FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(|| {
     Mutex::new(State { keys: [0; 256], events: VecDeque::new(), cursor: (SCREEN.0 / 2, SCREEN.1 / 2), motion: (0, 0, 0), buttons: [false; 8], raw_motion: false, last_cursor: None })
 });
@@ -57,6 +58,9 @@ pub fn window() -> Option<Arc<Window>> {
     for _ in 0..1000 {
         if let Some(w) = WINDOW.get() {
             return Some(w.clone());
+        }
+        if FAILED.load(std::sync::atomic::Ordering::Relaxed) {
+            return None;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
@@ -184,18 +188,21 @@ impl ApplicationHandler for App {
     }
 }
 
-/// Il ciclo degli eventi: occupa il thread principale fino alla fine del processo.
+/// Il ciclo degli eventi: occupa il thread principale fino alla fine del processo. Se il
+/// server grafico non c'è o winit non riesce a usarlo (su X11 gli serve `libxkbcommon-x11`,
+/// che in WSL può mancare; su Wayland no), il gioco prosegue fuori schermo.
 pub fn run() -> ! {
-    match EventLoop::new() {
-        Ok(el) => {
-            let _ = el.run_app(&mut App);
-        }
-        Err(e) => {
-            eprintln!("[finestra] nessun server grafico ({e}): si prosegue fuori schermo");
-            loop {
-                std::thread::park();
-            }
-        }
+    let outcome = std::panic::catch_unwind(|| match EventLoop::new() {
+        Ok(el) => el.run_app(&mut App).map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    });
+    match outcome {
+        Ok(Ok(())) => std::process::exit(0),
+        Ok(Err(e)) => eprintln!("[finestra] nessuna finestra ({e}): si prosegue fuori schermo"),
+        Err(_) => eprintln!("[finestra] winit non riesce ad aprire la finestra: si prosegue fuori schermo"),
     }
-    std::process::exit(0)
+    FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
+    loop {
+        std::thread::park();
+    }
 }
