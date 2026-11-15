@@ -554,7 +554,7 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
     let makefile = format!(
         "# Generato da `altair image`. Uso: make -j$(nproc)   oppure   make -j$(nproc) CC=gcc TAG=gcc\n\
          CC = clang\n\
-         OPT = -O1\n\
+         OPT = -O2\n\
          TAG = $(CC)\n\
          RUNTIME := {rt}\n\
          CFLAGS := $(OPT) -fwrapv -fno-strict-aliasing -fno-math-errno -ffp-contract=off -fPIC -w -I$(RUNTIME)\n\

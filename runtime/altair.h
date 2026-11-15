@@ -63,6 +63,17 @@ struct Ctx {
 };
 
 typedef void (*AltairFn)(Ctx *c);
+
+/* Ogni funzione tradotta riceve `Ctx *ALTAIR_RESTRICT c`. Con `restrict` il compilatore sa che
+   le scritture nella memoria guest (`c->mem`, un puntatore a byte che altrimenti può
+   sovrapporsi a tutto) non toccano i registri in `*c`, e può tenerli nei registri host tra
+   una scrittura e l'altra invece di rileggerli ogni volta. La memoria guest non contiene mai
+   il contesto, quindi la promessa è vera. -DALTAIR_NO_RESTRICT la toglie, per confronto. */
+#ifdef ALTAIR_NO_RESTRICT
+#define ALTAIR_RESTRICT
+#else
+#define ALTAIR_RESTRICT restrict
+#endif
 typedef struct {
     u32 addr;
     AltairFn fn;

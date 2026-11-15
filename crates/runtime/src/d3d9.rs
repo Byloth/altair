@@ -446,15 +446,19 @@ fn dev_present(rt: &mut Runtime, _: &mut Call) -> u32 {
     if since.as_secs() >= 5 {
         let frames = (d.frames - d.stats_frame).max(1);
         let gfx_ms = d.gfx_time.as_secs_f64() * 1000.0 / frames as f64;
+        // Tempo di questo thread negli shim (renderer compreso): il resto del fotogramma è il gioco.
+        let shim_ms = crate::win32::take_shim_ms() / frames as f64;
         let draws = (d.draws - d.stats_draws) / frames;
         let mut gpu = (0, 0);
         let mut prof = String::new();
         if let Some(g) = rt.gfx.as_mut() {
             gpu = g.take_stats();
             prof = g.take_profile().iter().map(|ms| format!("{:.1}", ms / frames as f64)).collect::<Vec<_>>().join("/");
+            let (end, finish) = g.take_submit_split();
+            prof += &format!(" (invio: chiusura del pass {:.1}, finish {:.1})", end / frames as f64, finish / frames as f64);
         }
         let d = &mut rt.d3d;
-        d.last_stats = format!("{:.1} fps, {draws} draw, {gfx_ms:.1} ms nel renderer, {} invii e {} KB di buffer per fotogramma; fasi {prof}", frames as f64 / since.as_secs_f64(), gpu.0 / frames, gpu.1 / frames / 1024);
+        d.last_stats = format!("{:.1} fps, {draws} draw, {gfx_ms:.1} ms nel renderer, {shim_ms:.1} negli shim, {} invii e {} KB di buffer per fotogramma; fasi {prof}", frames as f64 / since.as_secs_f64(), gpu.0 / frames, gpu.1 / frames / 1024);
         if std::env::var_os("ALTAIR_STATS").is_some() {
             eprintln!("[d3d] fotogramma {}: {}", d.frames, d.last_stats);
         }

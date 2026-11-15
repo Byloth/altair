@@ -294,7 +294,31 @@ pub fn call_guest(c: &mut Call, addr: u32, args: &[u32]) -> u32 {
     c.ctx.eax
 }
 
+/// Contatore di tempo economico (il TSC): `host_call` lo legge due volte per chiamata.
+#[inline]
+fn ticks() -> u64 {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        core::arch::x86_64::_rdtsc()
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    0
+}
+
+/// Tempo passato negli shim dal thread corrente dall'ultima lettura, in millisecondi.
+/// Serve a separare, in un fotogramma, il costo del runtime da quello del codice del gioco.
+pub fn take_shim_ms() -> f64 {
+    static PER_MS: OnceLock<f64> = OnceLock::new();
+    let per_ms = *PER_MS.get_or_init(|| {
+        let (t0, c0) = (std::time::Instant::now(), ticks());
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        (ticks().wrapping_sub(c0) as f64 / (t0.elapsed().as_secs_f64() * 1000.0)).max(1.0)
+    });
+    SHIM_TICKS.with(|t| t.replace(0)) as f64 / per_ms
+}
+
 thread_local! {
+    static SHIM_TICKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// Impostato da `ExitThread`: la trap che segue è un'uscita normale del thread.
     static EXITING: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
 }
@@ -321,16 +345,13 @@ pub unsafe extern "C" fn host_call(ctx: *mut Ctx, addr: u32) -> i32 {
         let args: Vec<String> = (0..nargs).map(|i| format!("{:#x}", call.arg(i))).collect();
         eprintln!("[t{:x} {:#010x}] {name}({})", mem.r32(call.teb() + 0x24), call.ret_addr(), args.join(", "));
     }
+    found.count.fetch_add(1, Ordering::Relaxed);
+    let start = ticks();
     let eax = match shim {
-        L(f) => {
-            found.count.fetch_add(1, Ordering::Relaxed);
-            f(&mut rt(), &mut call)
-        }
-        F(f) => {
-            found.count.fetch_add(1, Ordering::Relaxed);
-            f(&mut call)
-        }
+        L(f) => f(&mut rt(), &mut call),
+        F(f) => f(&mut call),
     };
+    SHIM_TICKS.with(|t| t.set(t.get() + ticks().wrapping_sub(start)));
     if EXITING.with(|e| e.get()).is_some() {
         return 1;
     }

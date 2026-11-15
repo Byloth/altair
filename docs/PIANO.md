@@ -188,7 +188,9 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
   scostare i passanti, alto profilo): barra di sincronia da 1 a 4
 - [ ] Completare il tutorial dell'Animus e arrivare a Masyaf: serve giocare davvero
 - [x] Nomi dei tasti nei messaggi del tutorial: `EnumObjects` in UTF-16, tasti della tastiera compresi
-- [ ] Scena con la folla a 9 fps (3.800 draw): costo dell'invio e del gioco stesso
+- [x] Folla: gioco tradotto quasi due volte più veloce (`-O2`, `restrict`): da 9 a 12 fps
+- [ ] Folla: l'invio dei draw (34 ms) è nel driver OpenGL-su-D3D12 di WSL; da rimisurare su
+  un sistema con Vulkan o D3D12 nativi prima di ottimizzare oltre
 - [x] Canale di comando per pilotare il gioco mentre gira (`ALTAIR_CTL`, `tools/avvia.sh`, `tools/ctl.sh`)
 - [x] Finestra vera (`ALTAIR_WINDOW=1`, `tools/gioca.sh`): si apre via Wayland e mostra il gioco
 - [ ] Tastiera e mouse veri nella finestra: provata tutta la strada tranne il primo tratto

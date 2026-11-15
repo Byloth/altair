@@ -350,7 +350,7 @@ impl Emitter<'_> {
         let mut out = String::new();
         let mut fmt = IntelFormatter::new();
         let mut text = String::new();
-        writeln!(out, "void {}(Ctx *c) {{", fn_name(f.start)).unwrap();
+        writeln!(out, "void {}(Ctx *ALTAIR_RESTRICT c) {{", fn_name(f.start)).unwrap();
         out.push_str("    u32 cf = 0, zf = 0, sf = 0, of = 0, pf = 0, af = 0;\n");
         let keys: Vec<u32> = f.insns.keys().copied().collect();
         if keys.first() != Some(&f.start) {

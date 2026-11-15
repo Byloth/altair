@@ -56,6 +56,20 @@ struct PipeKey {
     states: [u32; 30],
 }
 
+/// Lo stato già impostato nel pass aperto.
+#[derive(Default)]
+struct PassState {
+    pipeline: Option<wgpu::RenderPipeline>,
+    blend: Option<u32>,
+    consts: Option<(u32, u32)>,
+    groups: [Option<wgpu::BindGroup>; 2],
+    stencil: Option<u32>,
+    scissor: Option<[u32; 4]>,
+    viewport: Option<[u32; 6]>,
+    vbs: [Option<(wgpu::Buffer, u64)>; 5],
+    index: Option<(wgpu::Buffer, u64, bool)>,
+}
+
 pub struct Gfx {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -94,7 +108,11 @@ pub struct Gfx {
     stale: std::collections::HashSet<u32>,
     flushes: u64,
     uploaded: u64,
+    /// Ciò che il pass aperto ha già impostato, per non ripeterlo.
+    last: PassState,
     prof: [std::time::Duration; 8],
+    prof_end: std::time::Duration,
+    prof_finish: std::time::Duration,
     /// Bind group delle texture già creati, per (stadio, texture e stati dei campionatori).
     groups: HashMap<Vec<[u32; 9]>, wgpu::BindGroup>,
     /// Ultimo blocco di costanti scritto per vertex e pixel shader, con il suo offset.
@@ -342,7 +360,10 @@ impl Gfx {
             stale: Default::default(),
             flushes: 0,
             uploaded: 0,
+            last: Default::default(),
             prof: Default::default(),
+            prof_end: Default::default(),
+            prof_finish: Default::default(),
             groups: HashMap::new(),
             consts_last: Default::default(),
             consts_tmp: Vec::new(),
@@ -448,12 +469,14 @@ impl Gfx {
 
     fn end_pass(&mut self) {
         self.pass = None;
+        self.last = Default::default();
         self.pass_key = ([0; 4], 0);
     }
 
     fn flush(&mut self) {
         let start = std::time::Instant::now();
         self.end_pass();
+        self.prof_end += start.elapsed();
         if !self.ubuf_cpu.is_empty() {
             self.queue.write_buffer(&self.ubuf, 0, &self.ubuf_cpu);
             self.ubuf_cpu.clear();
@@ -463,7 +486,10 @@ impl Gfx {
             self.scratch_cpu.clear();
         }
         if let Some(e) = self.encoder.take() {
-            self.queue.submit([e.finish()]);
+            let t = std::time::Instant::now();
+            let commands = e.finish();
+            self.prof_finish += t.elapsed();
+            self.queue.submit([commands]);
             self.flushes += 1;
         }
         self.prof[7] += start.elapsed();
@@ -503,6 +529,11 @@ impl Gfx {
     /// pass; per ultimo l'invio alla GPU.
     pub fn take_profile(&mut self) -> [f64; 8] {
         std::mem::take(&mut self.prof).map(|d| d.as_secs_f64() * 1000.0)
+    }
+
+    /// Dentro l'invio: chiusura del pass (wgpu valida e traduce i comandi) e `finish`.
+    pub fn take_submit_split(&mut self) -> (f64, f64) {
+        (std::mem::take(&mut self.prof_end).as_secs_f64() * 1000.0, std::mem::take(&mut self.prof_finish).as_secs_f64() * 1000.0)
     }
 
     fn view_of(&self, d: &D3d, surface: u32) -> Option<(wgpu::TextureView, wgpu::TextureFormat, u32, u32)> {
@@ -1133,41 +1164,80 @@ impl Gfx {
         let ps_off = self.write_consts(1, &d.ps_f, &d.ps_i, d.ps_b, half);
 
         lap!(5);
+        // Ogni comando del pass costa all'invio (wgpu lo ripete a OpenGL, Mesa a D3D12): si
+        // manda solo ciò che è cambiato dal draw precedente dello stesso pass.
         let pass = self.pass.as_mut().unwrap();
-        pass.set_pipeline(&pipeline);
+        let last = &mut self.last;
+        if last.pipeline.as_ref() != Some(&pipeline) {
+            pass.set_pipeline(&pipeline);
+            last.pipeline = Some(pipeline);
+        }
         // D3DRS_BLENDFACTOR (193), in formato ARGB.
         let bf = rs(193, 0xffff_ffff);
-        pass.set_blend_constant(wgpu::Color { r: ((bf >> 16) & 0xff) as f64 / 255.0, g: ((bf >> 8) & 0xff) as f64 / 255.0, b: (bf & 0xff) as f64 / 255.0, a: (bf >> 24) as f64 / 255.0 });
-        pass.set_bind_group(0, &self.g0, &[vs_off, ps_off]);
-        pass.set_bind_group(1, &ps_group, &[]);
-        pass.set_bind_group(2, &vs_group, &[]);
-        pass.set_stencil_reference(rs(57, 0) & 0xff);
+        if last.blend != Some(bf) {
+            pass.set_blend_constant(wgpu::Color { r: ((bf >> 16) & 0xff) as f64 / 255.0, g: ((bf >> 8) & 0xff) as f64 / 255.0, b: (bf & 0xff) as f64 / 255.0, a: (bf >> 24) as f64 / 255.0 });
+            last.blend = Some(bf);
+        }
+        if last.consts != Some((vs_off, ps_off)) {
+            pass.set_bind_group(0, &self.g0, &[vs_off, ps_off]);
+            last.consts = Some((vs_off, ps_off));
+        }
+        if last.groups[0].as_ref() != Some(&ps_group) {
+            pass.set_bind_group(1, &ps_group, &[]);
+            last.groups[0] = Some(ps_group);
+        }
+        if last.groups[1].as_ref() != Some(&vs_group) {
+            pass.set_bind_group(2, &vs_group, &[]);
+            last.groups[1] = Some(vs_group);
+        }
+        let stencil = rs(57, 0) & 0xff;
+        if last.stencil != Some(stencil) {
+            pass.set_stencil_reference(stencil);
+            last.stencil = Some(stencil);
+        }
         // D3DRS_SCISSORTESTENABLE (174): il rettangolo vale solo quando è acceso.
         let sc = if rs(174, 0) != 0 { d.scissor } else { [0, 0, w, h] };
-        let (sx, sy) = (sc[0].min(w), sc[1].min(h));
-        pass.set_scissor_rect(sx, sy, sc[2].clamp(sx, w) - sx, sc[3].clamp(sy, h) - sy);
+        if last.scissor != Some(sc) {
+            let (sx, sy) = (sc[0].min(w), sc[1].min(h));
+            pass.set_scissor_rect(sx, sy, sc[2].clamp(sx, w) - sx, sc[3].clamp(sy, h) - sy);
+            last.scissor = Some(sc);
+        }
         let vp = d.viewport;
-        let (vx, vy) = (vp[0].min(w.saturating_sub(1)) as f32, vp[1].min(h.saturating_sub(1)) as f32);
-        let (vw, vh) = ((vp[2] as f32).min(w as f32 - vx).max(1.0), (vp[3] as f32).min(h as f32 - vy).max(1.0));
-        pass.set_viewport(vx, vy, vw, vh, f32::from_bits(vp[4]).clamp(0.0, 1.0), f32::from_bits(vp[5]).clamp(0.0, 1.0));
+        if last.viewport != Some(vp) {
+            let (vx, vy) = (vp[0].min(w.saturating_sub(1)) as f32, vp[1].min(h.saturating_sub(1)) as f32);
+            let (vw, vh) = ((vp[2] as f32).min(w as f32 - vx).max(1.0), (vp[3] as f32).min(h as f32 - vy).max(1.0));
+            pass.set_viewport(vx, vy, vw, vh, f32::from_bits(vp[4]).clamp(0.0, 1.0), f32::from_bits(vp[5]).clamp(0.0, 1.0));
+            last.viewport = Some(vp);
+        }
         let mut slot = 0;
+        let zero = (self.zero_vb.clone(), 0u64);
         for (s, vb) in vbs.iter().enumerate() {
             if attrs[s].is_empty() {
                 continue;
             }
-            match vb {
-                Some((b, off)) => pass.set_vertex_buffer(slot, b.slice(*off..)),
-                None => pass.set_vertex_buffer(slot, self.zero_vb.slice(..)),
+            let want = vb.as_ref().unwrap_or(&zero);
+            if last.vbs[slot].as_ref() != Some(want) {
+                pass.set_vertex_buffer(slot as u32, want.0.slice(want.1..));
+                last.vbs[slot] = Some(want.clone());
             }
             slot += 1;
         }
-        pass.set_vertex_buffer(slot, self.zero_vb.slice(..));
+        if last.vbs[slot].as_ref() != Some(&zero) {
+            pass.set_vertex_buffer(slot as u32, zero.0.slice(..));
+            last.vbs[slot] = Some(zero);
+        }
         match (indexed, fan) {
             (Some(base), _) => {
-                pass.set_index_buffer(ib.as_ref().map(|(b, off)| b.slice(*off..)).unwrap(), if index16 { wgpu::IndexFormat::Uint16 } else { wgpu::IndexFormat::Uint32 });
+                let (b, off) = ib.unwrap();
+                let want = (b, off, index16);
+                if last.index.as_ref() != Some(&want) {
+                    pass.set_index_buffer(want.0.slice(off..), if index16 { wgpu::IndexFormat::Uint16 } else { wgpu::IndexFormat::Uint32 });
+                    last.index = Some(want);
+                }
                 pass.draw_indexed(start..start + vcount, base, 0..1);
             }
             (None, Some(off)) => {
+                last.index = None;
                 pass.set_index_buffer(self.scratch.slice(off..off + prim_count as u64 * 6), wgpu::IndexFormat::Uint16);
                 pass.draw_indexed(0..prim_count * 3, start as i32, 0..1);
             }

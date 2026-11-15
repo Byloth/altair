@@ -76,3 +76,10 @@ il giorno prima è aggirato, e non ne emergono altri in questo campione.
 - Prestazioni non misurate. Il codice legge e scrive i registri nel contesto a ogni istruzione.
 - Restano i limiti della scoperta (`funzioni.md`): funzioni che non ritornano, tabelle delle
   eccezioni, flag nelle tail call tra funzioni spezzate.
+
+## Dal 2026-11-15: `-O2` e `restrict` predefiniti
+
+Il `Makefile` generato usa `OPT = -O2`, e ogni funzione riceve `Ctx *ALTAIR_RESTRICT c`
+(`restrict`, salvo `-DALTAIR_NO_RESTRICT`). Compilazione completa: 71 s con 28 processi.
+Effetto misurato nel gioco: il codice tradotto costa circa la metà (`d3d9.md`, "La folla").
+Test differenziale (`tools/difftest.py`): OK.

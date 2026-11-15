@@ -251,3 +251,8 @@ Fase 1, lettore `.forge`, e un **decodificatore Bink nostro** al posto di `ffmpe
 - **Nomi dei tasti**: la causa non era quella ipotizzata. Il gioco usa `IDirectInput8W`; i
   nomi vanno in UTF-16. Letta la callback `0x009091C0` nel C generato per capirlo. Ora
   "(Mouse destro)" compare nel messaggio del tutorial → `analisi/runtime.md`.
+- **Folla**: misurato chi paga. Metà era il gioco tradotto: con `-O2` e `Ctx *restrict` va
+  quasi il doppio (59 → 31 ms), test differenziale verde, ora predefiniti. L'altra metà è
+  l'invio OpenGL di Mesa su D3D12: non si muove né togliendo gli stati ripetuti né con
+  `mesa_glthread`. 9 → 12 fps nella folla, 45 → 55 nel laboratorio → `analisi/d3d9.md`.
+  Obiettivo dei 25 fps non raggiunto in WSL.
