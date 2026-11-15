@@ -35,22 +35,40 @@ static inline void wrf64(Ctx *c, u32 a, double v) { memcpy(c->mem + a, &v, 8); }
 /* Arrotondamento a intero secondo il campo RC della parola di controllo del guest (`frndint`,
  * `fist`). Niente `rintl`: quando l'operando nasce da un double il compilatore lo riduce a
  * `rint`, che arrotonda secondo MXCSR e ignora la modalità x87; il `floor` del CRT (che mette
- * RC verso il basso e poi usa `frndint`) restituiva così 12 per 11,5. `floorl`, `ceill` e
- * `truncl` non dipendono dalla modalità. */
-static inline f80 x87_rnd(Ctx *c, f80 x) {
-    switch ((c->fpcw >> 10) & 3) {
-    case 1: return floorl(x);
-    case 2: return ceill(x);
-    case 3: return truncl(x);
+ * RC verso il basso e poi usa `frndint`) restituiva così 12 per 11,5. Qui si decide leggendo RC e si
+ * arrotonda con operazioni che non dipendono da alcuna modalità. */
+/* Le versioni di libreria (`truncl`, `floorl`…) sono chiamate vere e lente: nella folla del
+ * tutorial `truncl` da sola era il 27% del thread di rendering (il `_ftol` del CRT mette RC a
+ * troncamento e fa `fistp`, migliaia di volte per fotogramma). Qui la conversione passa da un
+ * intero a 64 bit, che il compilatore fa sul posto; fuori da quell'intervallo un valore a 80
+ * bit è già intero (o infinito, o NaN) e resta com'è. */
+static inline f80 x87_trunc(f80 x) {
+    if (x > -9223372036854775808.0L && x < 9223372036854775808.0L) {
+        s64 i = (s64)x;
+        return i == 0 ? __builtin_copysignl(0.0L, x) : (f80)i;
     }
-    if (!(x == x) || x - x != 0) return x; /* NaN e infiniti */
-    f80 r = floorl(x), d = x - r;
-    if (d > 0.5L || (d == 0.5L && fmodl(r, 2.0L) != 0)) r += 1.0L;
-    return r == 0 ? copysignl(r, x) : r;
+    return x;
+}
+
+static inline f80 x87_rnd(Ctx *c, f80 x) {
+    f80 t = x87_trunc(x);
+    switch ((c->fpcw >> 10) & 3) {
+    case 1: return t > x ? t - 1.0L : t;
+    case 2: return t < x ? t + 1.0L : t;
+    case 3: return t;
+    }
+    /* Al più vicino, i mezzi al pari. Fuori dall'intervallo degli interi a 64 bit `t == x`. */
+    f80 d = x - t;
+    if (d < 0) d = -d;
+    if (d > 0.5L || (d == 0.5L && ((s64)t & 1))) {
+        f80 r = x < 0 ? t - 1.0L : t + 1.0L;
+        return r == 0 ? __builtin_copysignl(0.0L, x) : r;
+    }
+    return t;
 }
 
 static inline u64 x87_toi(Ctx *c, f80 x, int bits, int trunc) {
-    f80 r = trunc ? truncl(x) : x87_rnd(c, x);
+    f80 r = trunc ? x87_trunc(x) : x87_rnd(c, x);
     f80 lim = bits == 16 ? 32768.0L : bits == 32 ? 2147483648.0L : 9223372036854775808.0L;
     if (!(r >= -lim && r < lim))
         return 1ull << (bits - 1);
@@ -59,7 +77,7 @@ static inline u64 x87_toi(Ctx *c, f80 x, int bits, int trunc) {
 
 static inline f80 x87_scale(f80 x, f80 n) {
     if (n != n) return n;
-    f80 t = truncl(n);
+    f80 t = x87_trunc(n);
     return scalbnl(x, t > 40000 ? 40000 : t < -40000 ? -40000 : (int)t);
 }
 
