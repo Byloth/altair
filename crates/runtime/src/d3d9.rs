@@ -504,6 +504,12 @@ fn dev_set_render_target(rt: &mut Runtime, c: &mut Call) -> u32 {
     if let Some(slot) = rt.d3d.render_targets.get_mut(c.arg(1) as usize) {
         *slot = c.arg(2);
     }
+    // Cambiare il target 0 riporta il viewport a tutta la sua superficie.
+    if c.arg(1) == 0 {
+        if let Some(&Res::Surface { w, h, .. }) = rt.d3d.res.get(&c.arg(2)) {
+            rt.d3d.viewport = [0, 0, w, h, 0f32.to_bits(), 1f32.to_bits()];
+        }
+    }
     D3D_OK
 }
 fn dev_get_render_target(rt: &mut Runtime, c: &mut Call) -> u32 {

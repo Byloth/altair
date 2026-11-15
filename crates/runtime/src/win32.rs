@@ -42,6 +42,9 @@ pub struct Runtime {
     pub ds_buffers: HashMap<u32, crate::dsound::Buffer>,
     pub d3d: crate::d3d9::D3d,
     pub gfx: Option<crate::gfx::Gfx>,
+    /// Oggetto DirectInput della tastiera e copione dei tasti simulati: (da, a, codice DIK).
+    pub keyboard: u32,
+    pub key_script: Vec<(u64, u64, u8)>,
     start: Instant,
     cmdline: u32,
     env_a: u32,
@@ -163,6 +166,8 @@ impl Runtime {
             ds_buffers: HashMap::new(),
             d3d: Default::default(),
             gfx: None,
+            keyboard: 0,
+            key_script: Vec::new(),
             fs: fs::FsState::new(
                 std::path::Path::new(exe).parent().map(Into::into).unwrap_or_default(),
                 std::env::current_dir().unwrap_or_default().join("run").join("c"),

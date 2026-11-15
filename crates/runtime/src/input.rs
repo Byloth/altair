@@ -23,13 +23,40 @@ fn di_create_device(rt: &mut Runtime, c: &mut Call) -> u32 {
     };
     let obj = com::create(rt, "IDirectInputDevice8", DEVICE, 0);
     rt.mem.w32(c.arg(2), obj);
+    if name == "tastiera" {
+        rt.keyboard = obj;
+        rt.key_script = parse_keys();
+    }
     eprintln!("[input] dispositivo: {name}");
     0
 }
 
-/// Stato immediato: nessun tasto premuto, mouse fermo.
+/// `ALTAIR_KEYS="900:28,1200:30:5"`: al fotogramma 900 preme il tasto 28 (codici DIK di
+/// DirectInput: 28 Invio, 1 Esc, 57 Spazio, 200/208/203/205 frecce) per 10 fotogrammi, o per
+/// quanti indicati dopo il secondo `:`.
+fn parse_keys() -> Vec<(u64, u64, u8)> {
+    let Ok(spec) = std::env::var("ALTAIR_KEYS") else { return Vec::new() };
+    spec.split(',')
+        .filter_map(|item| {
+            let mut p = item.split(':').map(|v| v.trim().parse::<u64>().ok());
+            let (frame, key) = (p.next()??, p.next()??);
+            let hold = p.next().flatten().unwrap_or(10);
+            Some((frame, frame + hold, key as u8))
+        })
+        .collect()
+}
+
+/// Stato immediato: i tasti del copione per la tastiera, altrimenti nulla; mouse fermo.
 fn dev_get_device_state(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.mem.fill(c.arg(2), c.arg(1), 0);
+    if c.arg(0) == rt.keyboard && c.arg(1) >= 256 {
+        let frame = rt.d3d.frames;
+        for &(from, to, key) in &rt.key_script {
+            if (from..to).contains(&frame) {
+                rt.mem.w8(c.arg(2) + key as u32, 0x80);
+            }
+        }
+    }
     0
 }
 /// Dati bufferizzati: nessun evento.
