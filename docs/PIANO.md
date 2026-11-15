@@ -144,7 +144,7 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
   funzioni identiche su 19.043 candidate, 0 diverse
 - [ ] Lettore `.forge` in Rust (portato da `tools/forge.py`) e inventario completo delle classi
 
-## Fase 2 · Runtime Win32 (in corso)
+## Fase 2 · Runtime Win32 (gate raggiunto il 2026-11-15)
 
 **Gate:** il gioco ricompilato parte, inizializza il CRT e apre i `.forge`. Stato in
 `analisi/runtime.md`.
@@ -155,9 +155,11 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 - [x] File e percorsi (cartella del gioco in sola lettura, il resto in `run/c/`)
 - [x] Registro (vuoto), file INI (solo valori predefiniti), `USER32` senza schermo, tempo
 - [x] Avvio del CRT, inizializzatori statici, `WinMain`, 8 thread del motore
-- [ ] Oggetti COM come vtable di funzioni host
-- [ ] DirectSound muto: senza, il gioco chiama un oggetto nullo dopo il suo messaggio d'errore
-- [ ] Apertura dei `.forge` (il gate)
+- [x] Oggetti COM come vtable di funzioni host
+- [x] DirectSound muto, DirectInput e XInput senza dispositivi, Bink assente
+- [x] **Apertura dei `.forge`** (il gate): `DataPC_Common`, `DataPC`, `DataPC_StreamedSounds`
+- [x] Il gioco crea la finestra e chiama `Direct3DCreate9`: confine con la Fase 3
+- [ ] Lingua del gioco (oggi inglese: cerca un archivio di voci che non c'è)
 - [ ] SEH ed eccezioni C++; file INI veri; `WaitForMultipleObjects` con attesa di tutti
 - [ ] Proteggere la prima pagina dello spazio guest, per vedere subito i puntatori nulli
 
@@ -165,6 +167,8 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 **Gate:** menu e tutorial nell'Animus giocabili.
 
+- [ ] `IDirect3D9` e device "registratore": contano metodi, formati e shader senza disegnare
+- [ ] Verificare l'uso della GPU da WSL con wgpu
 - [ ] D3D9 su wgpu: device, stati, risorse, formati, render target
 - [ ] Traduttore shader SM2/SM3 → WGSL
 - [ ] Video Bink, DirectSound (EAX opzionale), DirectInput, XInput
@@ -203,7 +207,7 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 ## Prossimi passi concreti
 
-1. **Fase 2**: oggetti COM e DirectSound muto, poi avanti fino all'apertura dei `.forge`.
+1. **Fase 3**: `IDirect3D9` e device registratore, per censire ciò che il gioco chiede.
 2. Lettore `.forge` in Rust.
 3. Punti aperti della Fase 1: scenari mirati per le istruzioni non verificate, limiti della
    scoperta.

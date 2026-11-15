@@ -40,7 +40,10 @@ ferma dicendo quale import serve e da dove è stato chiamato. È il ciclo di lav
 | `win32.rs` | meccanismo degli shim; KERNEL32: processo, memoria, TLS, sezioni critiche, attese, thread |
 | `sync.rs` | eventi, semafori, thread come oggetti su cui aspettare |
 | `fs.rs` | percorsi di Windows e API sui file |
-| `system.rs` | COM, registro, file INI, data e ora, rete, audio (assenti) |
+| `com.rs` | oggetti COM: vtable in memoria guest i cui slot sono funzioni host |
+| `dsound.rs` | DirectSound 8 muto |
+| `input.rs` | DirectInput 8 e XInput senza dispositivi |
+| `system.rs` | registro, file INI, data e ora, rete, Bink, numeri casuali |
 | `user32.rs` | una finestra senza schermo |
 
 Scelte fatte:
@@ -56,32 +59,47 @@ Scelte fatte:
   viene rifiutata e segnalata). Il resto di `C:\` vive in `run/c/` nel progetto, ignorata da
   git. Nomi senza distinzione tra maiuscole e minuscole.
 - **Versione di Windows dichiarata**: XP SP3 (5.1.2600), un processore.
+- **Oggetti COM**: `[vtable][riferimenti][dati]` in memoria guest; ogni interfaccia dichiara
+  tutti i suoi metodi con il numero di argomenti, e quelli non implementati fermano il gioco
+  dicendo quale serve ("METODO COM MANCANTE: IDirectSoundBuffer8::SetFX").
+- **Audio**: un DirectSound che accetta tutto e non suona. I buffer esistono in memoria guest
+  e il cursore di riproduzione avanza con l'orologio, così il mixer del gioco tiene il ritmo.
+  EAX risulta assente.
+- **Input**: tastiera e mouse esistono ma non vengono mai toccati; nessun controller.
+- **Video**: `BinkOpen` fallisce, i filmati vengono saltati.
+- **Memoria virtuale**: le zone di `VirtualAlloc` sono tracciate, perché il motore chiede a
+  `VirtualQuery` quanto è grande una zona prima di liberarla.
+- **Letture sovrapposte**: eseguite subito; l'evento di completamento viene segnalato.
 - **Eccezioni**: nessun SEH. `RaiseException` gestisce solo l'eccezione con cui MSVC dà un nome
   ai thread; ogni altra ferma tutto.
 
 ## Dove arriva oggi
 
-Con 170 shim (108 in `win32.rs`, 31 in `system.rs`, 31 in `user32.rs`), senza alcuna modifica
-al codice tradotto:
+Con 234 shim di import e 87 metodi COM, senza alcuna modifica al codice tradotto:
 
 1. **L'avvio del CRT** completo: heap, TLS, ambiente, locale, riga di comando.
 2. **Tutti gli inizializzatori statici** del motore.
-3. **`WinMain`**: il gioco chiede Game Explorer di Vista (`CoCreateInstance`, classe non
-   registrata), installa l'hook della tastiera, legge le cartelle speciali.
-4. **Crea i suoi thread**: `Loading`, `TaskThread1` e altri, 8 in tutto, che girano davvero.
-5. **Inizializza l'audio**: enumera i dispositivi, prova `EAXDirectSoundCreate8` e
-   `DirectSoundCreate8`.
+3. **`WinMain`**: Game Explorer di Vista (assente), hook della tastiera, cartelle speciali.
+4. **I thread del motore**: `Loading`, `TaskThread1`, `Gear::AsynchDevice` e altri, 8 in tutto.
+5. **L'audio**: `EAXDirectSoundCreate8` fallisce, `DirectSoundCreate8` riesce; il thread del
+   mixer gira e scrive nei buffer (circa 90 `Lock`/`Unlock` al secondo).
+6. **I `.forge`**: apre `DataPC_Common.forge`, `DataPC.forge` e `DataPC_StreamedSounds.forge`
+   con letture sovrapposte, e li legge dal thread di caricamento. **È il gate della fase.**
+7. **L'input**: crea DirectInput, mouse e tastiera, e li interroga dal ciclo principale.
+8. **La finestra**: registra la classe `ScimitarEngineWindowClass` (procedura `0x004013E3`) e
+   crea la finestra "Assassin's Creed" 1280x720, da un thread del motore.
+9. **Direct3D**: chiama `Direct3DCreate9(0x20)` da `0x00A0FD32`.
 
-Circa 1.000 chiamate a import nel thread principale. Le più frequenti, in una corsa tracciata:
-`EnterCriticalSection`/`LeaveCriticalSection` (14.500 ciascuna), `TlsGetValue` (6.200),
-`HeapSize` (485).
+**Si ferma lì**, in modo ripetibile (tre corse su tre): `Direct3DCreate9` non c'è. È il
+confine con la Fase 3. Circa 6.000 chiamate a import nel thread principale; nessun arresto
+anomalo prima.
 
-**Si ferma qui:** senza un dispositivo audio il gioco mostra il suo messaggio
-"Cannot initialize Sound Driver" e subito dopo chiama un metodo virtuale su un oggetto nullo
-(`0x007F3DBB`: `call edx` con l'oggetto restituito da `0x007EFFE0`). Sul Windows vero sarebbe
-un crash: il gioco originale non parte senza scheda audio. Serve quindi un DirectSound che
-funzioni, anche muto. **Il gate della fase (aprire i `.forge`) non è ancora raggiunto**: fino
-a qui il gioco non ha aperto nessun file.
+Cose notate lungo la strada:
+- Il gioco cerca `DataPC_StreamedSoundsEng.forge`, che in questa installazione non esiste
+  (c'è solo quello italiano): dichiariamo la lingua inglese. Da sistemare con la lingua vera.
+- Apre `videos\LoadingScreen.bik` direttamente come file, oltre che tramite Bink.
+- Senza dispositivo audio il gioco mostra "Cannot initialize Sound Driver" e poi chiama un
+  oggetto nullo: l'originale non parte senza scheda audio.
 
 ## Cosa ha insegnato
 
@@ -98,9 +116,18 @@ a qui il gioco non ha aperto nessun file.
 - La ricompilazione incrementale funziona: dopo la modifica alla scoperta sono stati
   riscritti 26 file su 242, e tutto è stato ricompilato in 10 secondi.
 
+- **`VirtualQuery` conta.** Con una risposta fissa ("una pagina") il motore, liberando un
+  blocco, calcolava male a quale allocatore appartenesse e chiamava un oggetto inesistente.
+  Trovarlo ha richiesto la traccia degli import e una nuova diagnostica: a ogni arresto il
+  runtime stampa le ultime 32 destinazioni di chiamate indirette del thread (`altair_trail`),
+  che mostrano il percorso anche attraverso le tail call.
+- **Letture sovrapposte.** Il thread di caricamento aspettava per sempre l'evento di
+  completamento di `ReadFile`: va segnalato anche se la lettura è già finita.
+
 ## Prossimi passi
 
-1. **Oggetti COM**: vtable in memoria guest i cui slot sono trampolini verso funzioni host,
-   con un arresto parlante per ogni metodo non implementato.
-2. **DirectSound muto** sopra quel meccanismo (`IDirectSound8`, buffer, listener 3D).
-3. Proseguire fino all'apertura dei `.forge`; poi DirectInput e Direct3D 9 (Fase 3).
+1. **Fase 3: Direct3D 9.** Prima un `IDirect3D9` e un device che registrano e contano le
+   chiamate senza disegnare, per vedere quali metodi, formati e shader usa il gioco; poi il
+   renderer vero su wgpu.
+2. Verificare se la GPU è utilizzabile da WSL.
+3. Punti aperti di questa fase: SEH, file INI veri, lingua, prima pagina protetta.

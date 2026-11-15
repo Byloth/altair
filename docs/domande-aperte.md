@@ -28,6 +28,8 @@ sostituisci qui la voce con un rimando.
 
 ## Fase 2–3: runtime
 
+- [ ] Come sceglie il gioco la lingua delle voci (cerca `DataPC_StreamedSoundsEng.forge`)? Registro, INI o locale?
+- [ ] I filmati: il gioco apre i `.bik` anche direttamente. Serve un decodificatore Bink o si saltano?
 - [ ] Quali metodi COM chiama davvero il gioco (D3D9, DirectInput, DirectSound)? Da tracciare a runtime.
 - [ ] A cosa servono i 2.644 usi di `TlsGetValue`: un solo indice (contesto per thread del motore) o molti?
 - [ ] Quanto è profondo lo stack reale dei thread di gioco? (decide la fattibilità sul web)

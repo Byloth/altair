@@ -175,9 +175,19 @@ pub fn read_file(rt: &mut Runtime, c: &mut Call) -> u32 {
         mem.w32(done, got as u32);
     }
     if ov != 0 {
+        // OVERLAPPED: Internal (stato), InternalHigh (byte trasferiti), Offset, OffsetHigh, hEvent.
+        // La lettura è già completa: si segnala subito l'evento che il chiamante aspetta.
         mem.w32(ov, 0);
         mem.w32(ov + 4, got as u32);
+        if let Some(ev) = rt.object(mem.r32(ov + 16)) {
+            ev.set();
+        }
     }
+    1
+}
+
+pub fn get_overlapped_result(rt: &mut Runtime, c: &mut Call) -> u32 {
+    rt.mem.w32(c.arg(2), rt.mem.r32(c.arg(1) + 4));
     1
 }
 

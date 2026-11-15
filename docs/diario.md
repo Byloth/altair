@@ -110,3 +110,11 @@
 - Trovata dal runtime una funzione non scoperta (`0xFB2451`, tabella non allineata in `.data`):
   la scoperta ora la vede, +65 funzioni. Ricompilazione incrementale: 26 file, 10 secondi.
   Test differenziale dopo la modifica: 2.110 identiche su 4.000, 0 diverse → `analisi/runtime.md`.
+- **Oggetti COM** (`com.rs`) e sopra di essi **DirectSound muto**, DirectInput e XInput senza
+  dispositivi, Bink assente. Il gioco supera l'audio e **apre i `.forge`: gate della Fase 2**.
+- Due blocchi risolti con la traccia: le letture sovrapposte (evento di completamento mai
+  segnalato) e `VirtualQuery` (risposta fissa → il motore sbagliava allocatore e chiamava un
+  oggetto nullo). Nuova diagnostica: `altair_trail`, le ultime destinazioni indirette.
+- Il gioco ora crea la finestra "Assassin's Creed" e chiama **`Direct3DCreate9`**: lì si ferma,
+  tre corse su tre. È il confine con la Fase 3. Test differenziale: 1.616 identiche su 3.000,
+  0 diverse → `analisi/runtime.md`.

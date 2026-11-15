@@ -3,6 +3,7 @@
 mod com;
 mod dsound;
 mod fs;
+mod input;
 mod machine;
 mod sync;
 mod system;
@@ -61,6 +62,7 @@ fn run() -> Result<i32, String> {
     }
     let altair_run: RunFn = sym(lib, "altair_run")?;
     let mem_create: MemCreateFn = sym(lib, "altair_mem_create")?;
+    let trail: win32::TrailFn = sym(lib, "altair_trail")?;
 
     let base = unsafe { mem_create() };
     if base.is_null() {
@@ -83,7 +85,7 @@ fn run() -> Result<i32, String> {
 
     let mut rt = win32::Runtime::new(mem, &img, exe, trace);
     rt.setup_static_tls(&img, TEB);
-    win32::install(rt, &img, altair_run);
+    win32::install(rt, &img, altair_run, trail);
 
     let mut ctx = Ctx::new(base);
     ctx.fs_base = TEB;
@@ -102,13 +104,17 @@ fn run() -> Result<i32, String> {
         .spawn(move || {
             let p = p;
             // SAFETY: il contesto vive nello stack di `run`, che aspetta la fine del thread.
-            unsafe { altair_run(p.0, entry) }
+            let trapped = unsafe { altair_run(p.0, entry) };
+            if trapped != 0 {
+                let ctx = unsafe { &*p.0 };
+                eprintln!("\nTRAP: {}", trap_text(ctx));
+                win32::report_stop(ctx);
+            }
+            trapped
         })
         .map_err(|e| e.to_string())?;
     let trapped = handle.join().map_err(|_| "il thread guest è andato in panic".to_string())?;
     if trapped != 0 {
-        eprintln!("\nTRAP: {}", trap_text(&ctx));
-        win32::report_stop(&ctx);
         return Ok(2);
     }
     eprintln!("l'entry point è ritornato (eax = {:#x})", ctx.eax);

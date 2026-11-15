@@ -19,7 +19,25 @@ static AltairFn find(u32 addr) {
     return lo < altair_function_count && altair_functions[lo].addr == addr ? altair_functions[lo].fn : 0;
 }
 
+/* Le ultime destinazioni di chiamate e salti indiretti di questo thread: quando qualcosa va
+ * storto dicono da dove si è arrivati, anche attraverso le tail call che non lasciano un
+ * indirizzo di ritorno sullo stack. */
+#define TRAIL 32
+static __thread u32 trail[TRAIL];
+static __thread u32 trail_pos;
+
+int altair_trail(u32 *out, int max) {
+    int n = 0;
+    for (u32 i = 0; i < TRAIL && n < max; i++) {
+        u32 v = trail[(trail_pos - 1 - i) % TRAIL];
+        if (v)
+            out[n++] = v;
+    }
+    return n;
+}
+
 void altair_call_indirect(Ctx *c, u32 addr) {
+    trail[trail_pos++ % TRAIL] = addr;
     AltairFn fn = find(addr);
     if (fn)
         fn(c);

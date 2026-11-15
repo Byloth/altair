@@ -28,6 +28,8 @@ pub struct Runtime {
     imports: HashMap<u32, (String, String)>,
     heap: Heap,
     virtual_next: u32,
+    /// Zone ottenute con VirtualAlloc: base -> dimensione.
+    regions: std::collections::BTreeMap<u32, u32>,
     tls_next: u32,
     next_handle: u32,
     objects: HashMap<u32, Arc<Object>>,
@@ -82,6 +84,8 @@ static RT: OnceLock<Mutex<Runtime>> = OnceLock::new();
 /// Per indice di trampolino: (nome, numero di argomenti, shim), o None se manca.
 static TABLE: OnceLock<Vec<(String, Option<(u32, Shim)>)>> = OnceLock::new();
 static RUN: OnceLock<RunFn> = OnceLock::new();
+pub type TrailFn = unsafe extern "C" fn(*mut u32, i32) -> i32;
+static TRAIL: OnceLock<TrailFn> = OnceLock::new();
 static TRACE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Funzioni host registrate a runtime (i metodi degli oggetti COM), dopo i trampolini degli import.
@@ -112,13 +116,14 @@ fn rt() -> MutexGuard<'static, Runtime> {
     RT.get().expect("runtime non installato").lock().unwrap_or_else(|e| e.into_inner())
 }
 
-pub fn install(rt: Runtime, img: &Image, run: RunFn) {
+pub fn install(rt: Runtime, img: &Image, run: RunFn, trail: TrailFn) {
+    let _ = TRAIL.set(trail);
     let table = img
         .imports
         .iter()
         .map(|imp| {
             let key = if imp.name.starts_with('#') { format!("{}!{}", imp.dll, imp.name) } else { imp.name.clone() };
-            let shim = SHIMS.iter().chain(crate::system::SHIMS).chain(crate::user32::SHIMS).chain(EXTRA).find(|s| s.0 == key).map(|s| (s.1, s.2));
+            let shim = SHIMS.iter().chain(crate::system::SHIMS).chain(crate::user32::SHIMS).chain(crate::input::SHIMS).chain(EXTRA).find(|s| s.0 == key).map(|s| (s.1, s.2));
             (format!("{}!{}", imp.dll, imp.name), shim)
         })
         .collect();
@@ -142,6 +147,7 @@ impl Runtime {
             imports,
             heap: Heap::new(HEAP_START, HEAP_END),
             virtual_next: VIRTUAL_START,
+            regions: std::collections::BTreeMap::new(),
             tls_next: 1,
             next_handle: 0x100,
             objects: HashMap::new(),
@@ -267,7 +273,8 @@ pub fn report_stop(ctx: &Ctx) {
     // Indirizzi di ritorno plausibili nelle prime parole dello stack.
     let mut frames = Vec::new();
     let mut p = ctx.esp;
-    while frames.len() < 12 && p < crate::STACK_TOP {
+    let end = ctx.esp.saturating_add(0x400);
+    while frames.len() < 14 && p < end {
         let v = mem.r32(p);
         if (0x0040_1000..0x0167_c000).contains(&v) {
             frames.push(format!("{v:#010x}"));
@@ -275,6 +282,17 @@ pub fn report_stop(ctx: &Ctx) {
         p += 4;
     }
     eprintln!("  possibili indirizzi di ritorno sullo stack: {}", frames.join(" "));
+    // Va chiamata dal thread che si è fermato: la traccia è per thread.
+    let mut trail = [0u32; 32];
+    let n = TRAIL.get().map_or(0, |f| unsafe { f(trail.as_mut_ptr(), 32) });
+    let names: Vec<String> = trail[..n as usize]
+        .iter()
+        .map(|&a| match lookup(a) {
+            Some((name, _)) => name.rsplit('!').next().unwrap_or(&name).to_string(),
+            None => format!("{a:#010x}"),
+        })
+        .collect();
+    eprintln!("  ultime destinazioni indirette (dalla più recente): {}", names.join(" "));
     let mut calls: Vec<_> = rt.calls.iter().collect();
     calls.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
     let total: u64 = calls.iter().map(|(_, n)| **n).sum();
@@ -515,17 +533,39 @@ fn virtual_alloc(rt: &mut Runtime, c: &mut Call) -> u32 {
     }
     let a = rt.virtual_next;
     rt.virtual_next += size;
+    rt.regions.insert(a, size);
     a
 }
+/// `MEM_RELEASE` (0x8000) dimentica la zona e la riazzera; gli indirizzi non vengono riusati.
+fn virtual_free(rt: &mut Runtime, c: &mut Call) -> u32 {
+    if c.arg(2) & 0x8000 != 0 {
+        if let Some(size) = rt.regions.remove(&c.arg(0)) {
+            // SAFETY: la zona appartiene allo spazio guest; MADV_DONTNEED la riporta a zero.
+            unsafe { libc::madvise(rt.mem.ptr(c.arg(0)) as *mut libc::c_void, size as usize, libc::MADV_DONTNEED) };
+        }
+    }
+    1
+}
+/// Il motore usa `VirtualQuery` per sapere quanto è grande una zona prima di liberarla:
+/// `RegionSize` deve arrivare fino alla fine dell'allocazione.
 fn virtual_query(rt: &mut Runtime, c: &mut Call) -> u32 {
-    let (addr, p) = (c.arg(0), c.arg(1));
-    rt.mem.w32(p, addr & !0xfff);
-    rt.mem.w32(p + 4, addr & !0xffff);
-    rt.mem.w32(p + 8, 4); // PAGE_READWRITE
-    rt.mem.w32(p + 12, 0x1000);
-    rt.mem.w32(p + 16, 0x1000); // MEM_COMMIT
-    rt.mem.w32(p + 20, 4);
-    rt.mem.w32(p + 24, 0x20000); // MEM_PRIVATE
+    let (addr, p) = (c.arg(0) & !0xfff, c.arg(1));
+    let inside = rt.regions.range(..=addr).next_back().filter(|(&b, &sz)| addr < b + sz).map(|(&b, &sz)| (b, sz));
+    let (alloc_base, size, state) = match inside {
+        Some((b, sz)) => (b, b + sz - addr, 0x1000), // MEM_COMMIT
+        None => {
+            let next = rt.regions.range(addr..).next().map_or(VIRTUAL_END, |(&b, _)| b);
+            let known = (0x0010_0000..VIRTUAL_START).contains(&addr); // stack, immagine, heap
+            if known { (addr & !0xffff, 0x1000, 0x1000) } else { (0, next.saturating_sub(addr).max(0x1000), 0x10000) }
+        }
+    };
+    rt.mem.w32(p, addr);
+    rt.mem.w32(p + 4, alloc_base);
+    rt.mem.w32(p + 8, if state == 0x1000 { 4 } else { 0 }); // PAGE_READWRITE
+    rt.mem.w32(p + 12, size);
+    rt.mem.w32(p + 16, state);
+    rt.mem.w32(p + 20, if state == 0x1000 { 4 } else { 0 });
+    rt.mem.w32(p + 24, if state == 0x1000 { 0x20000 } else { 0 }); // MEM_PRIVATE
     28
 }
 
@@ -594,6 +634,9 @@ fn leave_critical_section(c: &mut Call) -> u32 {
 // --- kernel32: eventi, semafori, attese, thread ---------------------------------------------
 
 impl Runtime {
+    pub fn object(&self, h: u32) -> Option<Arc<Object>> {
+        self.objects.get(&h).cloned()
+    }
     pub fn fresh_handle(&mut self) -> u32 {
         self.next_handle += 4;
         self.next_handle
@@ -920,7 +963,7 @@ static SHIMS: &[(&str, u32, Shim)] = &[
     ("HeapReAlloc", 4, L(heap_realloc)),
     ("HeapSize", 3, L(heap_size)),
     ("VirtualAlloc", 4, L(virtual_alloc)),
-    ("VirtualFree", 3, L(ret1)),
+    ("VirtualFree", 3, L(virtual_free)),
     ("VirtualQuery", 3, L(virtual_query)),
     ("TlsAlloc", 0, L(tls_alloc)),
     ("TlsGetValue", 1, F(tls_get_value)),
@@ -983,6 +1026,7 @@ static SHIMS: &[(&str, u32, Shim)] = &[
     ("FindClose", 1, L(fs::find_close)),
     ("GetFileTime", 4, L(fs::get_file_time)),
     ("GetDriveTypeA", 1, L(fs::get_drive_type_a)),
+    ("GetOverlappedResult", 4, L(fs::get_overlapped_result)),
     ("GetLogicalDriveStringsA", 2, L(fs::get_logical_drive_strings_a)),
     ("RaiseException", 4, L(raise_exception)),
 ];

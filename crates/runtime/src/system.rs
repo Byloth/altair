@@ -149,6 +149,25 @@ fn bad_device(_: &mut Runtime, _: &mut Call) -> u32 {
     2 // MMSYSERR_BADDEVICEID
 }
 
+// --- video Bink: nessun decodificatore, i filmati vengono saltati (Fase 3) -------------------
+fn bink_open(rt: &mut Runtime, c: &mut Call) -> u32 {
+    eprintln!("[video] {} saltato: Bink non disponibile", rt.mem.cstr(c.arg(0)));
+    0
+}
+
+// --- numeri casuali di sistema --------------------------------------------------------------
+fn crypt_acquire_context_a(rt: &mut Runtime, c: &mut Call) -> u32 {
+    rt.mem.w32(c.arg(0), 0x0c0c_0001);
+    1
+}
+fn crypt_gen_random(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let (n, buf) = (c.arg(1), c.arg(2));
+    // SAFETY: il buffer è memoria guest valida per `n` byte.
+    let dst = unsafe { std::slice::from_raw_parts_mut(rt.mem.ptr(buf), n as usize) };
+    let ok = std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, dst)).is_ok();
+    ok as u32
+}
+
 pub static SHIMS: &[(&str, u32, Shim)] = &[
     ("CoInitialize", 1, L(zero)),
     ("CoUninitialize", 0, L(zero)),
@@ -180,4 +199,21 @@ pub static SHIMS: &[(&str, u32, Shim)] = &[
     ("dsound.dll!#2", 2, L(zero)),
     ("eax.dll!#6", 3, L(ds_no_driver)),
     ("waveOutGetDevCapsA", 3, L(bad_device)),
+    ("_BinkSetMemory@8", 2, L(zero)),
+    ("_BinkSetSoundSystem@8", 2, L(one)),
+    ("_BinkOpenDirectSound@4", 1, L(one)),
+    ("_BinkSetSoundTrack@8", 2, L(zero)),
+    ("_BinkOpen@8", 2, L(bink_open)),
+    ("_BinkClose@4", 1, L(zero)),
+    ("_BinkCopyToBuffer@28", 7, L(zero)),
+    ("_BinkDoFrame@4", 1, L(zero)),
+    ("_BinkNextFrame@4", 1, L(zero)),
+    ("_BinkPause@8", 2, L(zero)),
+    ("_BinkSetVolume@12", 3, L(zero)),
+    ("_BinkShouldSkip@4", 1, L(zero)),
+    ("_BinkWait@4", 1, L(zero)),
+    ("_BinkGetFrameBuffersInfo@8", 2, L(zero)),
+    ("CryptAcquireContextA", 5, L(crypt_acquire_context_a)),
+    ("CryptGenRandom", 3, L(crypt_gen_random)),
+    ("CryptReleaseContext", 2, L(one)),
 ];

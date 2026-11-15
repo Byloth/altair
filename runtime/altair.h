@@ -73,6 +73,8 @@ extern const AltairEntry altair_functions[];
 extern const u32 altair_function_count;
 
 void altair_call_indirect(Ctx *c, u32 addr);
+/* Copia in `out` le ultime destinazioni indirette del thread chiamante, dalla più recente. */
+int altair_trail(u32 *out, int max);
 _Noreturn void altair_trap(Ctx *c, const char *msg, u32 addr);
 /* Esegue la funzione guest `addr`. Ritorna 0, oppure 1 se è scattata una trap
  * (motivo in c->trap_msg, indirizzo in c->trap_addr). */

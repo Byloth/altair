@@ -29,4 +29,5 @@ supporto del codice generato (`runtime/altair.h`). Il nome completo è "AC1 Reco
 ## Stato
 
 Fase 0 (fondamenta) chiusa il 2026-11-14. Fase 1 (il ricompilatore): gate raggiunto il 2026-11-15, tutto il codice del gioco si traduce in C e compila.
-Fase 2 (il runtime Win32) in corso: il gioco tradotto esegue l'avvio, crea i suoi thread e arriva all'audio. Vedi `docs/PIANO.md`.
+Fase 2 (il runtime Win32): gate raggiunto il 2026-11-15. Il gioco tradotto esegue l'avvio, crea i suoi
+thread, apre i `.forge`, crea la finestra e si ferma alla creazione di Direct3D 9. Vedi `docs/PIANO.md`.
