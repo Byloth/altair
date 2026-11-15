@@ -570,8 +570,34 @@ fn float(v: f32) -> String {
 
 const CONSTS: &str = "struct Consts { c: array<vec4f, 256>, i: array<vec4i, 16>, b: vec4u, misc: vec4f }\n";
 
+/// Varianti di uno stesso shader, decise dallo stato del device al momento del draw.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
+pub struct Options {
+    /// Maschera di `@location` degli attributi `UBYTE4`: arrivano normalizzati, vanno × 255.
+    pub scale255: u32,
+    /// Maschera di `@location` degli attributi `SHORT2`/`SHORT4`: vanno × 32767.
+    pub scale32767: u32,
+    /// Test alfa (D3DCMPFUNC, 0 = spento): confronta `oC0.a` con `pc.misc.z` e scarta il pixel.
+    pub alpha_func: u32,
+}
+
+impl Shader {
+    /// Indici dei render target su cui il pixel shader scrive.
+    pub fn color_outputs(&self) -> Vec<u32> {
+        let set: BTreeSet<u32> = self.ins.iter().filter_map(|i| i.dst).filter(|d| d.reg == Reg::ColorOut).map(|d| d.num).collect();
+        set.into_iter().collect()
+    }
+    pub fn writes_depth(&self) -> bool {
+        self.ins.iter().filter_map(|i| i.dst).any(|d| d.reg == Reg::DepthOut)
+    }
+}
+
 /// Traduce uno shader in un modulo WGSL con un solo punto d'ingresso, `main`.
 pub fn translate(sh: &Shader) -> R<String> {
+    translate_with(sh, &Options::default())
+}
+
+pub fn translate_with(sh: &Shader, opt: &Options) -> R<String> {
     let mut e = Emit { sh, temps: BTreeSet::new(), out_regs: BTreeSet::new(), uses_a0: false, uses_vpos: false, uses_vface: false, body: String::new(), indent: 1, loops: 0 };
     for ins in &sh.ins {
         e.ins(ins).map_err(|m| format!("{m} (istruzione {})", op_name(ins.op)))?;
@@ -666,7 +692,15 @@ pub fn translate(sh: &Shader) -> R<String> {
             for i in 0..4 {
                 if d.mask & (1 << i) != 0 {
                     let c = XYZW[i];
-                    let _ = writeln!(w, "    v{n}.{c} = input.i{k}.{c};");
+                    let l = if vertex { attribute_location(d.usage, d.index).unwrap_or(31) } else { 31 };
+                    let scale = if opt.scale255 & (1 << l) != 0 {
+                        " * 255.0"
+                    } else if opt.scale32767 & (1 << l) != 0 {
+                        " * 32767.0"
+                    } else {
+                        ""
+                    };
+                    let _ = writeln!(w, "    v{n}.{c} = input.i{k}.{c}{scale};");
                 }
             }
         }
@@ -703,6 +737,14 @@ pub fn translate(sh: &Shader) -> R<String> {
             let _ = writeln!(w, "    output.o{k} = o{};", d.num);
         }
     } else {
+        let test = match opt.alpha_func {
+            1 => Some("false".to_string()),
+            f @ 2..=7 => Some(format!("oC0.w {} pc.misc.z", ["<", "==", "<=", ">", "!=", ">="][f as usize - 2])),
+            _ => None,
+        };
+        if let (Some(t), true) = (test, e.out_regs.contains(&(Reg::ColorOut, 0))) {
+            let _ = writeln!(w, "    if (!({t})) {{ discard; }}");
+        }
         let mut any = false;
         for &(reg, n) in &e.out_regs {
             match reg {

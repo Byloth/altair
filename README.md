@@ -22,6 +22,8 @@ supporto del codice generato (`runtime/altair.h`). Il nome completo è "AC1 Reco
 | `docs/analisi/` | Fatti verificati sui file del gioco |
 | `crates/` | Il ricompilatore in Rust: `altair` (vedi `docs/analisi/traduttore.md`) |
 | `runtime/` | Supporto in C del codice generato |
+| `crates/shader/` | Traduttore degli shader Direct3D 9 in WGSL (`altair-shaderc`) |
+| `crates/gpu-probe/` | Prove della catena grafica |
 | `crates/runtime/` | `altair-run`: il runtime Win32 che esegue il gioco tradotto (vedi `docs/analisi/runtime.md`) |
 | `tools/` | Script di analisi e di test (vedi `tools/README.md`) |
 | `ref/`, `build/`, `private/`, `.venv/`, `opt/` | Riferimenti clonati, output generato, materiale non pubblicabile, strumenti locali: ignorati da git |
@@ -31,5 +33,5 @@ supporto del codice generato (`runtime/altair.h`). Il nome completo è "AC1 Reco
 Fase 0 (fondamenta) chiusa il 2026-11-14. Fase 1 (il ricompilatore): gate raggiunto il 2026-11-15, tutto il codice del gioco si traduce in C e compila.
 Fase 2 (il runtime Win32): gate raggiunto il 2026-11-15. Il gioco tradotto esegue l'avvio, crea i suoi
 thread, apre i `.forge` e crea la finestra.
-Fase 3 (grafica) iniziata: con un Direct3D 9 che registra senza disegnare, il gioco gira nel suo ciclo
-principale e presenta fotogrammi. Vedi `docs/PIANO.md`.
+Fase 3 (grafica) in corso: il gioco tradotto disegna la sua schermata iniziale con il nostro Direct3D 9
+su wgpu (per ora fuori schermo, salvando i fotogrammi come PNG). Vedi `docs/PIANO.md`.

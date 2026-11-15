@@ -129,3 +129,10 @@
 - Test differenziale: 3.084 identiche su 6.000, 0 diverse.
 - GPU in WSL: wgpu vede la RTX 4070 Ti tramite OpenGL su D3D12 (`GALLIUM_DRIVER=d3d12`); Vulkan solo software. Nessuna installazione necessaria. `crates/gpu-probe` → `analisi/d3d9.md`, `ambiente.md`.
 - Triangolo con wgpu sulla RTX 4070 Ti da WSL: fuori schermo (PNG controllato) e in finestra via WSLg (212 fotogrammi in 4 s). Core dump alla chiusura della finestra, da sistemare.
+- **Traduttore shader SM3 → WGSL** (`crates/shader`): tutti i 1.488 shader distinti estratti
+  dal gioco si traducono e passano naga, al primo tentativo.
+- **Renderer su wgpu** (`gfx.rs`), fuori schermo sulla RTX 4070 Ti. **Il gioco disegna la
+  schermata di caricamento dell'Animus e la schermata iniziale** ("Assassin's Creed", "Press
+  Any Key To Continue"): 74.341 draw in 1.500 fotogrammi, nessun errore di validazione.
+  Primo giro: errori su slot dei vertex buffer senza attributi e texture 3D, corretti.
+  Resta un riquadro azzurro in alto a sinistra → `analisi/d3d9.md`.

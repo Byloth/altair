@@ -4,6 +4,7 @@ mod com;
 mod d3d9;
 mod dsound;
 mod fs;
+mod gfx;
 mod input;
 mod machine;
 mod sync;

@@ -67,7 +67,11 @@ name = "altair-runtime"
 version = "0.1.0"
 dependencies = [
  "altair-pe",
+ "altair-shader",
  "libc",
+ "png",
+ "pollster",
+ "wgpu",
 ]
 
 [[package]]

@@ -124,3 +124,16 @@ tradotto con `altair-run`. Vedi `docs/analisi/runtime.md`.
 Prove della catena grafica: elenco degli adattatori, `triangle FILE.png` (fuori schermo, con
 rilettura), `window [secondi]` (finestra vera). Per la GPU in WSL:
 `GALLIUM_DRIVER=d3d12 LD_LIBRARY_PATH=/usr/lib/wsl/lib`. Vedi `docs/analisi/d3d9.md`.
+
+## `altair-shaderc` (crate `crates/shader`)
+
+Traduce gli shader D3D9 del gioco in WGSL e li valida con naga.
+
+```sh
+ALTAIR_DUMP_SHADERS=private/shaders ALTAIR_FRAMES=1500 tools/run.sh   # estrae gli shader
+target/release/altair-shaderc private/shaders                         # riepilogo della copertura
+target/release/altair-shaderc private/shaders/vs_….bin                # il WGSL di uno shader
+```
+
+Variabili del renderer in `tools/run.sh`: `ALTAIR_SHOT_DIR`, `ALTAIR_SHOT_EVERY`,
+`ALTAIR_FRAMES`, `ALTAIR_GFX=0`. Vedi `docs/analisi/d3d9.md`.

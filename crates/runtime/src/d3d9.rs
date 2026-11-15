@@ -27,19 +27,35 @@ pub enum Res {
 pub struct D3d {
     d3d: u32,
     device: u32,
-    backbuffer: u32,
+    pub backbuffer: u32,
     depth: u32,
+    /// superficie -> (texture madre, livello, faccia)
+    pub surface_parent: HashMap<u32, (u32, u32, u32)>,
+    /// texture -> 1 cubo, 2 volume
+    pub tex_kind: HashMap<u32, u8>,
+    /// flussi di vertici: (buffer, offset, passo)
+    pub streams: [(u32, u32, u32); 4],
+    pub indices: u32,
+    pub vs_f: Vec<f32>,
+    pub ps_f: Vec<f32>,
+    pub vs_i: Vec<i32>,
+    pub ps_i: Vec<i32>,
+    pub vs_b: u32,
+    pub ps_b: u32,
+    /// (campionatore, tipo di stato) -> valore
+    pub sampler_states: HashMap<(u32, u32), u32>,
+    pub dirty_buffers: std::cell::RefCell<std::collections::HashSet<u32>>,
     pub res: HashMap<u32, Res>,
     /// Tabelle delle costanti D3DX: oggetto -> (indirizzo guest del CTAB, dimensione).
     ctabs: HashMap<u32, (u32, u32)>,
-    render_targets: [u32; 4],
-    depth_target: u32,
-    viewport: [u32; 6],
-    render_states: HashMap<u32, u32>,
-    textures: HashMap<u32, u32>,
-    vshader: u32,
-    pshader: u32,
-    decl: u32,
+    pub render_targets: [u32; 4],
+    pub depth_target: u32,
+    pub viewport: [u32; 6],
+    pub render_states: HashMap<u32, u32>,
+    pub textures: HashMap<u32, u32>,
+    pub vshader: u32,
+    pub pshader: u32,
+    pub decl: u32,
     pub frames: u64,
     draws: u64,
     draws_at_last_present: u64,
@@ -126,6 +142,14 @@ fn level_size(f: u32, w: u32, h: u32) -> (u32, u32) {
         (bw * block, bw * bh * block)
     } else {
         (w * bpp, w * h * bpp)
+    }
+}
+
+/// Esegue `f` con il renderer, se c'è, e lo stato Direct3D in sola lettura.
+fn with_gfx(rt: &mut Runtime, f: impl FnOnce(&mut crate::gfx::Gfx, &D3d, crate::machine::Mem)) {
+    if let Some(mut g) = rt.gfx.take() {
+        f(&mut g, &rt.d3d, rt.mem);
+        rt.gfx = Some(g);
     }
 }
 
@@ -315,6 +339,17 @@ fn d3d_create_device(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.d3d.render_targets = [rt.d3d.backbuffer, 0, 0, 0];
     rt.d3d.depth_target = rt.d3d.depth;
     rt.d3d.viewport = [0, 0, w, h, 0f32.to_bits(), 1f32.to_bits()];
+    rt.d3d.vs_f = vec![0.0; 1024];
+    rt.d3d.ps_f = vec![0.0; 1024];
+    rt.d3d.vs_i = vec![0; 64];
+    rt.d3d.ps_i = vec![0; 64];
+    // ALTAIR_GFX=0 torna al solo registratore, senza disegnare.
+    if std::env::var("ALTAIR_GFX").map_or(true, |v| v != "0") {
+        rt.gfx = crate::gfx::Gfx::new();
+        if rt.gfx.is_none() {
+            eprintln!("[gfx] nessun adattatore grafico: si prosegue senza disegnare");
+        }
+    }
     m.w32(c.arg(6), dev);
     D3D_OK
 }
@@ -381,13 +416,18 @@ fn dev_present(rt: &mut Runtime, _: &mut Call) -> u32 {
     if d.frames == 1 || d.frames % 500 == 0 {
         eprintln!("[d3d] Present n. {} ({in_frame} draw in questo fotogramma)", d.frames);
     }
+    let frame = d.frames;
+    with_gfx(rt, |g, d, _| g.present(d, frame));
+    let d = &mut rt.d3d;
     if d.limit.is_some_and(|n| d.frames >= n) {
         report(rt);
         eprintln!("\nlimite di ALTAIR_FRAMES raggiunto: esco");
         std::process::exit(0);
     }
     // Senza vsync il gioco girerebbe a vuoto: un fotogramma dura almeno un millisecondo.
-    std::thread::sleep(std::time::Duration::from_millis(1));
+    if rt.gfx.is_none() {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
     D3D_OK
 }
 
@@ -409,6 +449,7 @@ fn dev_create_texture(rt: &mut Runtime, c: &mut Call) -> u32 {
 fn dev_create_volume_texture(rt: &mut Runtime, c: &mut Call) -> u32 {
     let (w, h, depth, levels, usage, format, pool) = (c.arg(1), c.arg(2), c.arg(3), c.arg(4), c.arg(5), c.arg(6), c.arg(7));
     let obj = com::create(rt, "IDirect3DVolumeTexture9", VOLUME_TEXTURE, 0);
+    rt.d3d.tex_kind.insert(obj, 2);
     *rt.d3d.texture_formats.entry((format!("{} (volume)", fmt_name(format)), usage)).or_default() += 1;
     rt.d3d.res.insert(obj, Res::Texture { w, h, depth, levels: levels.max(1), format, usage, pool, surfaces: HashMap::new() });
     rt.mem.w32(c.arg(8), obj);
@@ -417,6 +458,7 @@ fn dev_create_volume_texture(rt: &mut Runtime, c: &mut Call) -> u32 {
 fn dev_create_cube_texture(rt: &mut Runtime, c: &mut Call) -> u32 {
     let (edge, levels, usage, format, pool) = (c.arg(1), c.arg(2), c.arg(3), c.arg(4), c.arg(5));
     let obj = com::create(rt, "IDirect3DCubeTexture9", CUBE_TEXTURE, 0);
+    rt.d3d.tex_kind.insert(obj, 1);
     *rt.d3d.texture_formats.entry((format!("{} (cubo)", fmt_name(format)), usage)).or_default() += 1;
     rt.d3d.res.insert(obj, Res::Texture { w: edge, h: edge, depth: 1, levels: levels.max(1), format, usage, pool, surfaces: HashMap::new() });
     rt.mem.w32(c.arg(6), obj);
@@ -500,6 +542,7 @@ fn dev_get_render_state(rt: &mut Runtime, c: &mut Call) -> u32 {
 }
 fn dev_set_sampler_state(rt: &mut Runtime, c: &mut Call) -> u32 {
     *rt.d3d.sampler_state_ids.entry(c.arg(2)).or_default() += 1;
+    rt.d3d.sampler_states.insert((c.arg(1), c.arg(2)), c.arg(3));
     D3D_OK
 }
 fn dev_set_texture(rt: &mut Runtime, c: &mut Call) -> u32 {
@@ -526,16 +569,100 @@ fn dev_end_state_block(rt: &mut Runtime, c: &mut Call) -> u32 {
 fn dev_draw(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.d3d.draws += 1;
     rt.d3d.primitives += c.arg(3) as u64;
+    let (ty, start, count) = (c.arg(1), c.arg(2), c.arg(3));
+    with_gfx(rt, |g, d, mem| g.draw(d, mem, ty, start, count, None, None));
     D3D_OK
 }
 fn dev_draw_indexed(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.d3d.draws += 1;
     rt.d3d.primitives += c.arg(6) as u64;
+    let (ty, base, start, count) = (c.arg(1), c.arg(2) as i32, c.arg(5), c.arg(6));
+    with_gfx(rt, |g, d, mem| g.draw(d, mem, ty, start, count, Some(base), None));
     D3D_OK
 }
 fn dev_draw_up(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.d3d.draws += 1;
     rt.d3d.primitives += c.arg(2) as u64;
+    let (ty, count, data, stride) = (c.arg(1), c.arg(2), c.arg(3), c.arg(4));
+    with_gfx(rt, |g, d, mem| g.draw(d, mem, ty, 0, count, None, Some((data, stride))));
+    D3D_OK
+}
+fn dev_draw_indexed_up(rt: &mut Runtime, _: &mut Call) -> u32 {
+    rt.d3d.draws += 1;
+    D3D_OK
+}
+fn dev_clear(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let (flags, color, z, stencil) = (c.arg(3), c.arg(4), f32::from_bits(c.arg(5)), c.arg(6));
+    with_gfx(rt, |g, d, _| g.clear(d, flags, color, z, stencil));
+    D3D_OK
+}
+fn dev_stretch_rect(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let (src, dst) = (c.arg(1), c.arg(3));
+    with_gfx(rt, |g, d, _| g.blit(d, src, dst));
+    D3D_OK
+}
+fn set_consts_f(dst: &mut [f32], rt: &Runtime, c: &Call) {
+    let (start, p, n) = (c.arg(1) as usize, c.arg(2), c.arg(3) as usize);
+    for k in 0..(4 * n).min(dst.len().saturating_sub(4 * start)) {
+        dst[4 * start + k] = f32::from_bits(rt.mem.r32(p + 4 * k as u32));
+    }
+}
+fn set_consts_i(dst: &mut [i32], rt: &Runtime, c: &Call) {
+    let (start, p, n) = (c.arg(1) as usize, c.arg(2), c.arg(3) as usize);
+    for k in 0..(4 * n).min(dst.len().saturating_sub(4 * start)) {
+        dst[4 * start + k] = rt.mem.r32(p + 4 * k as u32) as i32;
+    }
+}
+fn set_consts_b(dst: &mut u32, rt: &Runtime, c: &Call) {
+    for k in 0..c.arg(3).min(32) {
+        let bit = 1u32 << ((c.arg(1) + k) & 31);
+        if rt.mem.r32(c.arg(2) + 4 * k) != 0 { *dst |= bit } else { *dst &= !bit }
+    }
+}
+fn dev_set_vs_f(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let mut v = std::mem::take(&mut rt.d3d.vs_f);
+    set_consts_f(&mut v, rt, c);
+    rt.d3d.vs_f = v;
+    D3D_OK
+}
+fn dev_set_ps_f(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let mut v = std::mem::take(&mut rt.d3d.ps_f);
+    set_consts_f(&mut v, rt, c);
+    rt.d3d.ps_f = v;
+    D3D_OK
+}
+fn dev_set_vs_i(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let mut v = std::mem::take(&mut rt.d3d.vs_i);
+    set_consts_i(&mut v, rt, c);
+    rt.d3d.vs_i = v;
+    D3D_OK
+}
+fn dev_set_ps_i(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let mut v = std::mem::take(&mut rt.d3d.ps_i);
+    set_consts_i(&mut v, rt, c);
+    rt.d3d.ps_i = v;
+    D3D_OK
+}
+fn dev_set_vs_b(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let mut v = rt.d3d.vs_b;
+    set_consts_b(&mut v, rt, c);
+    rt.d3d.vs_b = v;
+    D3D_OK
+}
+fn dev_set_ps_b(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let mut v = rt.d3d.ps_b;
+    set_consts_b(&mut v, rt, c);
+    rt.d3d.ps_b = v;
+    D3D_OK
+}
+fn dev_set_stream_source(rt: &mut Runtime, c: &mut Call) -> u32 {
+    if let Some(s) = rt.d3d.streams.get_mut(c.arg(1) as usize) {
+        *s = (c.arg(2), c.arg(3), c.arg(4));
+    }
+    D3D_OK
+}
+fn dev_set_indices(rt: &mut Runtime, c: &mut Call) -> u32 {
+    rt.d3d.indices = c.arg(1);
     D3D_OK
 }
 
@@ -670,7 +797,7 @@ static DEVICE: &[Method] = &[
     ("UpdateTexture", 3, OK),
     ("GetRenderTargetData", 3, OK),
     ("GetFrontBufferData", 3, OK),
-    ("StretchRect", 6, OK),
+    ("StretchRect", 6, Some(L(dev_stretch_rect))),
     ("ColorFill", 4, OK),
     ("CreateOffscreenPlainSurface", 7, Some(L(dev_create_offscreen))),
     ("SetRenderTarget", 3, Some(L(dev_set_render_target))),
@@ -679,7 +806,7 @@ static DEVICE: &[Method] = &[
     ("GetDepthStencilSurface", 2, Some(L(dev_get_depth))),
     ("BeginScene", 1, OK),
     ("EndScene", 1, OK),
-    ("Clear", 7, OK),
+    ("Clear", 7, Some(L(dev_clear))),
     ("SetTransform", 3, OK),
     ("GetTransform", 3, None),
     ("MultiplyTransform", 3, None),
@@ -720,7 +847,7 @@ static DEVICE: &[Method] = &[
     ("DrawPrimitive", 4, Some(L(dev_draw))),
     ("DrawIndexedPrimitive", 7, Some(L(dev_draw_indexed))),
     ("DrawPrimitiveUP", 5, Some(L(dev_draw_up))),
-    ("DrawIndexedPrimitiveUP", 9, Some(L(dev_draw_up))),
+    ("DrawIndexedPrimitiveUP", 9, Some(L(dev_draw_indexed_up))),
     ("ProcessVertices", 7, None),
     ("CreateVertexDeclaration", 3, Some(L(dev_create_vertex_declaration))),
     ("SetVertexDeclaration", 2, Some(L(dev_set_vertex_declaration))),
@@ -730,26 +857,26 @@ static DEVICE: &[Method] = &[
     ("CreateVertexShader", 3, Some(L(dev_create_vertex_shader))),
     ("SetVertexShader", 2, Some(L(dev_set_vertex_shader))),
     ("GetVertexShader", 2, Some(L(dev_get_vertex_shader))),
-    ("SetVertexShaderConstantF", 4, OK),
+    ("SetVertexShaderConstantF", 4, Some(L(dev_set_vs_f))),
     ("GetVertexShaderConstantF", 4, None),
-    ("SetVertexShaderConstantI", 4, OK),
+    ("SetVertexShaderConstantI", 4, Some(L(dev_set_vs_i))),
     ("GetVertexShaderConstantI", 4, None),
-    ("SetVertexShaderConstantB", 4, OK),
+    ("SetVertexShaderConstantB", 4, Some(L(dev_set_vs_b))),
     ("GetVertexShaderConstantB", 4, None),
-    ("SetStreamSource", 5, OK),
+    ("SetStreamSource", 5, Some(L(dev_set_stream_source))),
     ("GetStreamSource", 5, None),
     ("SetStreamSourceFreq", 3, OK),
     ("GetStreamSourceFreq", 3, None),
-    ("SetIndices", 2, OK),
+    ("SetIndices", 2, Some(L(dev_set_indices))),
     ("GetIndices", 2, None),
     ("CreatePixelShader", 3, Some(L(dev_create_pixel_shader))),
     ("SetPixelShader", 2, Some(L(dev_set_pixel_shader))),
     ("GetPixelShader", 2, Some(L(dev_get_pixel_shader))),
-    ("SetPixelShaderConstantF", 4, OK),
+    ("SetPixelShaderConstantF", 4, Some(L(dev_set_ps_f))),
     ("GetPixelShaderConstantF", 4, None),
-    ("SetPixelShaderConstantI", 4, OK),
+    ("SetPixelShaderConstantI", 4, Some(L(dev_set_ps_i))),
     ("GetPixelShaderConstantI", 4, None),
-    ("SetPixelShaderConstantB", 4, OK),
+    ("SetPixelShaderConstantB", 4, Some(L(dev_set_ps_b))),
     ("GetPixelShaderConstantB", 4, None),
     ("DrawRectPatch", 4, None),
     ("DrawTriPatch", 4, None),
@@ -813,6 +940,7 @@ fn tex_surface(rt: &mut Runtime, tex: u32, key: u32, level: u32) -> u32 {
     }
     let (lw, lh) = level_dims(w, h, level);
     let s = new_surface(rt, lw, lh, format, usage);
+    rt.d3d.surface_parent.insert(s, (tex, level, key >> 8));
     if let Some(Res::Texture { surfaces, .. }) = rt.d3d.res.get_mut(&tex) {
         surfaces.insert(key, s);
     }
@@ -847,6 +975,11 @@ fn lock_surface(rt: &mut Runtime, s: u32, locked: u32, depth: u32) -> u32 {
     D3D_OK
 }
 fn unlock_surface(rt: &mut Runtime, s: u32) -> u32 {
+    if let Some(&Res::Surface { mem, .. }) = rt.d3d.res.get(&s) {
+        if mem != 0 {
+            with_gfx(rt, |g, d, m| g.upload(d, m, s, mem));
+        }
+    }
     if let Some(Res::Surface { mem, .. }) = rt.d3d.res.get_mut(&s) {
         let m = std::mem::take(mem);
         if m != 0 {
@@ -976,9 +1109,13 @@ fn buf_get_desc(rt: &mut Runtime, c: &mut Call) -> u32 {
     }
     D3D_OK
 }
+fn buf_unlock(rt: &mut Runtime, c: &mut Call) -> u32 {
+    rt.d3d.dirty_buffers.borrow_mut().insert(c.arg(0));
+    D3D_OK
+}
 concat_methods!(BUFFER, 14, [
     ("Lock", 5, Some(L(buf_lock))),
-    ("Unlock", 1, OK),
+    ("Unlock", 1, Some(L(buf_unlock))),
     ("GetDesc", 2, Some(L(buf_get_desc))),
 ]);
 
@@ -1212,6 +1349,9 @@ pub fn report(rt: &Runtime) {
     let d = &rt.d3d;
     if d.d3d == 0 {
         return;
+    }
+    if let Some(g) = &rt.gfx {
+        g.report();
     }
     eprintln!("\n===== censimento Direct3D 9 =====");
     eprintln!("fotogrammi (Present): {}; draw: {} (massimo {} in un fotogramma); primitive: {}", d.frames, d.draws, d.max_draws_per_frame, d.primitives);

@@ -41,6 +41,7 @@ pub struct Runtime {
     pub com_vtables: HashMap<&'static str, u32>,
     pub ds_buffers: HashMap<u32, crate::dsound::Buffer>,
     pub d3d: crate::d3d9::D3d,
+    pub gfx: Option<crate::gfx::Gfx>,
     start: Instant,
     cmdline: u32,
     env_a: u32,
@@ -161,6 +162,7 @@ impl Runtime {
             com_vtables: HashMap::new(),
             ds_buffers: HashMap::new(),
             d3d: Default::default(),
+            gfx: None,
             fs: fs::FsState::new(
                 std::path::Path::new(exe).parent().map(Into::into).unwrap_or_default(),
                 std::env::current_dir().unwrap_or_default().join("run").join("c"),

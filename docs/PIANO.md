@@ -173,8 +173,11 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
   solo software (`crates/gpu-probe`, `analisi/d3d9.md`)
 - [x] Triangolo fuori schermo sulla GPU (PNG verificato) e finestra via WSLg (212 fotogrammi in 4 s)
 - [ ] Input simulato per superare la schermata iniziale e censire menu e gioco
-- [ ] D3D9 su wgpu: device, stati, risorse, formati, render target
-- [ ] Traduttore shader SM2/SM3 → WGSL
+- [x] Traduttore shader SM3 → WGSL (`crates/shader`): 1.488 shader del gioco tradotti e validati
+- [x] D3D9 su wgpu, prima versione fuori schermo (`gfx.rs`): **il gioco disegna la schermata
+  iniziale**, 74.341 draw senza errori → `analisi/d3d9.md`
+- [ ] Finestra vera e input: premere un tasto, entrare nei menu, caricare il gioco
+- [ ] Stencil, scissor, depth bias, rettangoli parziali, `ColorFill`, riciclo delle risorse
 - [ ] Video Bink, DirectSound (EAX opzionale), DirectInput, XInput
 - [ ] Confronto visivo: di norma con la DX10 originale, che sull'hardware attuale funziona
 - [ ] (facoltativo, solo se una differenza di rendering non si chiarisce con la DX10) Far
@@ -211,8 +214,8 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 ## Prossimi passi concreti
 
-1. **Fase 3**: provare wgpu da WSL; poi il traduttore shader SM3 → WGSL e il primo
-   fotogramma vero.
+1. **Fase 3**: finestra e input per superare la schermata iniziale; poi i menu e il
+   primo livello, completando il renderer man mano che servono le funzioni mancanti.
 2. Lettore `.forge` in Rust.
 3. Punti aperti della Fase 1: scenari mirati per le istruzioni non verificate, limiti della
    scoperta.
