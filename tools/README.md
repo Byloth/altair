@@ -223,3 +223,15 @@ Crops and enlarges an area of a PNG, to look closely at a detail of a screenshot
 ```sh
 python3 -I tools/crop.py run/shots/a.png run/shots/a-zoom.png -310 0 310 110 3
 ```
+
+## `bench-crowd.sh`
+
+Benchmark of the game thread in the tutorial crowd, the heaviest scene reached so far (about
+3,800 draws). Drives the game there with `ALTAIR_BENCH=1` (the runtime throws every batch away
+instead of sending it to the GPU, so the frame rate is the cost of the game thread alone:
+translated code plus draw recording), prints the busiest threads and three readings.
+
+```sh
+tools/bench-crowd.sh "label"
+ALTAIR_LIB=build/libaltair_ac1-clang-v3.so tools/bench-crowd.sh "variant"
+```

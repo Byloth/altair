@@ -118,6 +118,30 @@ void altair_set_mxcsr(Ctx *c, u32 v);
 ALTAIR_API u8 *altair_mem_create(void);
 ALTAIR_API void altair_mem_destroy(u8 *mem);
 
+/* Generated functions keep the guest's integer registers and the memory base in locals (see
+ * `localize` in the translator): `R_LOCALS` declares them, `R_SAVE` and `R_LOAD` bring the
+ * context up to date and read it back around anything that may look at it. */
+#define R_LOCALS() \
+    u32 eax = c->eax, ecx = c->ecx, edx = c->edx, ebx = c->ebx, esp = c->esp, ebp = c->ebp, esi = c->esi, edi = c->edi; \
+    u8 *const gm = c->mem
+#define R_SAVE() \
+    (c->eax = eax, c->ecx = ecx, c->edx = edx, c->ebx = ebx, c->esp = esp, c->ebp = ebp, c->esi = esi, c->edi = edi)
+#define R_LOAD() \
+    (eax = c->eax, ecx = c->ecx, edx = c->edx, ebx = c->ebx, esp = c->esp, ebp = c->ebp, esi = c->esi, edi = c->edi)
+#define R_CALL(call) do { R_SAVE(); call; R_LOAD(); } while (0)
+#define R_RET do { R_SAVE(); return; } while (0)
+#define R_TRAP(c, msg, addr) (R_SAVE(), altair_trap(c, msg, addr))
+
+/* Guest memory through the local base. */
+static inline u8 rd8_m(const u8 *m, u32 a) { return m[a]; }
+static inline u16 rd16_m(const u8 *m, u32 a) { u16 v; memcpy(&v, m + a, 2); return v; }
+static inline u32 rd32_m(const u8 *m, u32 a) { u32 v; memcpy(&v, m + a, 4); return v; }
+static inline u64 rd64_m(const u8 *m, u32 a) { u64 v; memcpy(&v, m + a, 8); return v; }
+static inline void wr8_m(u8 *m, u32 a, u8 v) { m[a] = v; }
+static inline void wr16_m(u8 *m, u32 a, u16 v) { memcpy(m + a, &v, 2); }
+static inline void wr32_m(u8 *m, u32 a, u32 v) { memcpy(m + a, &v, 4); }
+static inline void wr64_m(u8 *m, u32 a, u64 v) { memcpy(m + a, &v, 8); }
+
 static inline u8 rd8(Ctx *c, u32 a) { return c->mem[a]; }
 static inline u16 rd16(Ctx *c, u32 a) { u16 v; memcpy(&v, c->mem + a, 2); return v; }
 static inline u32 rd32(Ctx *c, u32 a) { u32 v; memcpy(&v, c->mem + a, 4); return v; }

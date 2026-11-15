@@ -23,6 +23,10 @@ static inline f80 rdf80(Ctx *c, u32 a) { f80 v = 0; memcpy(&v, c->mem + a, 10); 
 static inline void wrf80(Ctx *c, u32 a, f80 v) { memcpy(c->mem + a, &v, 10); }
 static inline void wrf32(Ctx *c, u32 a, float v) { memcpy(c->mem + a, &v, 4); }
 static inline void wrf64(Ctx *c, u32 a, double v) { memcpy(c->mem + a, &v, 8); }
+static inline f80 rdf80_m(const u8 *m, u32 a) { f80 v = 0; memcpy(&v, m + a, 10); return v; }
+static inline void wrf80_m(u8 *m, u32 a, f80 v) { memcpy(m + a, &v, 10); }
+static inline void wrf32_m(u8 *m, u32 a, float v) { memcpy(m + a, &v, 4); }
+static inline void wrf64_m(u8 *m, u32 a, double v) { memcpy(m + a, &v, 8); }
 
 /* Status word as `fnstsw` reads it: condition codes plus the top of the stack. */
 #define X87_SW() ((c->fpsw & ~0x3800u) | (c->fptop << 11))

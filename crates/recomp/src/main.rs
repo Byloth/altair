@@ -519,7 +519,7 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
             }
             let mut c = translate::emit(f, &known)?;
             if hooks.contains(a) {
-                const FLAGS: &str = "    u32 cf = 0, zf = 0, sf = 0, of = 0, pf = 0, af = 0;\n";
+                const FLAGS: &str = translate::FLAGS_LINE;
                 c = c.replacen(FLAGS, &format!("{FLAGS}    if (altair_hook(c, {a:#x}u)) return;\n"), 1);
                 hooked += 1;
             }

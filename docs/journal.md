@@ -385,3 +385,11 @@ Request from the user while trying `tools/play.sh`.
 - **Debug fast-forward.** The user's idea, to avoid waiting through the lab scene: the game
   clock can run faster (`clock.rs`; F9 toggles 8x, `speed N`, `ALTAIR_SPEED`). The lab scene
   takes 16 seconds instead of about 100; `tools/start.sh` uses it → `analysis/runtime.md`.
+- **Rendering performance, first round on the game thread** (the user: 21-23 fps in the
+  tutorial crowd on Windows, where the driver is fast and the game thread is the limit).
+  `ALTAIR_BENCH=1` and `tools/bench-crowd.sh` measure that thread alone: 25.5 fps, one thread
+  at 100%, 26.8 ms of translated code and 12.4 ms in the runtime per frame; the profile is
+  flat. Hash table for indirect calls (+4%); guest integer registers and memory base in
+  locals of each generated function (+7%, the function looked at went from 591 to 488 host
+  instructions). 28.4 fps now. Next: XMM and x87 state in locals, draw recording →
+  `analysis/translator.md`.

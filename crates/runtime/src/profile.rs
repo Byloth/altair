@@ -157,7 +157,7 @@ pub fn report() {
     let mut syms: Vec<_> = by_sym.into_iter().collect();
     syms.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
     eprintln!("[profile] most frequent symbols (or pages, where there are no symbols):");
-    for ((lib, sym), c) in syms.iter().take(12) {
+    for ((lib, sym), c) in syms.iter().take(std::env::var("ALTAIR_PROFILE_TOP").ok().and_then(|v| v.parse().ok()).unwrap_or(12)) {
         eprintln!("[profile]   {:5.1}%  {lib}  {}", pct(*c), &sym[..sym.len().min(110)]);
     }
 }

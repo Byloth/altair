@@ -91,6 +91,14 @@ static SUBMIT_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::n
 
 fn run_batch(queue: &wgpu::Queue, batch: Batch) {
     let start = std::time::Instant::now();
+    // Measurement mode (`ALTAIR_BENCH=1`): the batch is thrown away, nothing reaches the GPU.
+    // The frame rate then shows the cost of the game thread alone (translated code plus draw
+    // recording), which is what limits the frame rate where the driver is fast. Black image.
+    static BENCH: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *BENCH.get_or_init(|| std::env::var("ALTAIR_BENCH").is_ok_and(|v| v == "1")) {
+        drop(batch);
+        return;
+    }
     // Everything that touches the queue happens while holding the gate: this way it never
     // overlaps the creation of a resource on the other thread (wgpu's internal locks cannot
     // cope with that crossing: the game used to hang while loading). Large writes go out in

@@ -21,16 +21,35 @@ typedef jmp_buf AltairJmp;
 
 #define GUEST_SPACE (1ull << 32)
 
-static AltairFn find(u32 addr) {
-    u32 lo = 0, hi = altair_function_count;
-    while (lo < hi) {
-        u32 mid = lo + (hi - lo) / 2;
-        if (altair_functions[mid].addr < addr)
-            lo = mid + 1;
-        else
-            hi = mid;
+/* Indirect calls and jumps look the target up here on every execution: a hash table instead
+ * of a binary search over 117,000 entries (17 steps, 5.5% of the render thread in the
+ * tutorial crowd). Open addressing, built once on first use; a racing second builder would
+ * write the same values. */
+#define FIND_BITS 19
+#define FIND_SIZE (1u << FIND_BITS)
+static struct { u32 addr; u32 index; } find_table[FIND_SIZE];
+static int find_ready;
+
+static inline u32 find_hash(u32 addr) { return (addr * 0x9E3779B1u) >> (32 - FIND_BITS); }
+
+static void find_build(void) {
+    for (u32 i = 0; i < altair_function_count; i++) {
+        u32 h = find_hash(altair_functions[i].addr);
+        while (find_table[h].addr && find_table[h].addr != altair_functions[i].addr)
+            h = (h + 1) & (FIND_SIZE - 1);
+        find_table[h].index = i;
+        find_table[h].addr = altair_functions[i].addr;
     }
-    return lo < altair_function_count && altair_functions[lo].addr == addr ? altair_functions[lo].fn : 0;
+    __atomic_store_n(&find_ready, 1, __ATOMIC_RELEASE);
+}
+
+static AltairFn find(u32 addr) {
+    if (!__atomic_load_n(&find_ready, __ATOMIC_ACQUIRE))
+        find_build();
+    for (u32 h = find_hash(addr); find_table[h].addr; h = (h + 1) & (FIND_SIZE - 1))
+        if (find_table[h].addr == addr)
+            return altair_functions[find_table[h].index].fn;
+    return 0;
 }
 
 /* The last targets of this thread's indirect calls and jumps: when something goes

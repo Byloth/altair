@@ -18,6 +18,10 @@ static inline float rdf32(Ctx *c, u32 a) { float v; memcpy(&v, c->mem + a, 4); r
 static inline double rdf64(Ctx *c, u32 a) { double v; memcpy(&v, c->mem + a, 8); return v; }
 static inline Xmm xld(Ctx *c, u32 a) { Xmm v; memcpy(&v, c->mem + a, 16); return v; }
 static inline void xst(Ctx *c, u32 a, Xmm v) { memcpy(c->mem + a, &v, 16); }
+static inline float rdf32_m(const u8 *m, u32 a) { float v; memcpy(&v, m + a, 4); return v; }
+static inline double rdf64_m(const u8 *m, u32 a) { double v; memcpy(&v, m + a, 8); return v; }
+static inline Xmm xld_m(const u8 *m, u32 a) { Xmm v; memcpy(&v, m + a, 16); return v; }
+static inline void xst_m(u8 *m, u32 a, Xmm v) { memcpy(m + a, &v, 16); }
 /* Loads 64 or 32 bits and zeroes the rest, like `movq`/`movd`/`movss` from memory. */
 static inline Xmm xq(u64 v) { Xmm r = {.q = {v, 0}}; return r; }
 static inline Xmm xd(u32 v) { Xmm r = {.d = {v, 0, 0, 0}}; return r; }

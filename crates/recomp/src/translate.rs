@@ -377,7 +377,7 @@ impl Emitter<'_> {
             }
         }
         out.push_str("}\n");
-        Ok(out)
+        Ok(localize(&out))
     }
 
     fn insn(&self, ins: &Instruction) -> R<String> {
@@ -1458,6 +1458,76 @@ pub fn supported(ins: &Instruction) -> bool {
 }
 
 /// Translates `f`; `known` tells which functions will be defined in the same file.
+/// The line every generated function starts its body with (the hook check, when there is one,
+/// is inserted right after it).
+pub const FLAGS_LINE: &str = "    u32 cf = 0, zf = 0, sf = 0, of = 0, pf = 0, af = 0;\n";
+
+/// Moves the guest's integer registers and the memory base from the context into local
+/// variables of the generated function.
+///
+/// The instruction templates write `c->eax`, `rd32(c, …)` and so on. Compiled as they are, the
+/// host code reloads and rewrites the context around almost every guest memory access, because
+/// the compiler cannot prove that a store into guest memory leaves the context alone (measured:
+/// 591 host instructions for a 154-instruction function, mostly that traffic). Locals whose
+/// address never escapes cannot alias anything, so the compiler keeps them in host registers.
+/// The context is brought up to date (`R_SAVE`) and read back (`R_LOAD`) only where someone
+/// else may look at it: calls to other guest functions, indirect calls, `cpuid`, traps and
+/// returns. The macros are in `runtime/altair.h`.
+fn localize(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + text.len() / 8);
+    for line in text.split_inclusive('\n') {
+        // Disassembly comments and labels go through untouched.
+        if line.starts_with("    /* ") || line.starts_with("L_") || line.starts_with("void ") {
+            out.push_str(line);
+            continue;
+        }
+        let mut l = line.to_string();
+        for r in ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"] {
+            l = l.replace(&format!("c->{r}"), r);
+        }
+        for h in ["rd8", "rd16", "rd32", "rd64", "wr8", "wr16", "wr32", "wr64", "rdf32", "rdf64", "rdf80", "wrf32", "wrf64", "wrf80", "xld", "xst"] {
+            l = l.replace(&format!("{h}(c, "), &format!("{h}_m(gm, "));
+        }
+        l = l.replace("altair_trap(c, ", "R_TRAP(c, ").replace("altair_cpuid(c);", "R_CALL(altair_cpuid(c));").replace("return;", "R_RET;");
+        // Direct calls: `f_XXXXXXXX(c);`.
+        let mut done = String::with_capacity(l.len() + 32);
+        let mut rest = l.as_str();
+        while let Some(i) = rest.find("f_") {
+            let call = &rest[i..];
+            let is_call = call.len() >= 14 && call.as_bytes()[2..10].iter().all(u8::is_ascii_hexdigit) && call[10..].starts_with("(c);");
+            if is_call {
+                done.push_str(&rest[..i]);
+                done.push_str(&format!("R_CALL({});", &call[..13]));
+                rest = &call[14..];
+            } else {
+                done.push_str(&rest[..i + 2]);
+                rest = &rest[i + 2..];
+            }
+        }
+        done.push_str(rest);
+        // Indirect calls: the whole statement, up to its semicolon.
+        let mut l = String::with_capacity(done.len() + 32);
+        let mut rest = done.as_str();
+        while let Some(i) = rest.find("altair_call_indirect(c, ") {
+            let end = i + rest[i..].find(';').expect("an indirect call ends with a semicolon");
+            l.push_str(&rest[..i]);
+            l.push_str(&format!("R_CALL({});", &rest[i..end]));
+            rest = &rest[end + 1..];
+        }
+        l.push_str(rest);
+        out.push_str(&l);
+        if line == FLAGS_LINE {
+            out.push_str("    R_LOCALS();\n");
+        }
+    }
+    // Falling off the end (after a call that does not return, for instance) still leaves the
+    // context up to date.
+    match out.rfind("}\n") {
+        Some(i) => format!("{}    R_SAVE();\n{}", &out[..i], &out[i..]),
+        None => out,
+    }
+}
+
 pub fn emit(f: &Func, known: &dyn Fn(u32) -> bool) -> R<String> {
     // `u(BITS)` in the templates becomes the unsigned type of the right width.
     let c = Emitter { f, known }.emit()?;

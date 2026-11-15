@@ -293,6 +293,36 @@ inputs that the generator cannot build; the x87 stack always starts empty.
 `tools/difftrace.py <exe> 0xADDR <case>` replays a case on the two engines and shows the addresses
 executed, registers and first memory differences.
 
+## Guest registers in locals (2026-11-15)
+
+A hot function of the tutorial crowd (`0x428540`, 154 guest instructions) compiled to 591
+host instructions: after almost every store into guest memory the host code reloaded the
+guest registers and the memory base from the context and wrote them back. `Ctx *restrict`
+does not help here: the compiler cannot prove that a pointer loaded from the context
+(`c->mem`) is not based on the context itself.
+
+`localize` (in `translate.rs`) post-processes every generated function: the eight integer
+registers and the memory base become locals (`R_LOCALS` in `runtime/altair.h`), the templates'
+`c->eax` and `rd32(c, …)` become `eax` and `rd32_m(gm, …)`, and the context is brought up to
+date and read back (`R_SAVE`, `R_LOAD`) only around what may look at it: direct and indirect
+calls, `cpuid`, traps, returns. A hook check stays before the locals, so a hook may change
+the context. The same function is now 488 host instructions; XMM and x87 state still live in
+the context and account for most of what is left.
+
+Verified: hand-written scenarios identical; automatic sample of 2,500 functions, 1,346
+identical, 0 different. Measured with `tools/bench-crowd.sh` (game thread only, 3,800 draws):
+
+| Step | Frames per second | Game code per frame |
+|---|---|---|
+| Before (binary search for indirect calls) | 25.5 | 26.8 ms |
+| Hash table for indirect calls (`find` in `runtime/altair.c`) | 26.6 | 25.3 ms |
+| The same, built with `-march=x86-64-v3` | 27.0 | not kept: 1.5% is not worth excluding older CPUs |
+| Integer registers and memory base in locals | 28.4 | 22.9 ms |
+
+The profile of that scene is flat (no function above 3%), so the remaining gains are
+systemic: XMM and x87 registers in locals, then the cost of recording a draw in the runtime
+(12.3 ms per frame, a third of the frame).
+
 ## Hooks (2026-11-15)
 
 For observing or changing the game's internal behaviour without touching the generated code by
