@@ -336,3 +336,10 @@ Richiesta dell'utente mentre prova `tools/gioca.sh`.
 - Ricognizione dei residui di sviluppo nel binario (richiesta dell'utente, per l'indicatore di
   FPS): c'è un interprete di 60 opzioni da riga di comando, `/nofps` compreso, ma è codice
   orfano e manca il testo dell'indicatore → `analisi/funzioni-nascoste.md`.
+- Indicatore di FPS: cercato ancora l'interruttore originale, nessun lettore → fatto nostro.
+  `overlay.rs`: pannello in sovrimpressione in stile Animus (elica animata, numeri, grafico dei
+  tempi), F8 / `fps` / `ALTAIR_FPS=1`; via i numeri dal titolo della finestra. Verificato su
+  WSL con una schermata.
+- Filmati iniziali: logo, "presenta" e avvertenze ora scorrono via con un tasto o un clic
+  (il logo in un secondo, le due schermate fisse in metà tempo: il gioco le conta a 30 al
+  secondo) → `analisi/runtime.md`.

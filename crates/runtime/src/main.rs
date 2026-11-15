@@ -6,6 +6,7 @@ mod d3d9;
 mod dsound;
 mod fs;
 mod gfx;
+mod overlay;
 mod host;
 mod input;
 mod machine;
@@ -174,6 +175,7 @@ pub fn trap_text(ctx: &Ctx) -> String {
 }
 
 fn main() -> ExitCode {
+    overlay::init();
     match run() {
         Ok(code) => ExitCode::from(code as u8),
         Err(e) => {

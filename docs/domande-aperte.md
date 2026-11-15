@@ -7,13 +7,16 @@ sostituisci qui la voce con un rimando.
 
 Ricognizione in `analisi/funzioni-nascoste.md`. Restano da capire:
 
-1. Chi legge il byte `+0x92` delle impostazioni del motore (`[0x1A0F058]`), cioè se esiste
-   ancora codice che disegna l'indicatore di FPS di sviluppo.
+1. ~~Chi legge il byte `+0x92` delle impostazioni del motore~~: cercato, nessun lettore
+   trovato → `analisi/funzioni-nascoste.md`. Indicatore fatto nostro.
 2. Se `QuickTeleportHandler`, la telecamera di debug e le statistiche del profiler hanno
    codice raggiungibile e dati nei `.forge`.
 3. Se la telecamera "troppo vicina" segnalata su Windows dipendeva da `frndint`/`fistp` che
    ignoravano l'arrotondamento x87 (corretto oggi, `traduttore.md` punto 7): da riprovare
    prima di indagare oltre.
+4. Dove il gioco conta gli avanzamenti delle schermate "presenta" e avvertenze (al più 30 al
+   secondo): serve per saltarle del tutto invece di dimezzarle (`runtime.md`, "Filmati
+   iniziali saltabili").
 
 ## Fase 0: binario
 

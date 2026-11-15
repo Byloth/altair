@@ -199,6 +199,8 @@ pub struct Gfx {
     zero_vb: wgpu::Buffer,
     dummies: [wgpu::TextureView; 3],
     blit: Option<(wgpu::ShaderModule, HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>)>,
+    /// Il pannello di diagnostica (F8): shader e una pipeline per formato di destinazione.
+    overlay: Option<(wgpu::ShaderModule, HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>)>,
     /// La superficie della finestra, se c'è (`ALTAIR_WINDOW=1`), con la sua configurazione.
     /// Buffer usati da draw non ancora inviati; versioni di appoggio (offset nel buffer di
     /// appoggio); buffer veri rimasti indietro rispetto alla memoria guest.
@@ -502,6 +504,7 @@ impl Gfx {
             zero_vb,
             dummies,
             blit: None,
+            overlay: None,
             used: Default::default(),
             shadow: HashMap::new(),
             pool: HashMap::new(),
@@ -1567,6 +1570,65 @@ impl Gfx {
         pass.draw(0..3, 0..1);
     }
 
+    /// Disegna il pannello di diagnostica sopra una vista di `w`×`h` pixel.
+    fn draw_overlay(&mut self, dv: &wgpu::TextureView, df: wgpu::TextureFormat, w: u32, h: u32) {
+        let vertices = crate::overlay::build(w, h, df.is_srgb());
+        if vertices.is_empty() {
+            return;
+        }
+        let _gate = gate();
+        if self.overlay.is_none() {
+            let m = self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: None, source: wgpu::ShaderSource::Wgsl(crate::overlay::SHADER.into()) });
+            self.overlay = Some((m, HashMap::new()));
+        }
+        let (module, cache) = self.overlay.as_mut().unwrap();
+        let pipeline = cache.entry(df).or_insert_with(|| {
+            self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: None,
+                layout: None,
+                vertex: wgpu::VertexState {
+                    module,
+                    entry_point: Some("vs"),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: 24,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4],
+                    }],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module,
+                    entry_point: Some("fs"),
+                    targets: &[Some(wgpu::ColorTargetState { format: df, blend: Some(wgpu::BlendState::ALPHA_BLENDING), write_mask: wgpu::ColorWrites::ALL })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview: None,
+                cache: None,
+            })
+        });
+        // Un buffer nuovo per fotogramma, riempito alla nascita: poche decine di KB, e non
+        // passa dalla coda (che appartiene al thread di invio).
+        let data = crate::overlay::bytes(&vertices);
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: data.len() as u64, usage: wgpu::BufferUsages::VERTEX, mapped_at_creation: true });
+        buffer.slice(..).get_mapped_range_mut().copy_from_slice(data);
+        buffer.unmap();
+        drop(_gate);
+        let encoder = self.encoder.get_or_insert_with(|| self.device.create_command_encoder(&Default::default()));
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: dv, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        pass.set_pipeline(pipeline);
+        pass.set_vertex_buffer(0, buffer.slice(..));
+        pass.draw(0..vertices.len() as u32, 0..1);
+    }
+
     /// Porta il back buffer sulla finestra, se c'è, adattandolo alla sua dimensione.
     fn show(&mut self, d: &D3d) {
         let Some((surface, mut config, window)) = self.surface.take() else { return };
@@ -1590,6 +1652,9 @@ impl Gfx {
                     if let Some((sv, ..)) = self.view_of(d, d.backbuffer) {
                         let dv = frame.texture.create_view(&Default::default());
                         self.blit_views(&sv, &dv, config.format);
+                        if crate::overlay::enabled() {
+                            self.draw_overlay(&dv, config.format, config.width, config.height);
+                        }
                     }
                 }
                 // La presentazione avviene dopo l'invio, sul thread di invio: se aspetta lo
@@ -1627,6 +1692,32 @@ impl Gfx {
         if !self.ensure_texture(d, obj) {
             return None;
         }
+        // Con il pannello di diagnostica acceso la foto del back buffer lo comprende, come in
+        // finestra: si compone su una copia, senza sporcare la superficie del gioco.
+        let mut composed = None;
+        if crate::overlay::enabled() && surface == d.backbuffer && level == 0 && self.textures[&obj].format == wgpu::TextureFormat::Bgra8Unorm {
+            let (w, h) = (self.textures[&obj].w, self.textures[&obj].h);
+            if let Some((sv, ..)) = self.view_of(d, surface) {
+                self.end_pass();
+                let copy = {
+                    let _gate = gate();
+                    self.device.create_texture(&wgpu::TextureDescriptor {
+                        label: None,
+                        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Bgra8Unorm,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                        view_formats: &[],
+                    })
+                };
+                let dv = copy.create_view(&Default::default());
+                self.blit_views(&sv, &dv, wgpu::TextureFormat::Bgra8Unorm);
+                self.draw_overlay(&dv, wgpu::TextureFormat::Bgra8Unorm, w, h);
+                composed = Some(copy);
+            }
+        }
         // La lettura passa dalla coda: prima deve essere arrivato tutto il resto.
         self.sync();
         let _gate = gate();
@@ -1635,11 +1726,12 @@ impl Gfx {
             return None;
         }
         let (w, h) = ((t.w >> level).max(1), (t.h >> level).max(1));
+        let source = composed.as_ref().unwrap_or(&t.texture);
         let row = (w * 4).next_multiple_of(256);
         let buf = self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: (row * h) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
         let mut enc = self.device.create_command_encoder(&Default::default());
         enc.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo { texture: &t.texture, mip_level: level, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+            wgpu::TexelCopyTextureInfo { texture: source, mip_level: if composed.is_some() { 0 } else { level }, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
             wgpu::TexelCopyBufferInfo { buffer: &buf, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: None } },
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );

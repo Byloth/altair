@@ -2,7 +2,8 @@
 # Avvia il gioco tradotto in una finestra, con tastiera, mouse e audio veri.
 # Uso: tools/gioca.sh            (dalla radice del progetto; chiudere la finestra per uscire)
 # F10 cattura o libera il puntatore del mouse (catturato: visuale; libero: menu).
-# F8 mostra o nasconde i fotogrammi al secondo nel titolo della finestra.
+# F8 mostra o nasconde il pannello di diagnostica (fotogrammi al secondo) in sovrimpressione.
+# Un tasto o un clic fa scorrere via i filmati iniziali (logo, "presenta", avvertenze).
 # Variabili utili: ALTAIR_LANG=English|Italian|…  ALTAIR_AUDIO=0  ALTAIR_VIDEO=0  ALTAIR_STATS=1
 set -euo pipefail
 cd "$(dirname "$0")/.."

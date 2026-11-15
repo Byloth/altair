@@ -64,7 +64,6 @@ pub struct D3d {
     /// Misure di ritmo (vedi `dev_present`).
     pub stats_since: Option<std::time::Instant>,
     /// Istante, fotogramma e draw dell'ultima misura mostrata nel titolo.
-    pub fps_mark: Option<(std::time::Instant, u64, u64)>,
     pub stats_frame: u64,
     pub stats_draws: u64,
     pub gfx_time: std::time::Duration,
@@ -441,17 +440,9 @@ fn dev_present(rt: &mut Runtime, _: &mut Call) -> u32 {
     }
     let frame = d.frames;
     crate::profile::watch_current_thread();
+    crate::overlay::frame(in_frame);
     with_gfx(rt, |g, d, _| g.present(d, frame));
     sweep(rt);
-    // Due volte al secondo, per il titolo della finestra (F8).
-    let d = &mut rt.d3d;
-    let (when, at_frame, at_draws) = *d.fps_mark.get_or_insert((std::time::Instant::now(), d.frames, d.draws));
-    let elapsed = when.elapsed().as_secs_f64();
-    if elapsed >= 0.5 {
-        let frames = (d.frames - at_frame).max(1);
-        crate::window::show_fps(frames as f64 / elapsed, (d.draws - at_draws) / frames);
-        d.fps_mark = Some((std::time::Instant::now(), d.frames, d.draws));
-    }
     // Ogni cinque secondi, il ritmo: fotogrammi al secondo, tempo passato nel renderer, invii.
     let d = &mut rt.d3d;
     let since = d.stats_since.get_or_insert_with(std::time::Instant::now).elapsed();
@@ -583,6 +574,9 @@ fn control(rt: &mut Runtime, frame: u64) {
                 with_gfx(rt, |g, d, _| saved = g.save(d, d.backbuffer, &file));
                 eprintln!("[ctl] fotogramma {frame}: {} {:?}", file.display(), saved);
             }
+            Some("fps") => eprintln!("[ctl] pannello di diagnostica {}", if crate::overlay::toggle() { "acceso" } else { "spento" }),
+            // Come un tasto qualunque per chi conta le pressioni (salto dei filmati iniziali).
+            Some("press") => crate::window::note_press(),
             Some("stats") => eprintln!("[ctl] fotogramma {frame}: {}", rt.d3d.last_stats),
             // `profile reset` azzera i campioni, `profile` stampa il resoconto (ALTAIR_PROFILE=1).
             Some("profile") => match words.next() {

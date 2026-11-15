@@ -408,7 +408,8 @@ dimensione della finestra. Gli eventi si accumulano in uno stato condiviso:
 - mouse → `DIMOUSESTATE` (spostamento dall'ultima lettura, rotella, pulsanti), `GetCursorPos`
   e messaggi `WM_MOUSEMOVE`, `WM_xBUTTONDOWN/UP`;
 - chiusura della finestra → uscita immediata del processo;
-- **F8** mostra o nasconde nel titolo della finestra i fotogrammi al secondo e i draw;
+- **F8** (non arriva al gioco) mostra o nasconde il pannello di diagnostica in sovrimpressione:
+  vedi "Pannello di diagnostica" più sotto;
 - **F10** cattura o libera il puntatore (non arriva al gioco): catturato, il mouse muove la
   visuale senza fermarsi ai bordi; libero, serve per i menu.
 
@@ -446,6 +447,50 @@ iniettarli (su X11, dove esisterebbe XTEST, a winit manca `libxkbcommon-x11.so` 
 non si apre: in quel caso il runtime prosegue fuori schermo). Il gioco legge il mouse come
 stato immediato `DIMOUSESTATE2` (20 byte) a ogni fotogramma, e all'avvio enumera gli oggetti
 dei dispositivi con `EnumObjects`: per il mouse elenchiamo tre assi e otto pulsanti.
+
+### Pannello di diagnostica (F8, 2026-11-15)
+
+Richiesta dell'utente: niente numeri nel titolo della finestra, ma un indicatore disegnato a
+video, curato e nello stile dell'Animus, "che ricordi che tutto il gioco si svolge dentro a
+una macchina". Prima si è cercato un indicatore originale da riaccendere: non c'è
+(`funzioni-nascoste.md`).
+
+`overlay.rs` costruisce il pannello come elenco di triangoli colorati, in pixel della
+finestra; `gfx.rs` lo disegna sulla superficie dopo aver copiato il back buffer, con una
+pipeline a parte (alfa, nessuna texture) e un buffer di vertici nuovo per fotogramma. Il gioco
+non lo vede: il suo back buffer resta intatto. Contenuto: un'elica di rombi che ruota,
+"ANIMUS / SINCRONIA", i fotogrammi al secondo in grande, millisecondi per fotogramma, draw per
+fotogramma, e una barretta per ognuno degli ultimi 56 fotogrammi (rossa quando uno dura più
+di 1,6 volte la media). Sotto i 30 fotogrammi al secondo numeri e accenti passano al rosso
+della desincronizzazione. I valori si aggiornano due volte al secondo.
+
+**Niente asset del gioco:** caratteri 5×7, elica e cornice sono descritti in codice. Il logo
+Abstergo non c'è, apposta: è un marchio di Ubisoft e la regola 1 lo tiene fuori dal repository.
+
+Si accende con F8, con il comando `fps` del canale di comando o con `ALTAIR_FPS=1`. Con il
+pannello acceso, `shot` salva ciò che si vede in finestra (back buffer più pannello, composti
+su una copia). Verificato su WSL nel laboratorio (`run/scatti/pannello-1.png`); su Windows da
+provare.
+
+**F8 e il gioco.** Il tasto è intercettato in `window.rs` e non raggiunge mai DirectInput, come
+F10. Per sapere se il gioco perde qualcosa: iniettato il codice DIK 66 (F8) dal canale di
+comando nel laboratorio, nessun effetto visibile; nel codice tradotto nessun test del tipo
+`[stato+42h] & 80h`. Non è una prova di assenza: i tasti sono rimappabili dalle opzioni.
+
+### Filmati iniziali saltabili (2026-11-15)
+
+L'originale lascia saltare solo `DemoIntro.bik`; `UBI_LOGO.bik` (257 fotogrammi, 8,6 s),
+`Ubisoft_Presents.bik` e `Warning_Disclaimer.bik` (due fotogrammi in ciclo, mostrati per 105 e
+213 avanzamenti: 7 e 14 s) vanno guardati per intero. Ora un tasto o un clic durante uno di
+questi tre li fa scorrere: `BinkWait` smette di far aspettare e l'audio del filmato si ferma
+(`bink.rs`, `Video::skipping`; `window.rs` conta le pressioni). Ogni pressione salta un filmato.
+
+Misure (WSL, comando `press` un secondo dopo l'apertura): logo chiuso 1,3 s dopo la pressione;
+"presenta" dopo 3 s; avvertenze dopo 7 s. Le due schermate fisse non scendono oltre perché il
+gioco conta gli avanzamenti e ne chiede al più 30 al secondo, qualunque cosa risponda
+`BinkWait` (durante il salto il ciclo del gioco gira a 200 al secondo, gli avanzamenti restano
+30). Per accorciarle ancora bisognerebbe trovare quel contatore nel gioco: non fatto.
+`ALTAIR_INTRO_SKIP=0` ripristina il comportamento originale.
 
 ## Windows nativo (2026-11-15)
 

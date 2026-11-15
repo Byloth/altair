@@ -41,7 +41,13 @@ pulsanti per mondo e portale: un menu di teletrasporto), `hkDebugDisplay` (Havok
 - **Nessun testo per l'indicatore.** Tra le 43.067 stringhe (ASCII e UTF-16) non c'è alcun
   formato del tipo "FPS: %d" né simili. Ipotesi: il disegno del testo di debug è stato
   compilato via e ne è rimasto solo l'interruttore.
-- Chi legge il byte `+0x92` delle impostazioni non è stato ancora cercato.
+- **Nessun lettore trovato per il byte `+0x92` delle impostazioni** (seconda ricerca, stesso
+  giorno). Nel codice tradotto nessuna funzione carica `[0x1A0F058]` e poi legge `+92h`; le
+  16 letture di un byte a `+92h` in tutto il codice appartengono ad altre classi (guardate una
+  per una quelle vicine al motore: `0xA07A46` è il calcolo del colore di una luce, `0xA05AB4`
+  e `0xA05C1F` copiano una struttura, `0x9CF982` è codice di una libreria). L'oggetto nasce in
+  `0x4066B9` (`call 0x9E5090`). Non è una prova definitiva, ma con l'assenza del testo basta
+  per non contarci: l'indicatore è stato fatto nostro (`runtime.md`, "Pannello di diagnostica").
 
 ## Cosa se ne può fare
 

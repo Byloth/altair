@@ -2,8 +2,8 @@
 //! soltanto. Il renderer ci presenta sopra il back buffer; tastiera e mouse arrivano al gioco
 //! per le sue due strade, lo stato di DirectInput e i messaggi della finestra.
 //!
-//! F10 cattura o libera il puntatore del mouse; F8 mostra o nasconde i fotogrammi al secondo
-//! nel titolo della finestra.
+//! F10 cattura o libera il puntatore del mouse; F8 mostra o nasconde il pannello di diagnostica
+//! (fotogrammi al secondo, in sovrimpressione: vedi `overlay.rs`).
 //!
 //! Qui non si tocca il runtime: gli eventi si accumulano in `State`, e gli shim li leggono
 //! quando il gioco li chiede.
@@ -41,16 +41,16 @@ pub struct State {
 }
 
 const TITLE: &str = "AC1 Recompiled - Altaïr";
-static SHOW_FPS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Quante volte è stato premuto un tasto o un pulsante del mouse: chi vuole sapere se "l'utente
+/// ha premuto qualcosa" da un certo momento confronta due letture (i filmati iniziali).
+static PRESSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Chiamata dal renderer un paio di volte al secondo: se F8 li ha accesi, scrive nel titolo
-/// della finestra i fotogrammi al secondo e i draw per fotogramma.
-pub fn show_fps(fps: f64, draws: u64) {
-    if SHOW_FPS.load(std::sync::atomic::Ordering::Relaxed) {
-        if let Some(w) = WINDOW.get() {
-            w.set_title(&format!("{TITLE} · {fps:.0} fps · {draws} draw"));
-        }
-    }
+pub fn presses() -> u64 {
+    PRESSES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn note_press() {
+    PRESSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 static WINDOW: OnceLock<Arc<Window>> = OnceLock::new();
@@ -178,20 +178,18 @@ impl ApplicationHandler for App {
                     }
                     return;
                 }
-                // F8 non va al gioco: mostra o nasconde i fotogrammi al secondo nel titolo.
+                // F8 non va al gioco: accende o spegne il pannello di diagnostica (overlay.rs).
                 if code == KeyCode::F8 {
                     if event.state == ElementState::Pressed && !event.repeat {
-                        let on = !SHOW_FPS.fetch_xor(true, std::sync::atomic::Ordering::Relaxed);
-                        if !on {
-                            if let Some(w) = WINDOW.get() {
-                                w.set_title(TITLE);
-                            }
-                        }
+                        crate::overlay::toggle();
                     }
                     return;
                 }
                 let Some((dik, vk)) = map(code) else { return };
                 let down = event.state == ElementState::Pressed;
+                if down && !event.repeat {
+                    note_press();
+                }
                 s.keys[dik as usize] = if down { 0x80 } else { 0 };
                 let ch = if down { event.text.as_ref().and_then(|t| t.chars().next()).filter(|c| !c.is_control()) } else { None };
                 if log_enabled() && !event.repeat {
@@ -225,6 +223,9 @@ impl ApplicationHandler for App {
                     MouseButton::Other(_) => return,
                 };
                 let down = st == ElementState::Pressed;
+                if down {
+                    note_press();
+                }
                 if log_enabled() {
                     eprintln!("[input] finestra: pulsante {index} {} in {:?}", if down { "giù" } else { "su" }, s.cursor);
                 }
