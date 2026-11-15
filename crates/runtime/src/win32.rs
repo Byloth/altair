@@ -584,7 +584,8 @@ fn get_process_affinity_mask(rt: &mut Runtime, c: &mut Call) -> u32 {
     1
 }
 fn sleep(c: &mut Call) -> u32 {
-    std::thread::sleep(std::time::Duration::from_millis(c.arg(0) as u64));
+    // Waits shrink with the debug fast-forward, like every other time the game sees.
+    std::thread::sleep(std::time::Duration::from_micros(c.arg(0) as u64 * 1000 / crate::clock::speed() as u64));
     0
 }
 
@@ -822,7 +823,7 @@ fn close_handle(rt: &mut Runtime, c: &mut Call) -> u32 {
 }
 const WAIT_TIMEOUT: u32 = 0x102;
 fn timeout(ms: u32) -> Option<u32> {
-    (ms != 0xffff_ffff).then_some(ms)
+    (ms != 0xffff_ffff).then(|| if ms == 0 { 0 } else { (ms / crate::clock::speed()).max(1) })
 }
 fn wait_for_single_object(c: &mut Call) -> u32 {
     match object(c.arg(0)) {

@@ -562,10 +562,18 @@ time, and with a speed factor above one advances faster, so the game plays every
 the control channel and `ALTAIR_SPEED=N` set any factor from 1 to 64. Changing the factor
 never makes the time jump.
 
-Verified on WSL: with `speed 8` the lab scene reaches "PREMERE QUALUNQUE PULSANTE PER
-INTERAGIRE" in 16 seconds (`run/shots/speed-lab.png`); `tools/start.sh --animus` uses it. Audio
-and videos keep running in real time, so sound is out of sync while the factor is on: it is a
-debugging aid. `rdtsc` and `Sleep` are not scaled.
+Everything the game uses to measure time has to follow the factor. The first version scaled
+only the two clocks, and the user got stuck in the Animus scene that follows the lab (the
+brain, "IN ATTESA DI INPUT"): reproduced here, the scene never moved on to the DNA helix.
+The game's sound engine times its streams with the same clock; with the sound buffers still
+advancing in real time it lost track of a voice line the scene was waiting for. Now `Sleep`
+and timed waits shrink by the factor (`win32.rs`) and the mixer advances the buffer cursors
+`speed` times per pass, in silence (`dsound.rs`). Bink videos and `rdtsc` are not scaled.
+
+Verified on WSL: with `speed 8` kept on from the lab onwards and two key presses, the game
+goes from the main menu to Altaïr in the memory corridor in about one minute of real time
+(`run/shots/ff-1-small.png`); the lab scene alone takes 16 seconds instead of about 100.
+`tools/start.sh --animus` uses it for the lab.
 
 ## Native Windows (2026-11-15)
 

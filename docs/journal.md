@@ -393,3 +393,6 @@ Request from the user while trying `tools/play.sh`.
   locals of each generated function (+7%, the function looked at went from 591 to 488 host
   instructions). 28.4 fps now. Next: XMM and x87 state in locals, draw recording →
   `analysis/translator.md`.
+- Fast-forward fix: with F9 on, the user got stuck in the Animus brain scene. Sound buffers,
+  `Sleep` and timed waits now follow the fast clock too (the game's sound engine was losing
+  a voice line the scene waits for); sound is muted meanwhile → `analysis/runtime.md`.

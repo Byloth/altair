@@ -4,8 +4,10 @@
 //! which normally advances with it. With a speed factor above one the game believes more time
 //! has passed between two frames and plays everything faster: a way to get through long
 //! non-interactive scenes while testing (F9, the `speed N` control-channel command, or
-//! `ALTAIR_SPEED=N` at start-up). Audio and videos keep running in real time, so sound goes out
-//! of sync while the factor is on: it is a debugging aid, not a feature.
+//! `ALTAIR_SPEED=N` at start-up). Everything the game uses to measure time follows the factor:
+//! the clocks, `Sleep` and timed waits (win32.rs) and the progress of sound buffers (dsound.rs,
+//! silent meanwhile). Bink videos do not. It is a debugging
+//! aid, not a feature.
 
 use std::sync::Mutex;
 use std::time::Instant;

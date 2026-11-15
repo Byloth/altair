@@ -280,6 +280,18 @@ fn mixer_thread(mem: crate::machine::Mem) {
         }
         out.fill(0.0);
         mix(mem, &mut out);
+        // Debug fast-forward (clock.rs): the cursors must advance with the game's clock, or
+        // the game's sound engine, which times its streams with that clock, loses track of
+        // them (a scene waiting for a voice line then never ends). Nothing of it is heard:
+        // one block in every `speed` would only be noise.
+        let speed = crate::clock::speed();
+        for _ in 1..speed {
+            let mut unheard = [0f32; 2 * TICK];
+            mix(mem, &mut unheard);
+        }
+        if speed > 1 {
+            out.fill(0.0);
+        }
         mix_files(&mut out);
         for (i, v) in out.iter().enumerate() {
             let s = (v.clamp(-1.0, 1.0) * 32767.0) as i16;
