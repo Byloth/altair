@@ -118,3 +118,9 @@ Code, poi ricrea il venv e ricompila. Va lanciato a sessione chiusa. Vedi `docs/
 `tools/build-image.sh` rigenera l'immagine tradotta (`altair image`) e ricompila solo i file
 cambiati; accetta argomenti per `make` (es. `CC=gcc`). `tools/run.sh [--trace]` avvia il gioco
 tradotto con `altair-run`. Vedi `docs/analisi/runtime.md`.
+
+## `altair-gpu-probe` (crate `crates/gpu-probe`)
+
+Prove della catena grafica: elenco degli adattatori, `triangle FILE.png` (fuori schermo, con
+rilettura), `window [secondi]` (finestra vera). Per la GPU in WSL:
+`GALLIUM_DRIVER=d3d12 LD_LIBRARY_PATH=/usr/lib/wsl/lib`. Vedi `docs/analisi/d3d9.md`.
