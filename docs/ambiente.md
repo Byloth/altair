@@ -24,6 +24,19 @@ sta sul disco Windows `E:` e si legge da `/mnt/e/...`.
 | `opt/ghidra_12.2_PUBLIC/` | Ghidra 12.2 (885 MB) | zip ufficiale, SHA-256 `2c2cd776…a7be67` verificato con quello della release |
 | `ref/` | scimitar-recomp, EaglePatch | `git clone` |
 
+## Grafica e audio in WSL
+
+Niente da installare. Per usare la GPU (RTX 4070 Ti) da WSL:
+
+```sh
+export GALLIUM_DRIVER=d3d12 LD_LIBRARY_PATH=/usr/lib/wsl/lib
+target/release/altair-gpu-probe      # deve elencare "Gl | D3D12 (NVIDIA GeForce RTX 4070 Ti)"
+```
+
+Senza queste variabili OpenGL e Vulkan usano la CPU (llvmpipe). Dettagli in
+`analisi/d3d9.md`. Facoltativi, solo per diagnosi: `sudo apt install -y mesa-utils vulkan-tools`
+(`glxinfo`, `vulkaninfo`).
+
 ## Avviare Ghidra
 
 ```sh

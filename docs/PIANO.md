@@ -169,7 +169,8 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 - [x] `IDirect3D9` e device "registratore": il gioco presenta 3.000 fotogrammi; censimento
   in `analisi/d3d9.md` (79 metodi, solo shader model 3.0, DXT, 54 draw per fotogramma)
-- [ ] Verificare l'uso della GPU da WSL con wgpu (`/dev/dxg` c'è, RTX 4070 Ti visibile)
+- [x] GPU da WSL: wgpu la raggiunge con il backend OpenGL e `GALLIUM_DRIVER=d3d12`; Vulkan è
+  solo software (`crates/gpu-probe`, `analisi/d3d9.md`)
 - [ ] Input simulato per superare la schermata iniziale e censire menu e gioco
 - [ ] D3D9 su wgpu: device, stati, risorse, formati, render target
 - [ ] Traduttore shader SM2/SM3 → WGSL

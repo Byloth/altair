@@ -127,3 +127,4 @@
   immediati, `pushad`): 117.159 funzioni. `call_guest` per le callback verso il gioco.
 - GPU: `/dev/dxg` presente, RTX 4070 Ti visibile da WSL; wgpu ancora da provare.
 - Test differenziale: 3.084 identiche su 6.000, 0 diverse.
+- GPU in WSL: wgpu vede la RTX 4070 Ti tramite OpenGL su D3D12 (`GALLIUM_DRIVER=d3d12`); Vulkan solo software. Nessuna installazione necessaria. `crates/gpu-probe` → `analisi/d3d9.md`, `ambiente.md`.
