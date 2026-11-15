@@ -39,11 +39,12 @@ pub struct Runtime {
     /// Procedura della finestra registrata dal gioco.
     pub wndproc: u32,
     pub com_vtables: HashMap<&'static str, u32>,
-    pub ds_buffers: HashMap<u32, crate::dsound::Buffer>,
     pub d3d: crate::d3d9::D3d,
     pub gfx: Option<crate::gfx::Gfx>,
     /// Oggetto DirectInput della tastiera e copione dei tasti simulati: (da, a, codice DIK).
     pub keyboard: u32,
+    /// Cartella del canale di comando (`ALTAIR_CTL`).
+    pub ctl_dir: Option<std::path::PathBuf>,
     pub key_script: Vec<(u64, u64, u8)>,
     /// Coda dei messaggi della finestra: (messaggio, wParam, lParam).
     pub messages: std::collections::VecDeque<(u32, u32, u32)>,
@@ -51,7 +52,9 @@ pub struct Runtime {
     pub text_script: Vec<(u64, char)>,
     pub text_frame: u64,
     /// Caratteri battuti dal copione, in attesa che il gioco li chieda con ToUnicode.
-    pub typed: std::collections::VecDeque<char>,
+    pub typed: std::collections::VecDeque<(u32, char)>,
+    /// Il mouse di DirectInput.
+    pub mouse: u32,
     start: Instant,
     cmdline: u32,
     env_a: u32,
@@ -143,7 +146,7 @@ pub fn install(rt: Runtime, img: &Image, run: RunFn, trail: TrailFn, call: CallF
         .iter()
         .map(|imp| {
             let key = if imp.name.starts_with('#') { format!("{}!{}", imp.dll, imp.name) } else { imp.name.clone() };
-            let shim = SHIMS.iter().chain(crate::system::SHIMS).chain(crate::user32::SHIMS).chain(crate::input::SHIMS).chain(crate::d3d9::SHIMS).chain(EXTRA).find(|s| s.0 == key).map(|s| (s.1, s.2));
+            let shim = SHIMS.iter().chain(crate::system::SHIMS).chain(crate::bink::SHIMS).chain(crate::user32::SHIMS).chain(crate::input::SHIMS).chain(crate::d3d9::SHIMS).chain(EXTRA).find(|s| s.0 == key).map(|s| (s.1, s.2));
             (format!("{}!{}", imp.dll, imp.name), shim)
         })
         .collect();
@@ -175,16 +178,17 @@ impl Runtime {
             static_tls: None,
             wndproc: 0,
             com_vtables: HashMap::new(),
-            ds_buffers: HashMap::new(),
             d3d: Default::default(),
             gfx: None,
             keyboard: 0,
+            ctl_dir: std::env::var_os("ALTAIR_CTL").map(Into::into),
             key_script: Vec::new(),
             messages: Default::default(),
             window_thread: 0,
             text_script: Vec::new(),
             text_frame: 0,
             typed: Default::default(),
+            mouse: 0,
             fs: fs::FsState::new(
                 std::path::Path::new(exe).parent().map(Into::into).unwrap_or_default(),
                 std::env::current_dir().unwrap_or_default().join("run").join("c"),

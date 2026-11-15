@@ -159,7 +159,7 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 - [x] DirectSound muto, DirectInput e XInput senza dispositivi, Bink assente
 - [x] **Apertura dei `.forge`** (il gate): `DataPC_Common`, `DataPC`, `DataPC_StreamedSounds`
 - [x] Il gioco crea la finestra e chiama `Direct3DCreate9`: confine con la Fase 3
-- [ ] Lingua del gioco (oggi inglese: cerca un archivio di voci che non c'è)
+- [x] Lingua del gioco: registro emulato, `Language` = `Italian` (`ALTAIR_LANG`)
 - [ ] SEH ed eccezioni C++; file INI veri; `WaitForMultipleObjects` con attesa di tutti
 - [ ] Proteggere la prima pagina dello spazio guest, per vedere subito i puntatori nulli
 

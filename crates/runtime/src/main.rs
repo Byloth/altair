@@ -1,5 +1,6 @@
 //! `altair-run`: carica l'immagine del gioco, la collega alla libreria tradotta e la esegue.
 
+mod bink;
 mod com;
 mod d3d9;
 mod dsound;
@@ -11,6 +12,7 @@ mod sync;
 mod system;
 mod user32;
 mod win32;
+mod window;
 
 use altair_pe::{Image, AC1_DX9_STEAM_SHA1};
 use machine::{Ctx, Mem};
@@ -116,6 +118,17 @@ fn run() -> Result<i32, String> {
             trapped
         })
         .map_err(|e| e.to_string())?;
+    if window::enabled() {
+        // Il thread principale passa a winit; la fine del gioco chiude il processo da qui.
+        std::thread::spawn(move || {
+            let code = match handle.join() {
+                Ok(0) => 0,
+                _ => 2,
+            };
+            std::process::exit(code);
+        });
+        window::run();
+    }
     let trapped = handle.join().map_err(|_| "il thread guest è andato in panic".to_string())?;
     if trapped != 0 {
         return Ok(2);

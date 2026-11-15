@@ -151,3 +151,48 @@
 - **Prima scena 3D: il laboratorio Abstergo**, con Vidic, Desmond e Lucy. 917 draw per
   fotogramma, 4,7 milioni di draw senza errori dopo aver aggiunto la costante di fusione
   → `analisi/d3d9.md`, `analisi/runtime.md`.
+
+## 2026-11-15, notte (lavoro autonomo)
+
+Consegna dell'utente: avanti da solo, nell'ordine gioco → renderer → audio/video → finestra;
+lingua italiana; finestre di prova permesse; a fine lavoro aggiornare il piano online.
+
+- **Lingua**: il gioco la legge dal registro, `HKLM\SOFTWARE\Ubisoft\Assassin's Creed`,
+  valore `Language` (stringa: `English`, `Italian`, …; lo scrive l'installatore di Steam,
+  vedi `installscript.vdf`). Registro emulato con quella sola chiave (`ALTAIR_LANG`,
+  predefinito `Italian`). Il gioco apre `DataPC_StreamedSoundsIta.forge` e i menu sono in
+  italiano → `analisi/runtime.md`.
+- **Canale di comando** `ALTAIR_CTL` (`tools/avvia.sh`, `tools/ctl.sh`): tasti, testo,
+  schermate e uscita mentre il gioco gira. Sostituisce i copioni a fotogrammi, fragili perché
+  il gioco ragiona in tempo reale.
+- `CONTINUA` carica il salvataggio del profilo "Claude" e la **scena del laboratorio procede**:
+  Vidic cammina e parla, compare "PREMERE QUALUNQUE PULSANTE PER INTERAGIRE".
+- **Renderer**: stencil (anche a due facce), scissor, depth bias. `StretchRect` con rettangoli
+  parziali e `ColorFill` vengono contati nel censimento finale → `analisi/d3d9.md`.
+- **Audio vero**: DirectSound su un mixer nostro (48 kHz stereo, thread ogni 10 ms) con uscita
+  su PulseAudio tramite `libpulse-simple` caricata con `dlopen` (nessuna installazione). I
+  buffer del gioco sono flussi da 38.400 byte a 48 kHz che DARE riempie in continuazione. Il
+  miscelato non è muto (picchi a ~15.000 su 32.767, `ALTAIR_AUDIO_DUMP`). Senza una finestra
+  aperta il server PulseAudio di WSLg consuma a singhiozzo: l'uscita sta dietro una coda che
+  scarta, così il gioco non rallenta → `analisi/runtime.md`.
+- Errore mio da ricordare: `timeout` uccide tutto il suo gruppo di processi, compreso il gioco
+  lanciato in background dallo script; `avvia.sh` ora usa `setsid`.
+- **Il gioco aspettava un tasto**: "PREMERE QUALUNQUE PULSANTE PER INTERAGIRE" nel laboratorio
+  non è facoltativo. Con Spazio la scena prosegue e arriva la **schermata dell'Animus**
+  ("CRONOLOGIA MEMORIA GENETICA", l'elica del DNA, "Ricordo bloccato", i volti di Lucy e Vidic
+  visti dal lettino).
+- **Prestazioni del renderer.** Nell'Animus il gioco scendeva a 2 fotogrammi al secondo. Tre
+  cause, tutte nostre, trovate con le statistiche nuove (`stats` sul canale di comando,
+  `ALTAIR_STATS`): ogni buffer dinamico riscritto forzava un invio alla GPU; ogni riscrittura
+  ricaricava il buffer intero (43 MB per fotogramma); ogni draw creava due bind group e
+  riscriveva 9 KB di costanti. Ora: intervallo del `Lock` e flag `NOOVERWRITE`/`DISCARD`
+  rispettati, bind group riusati, costanti scritte solo se cambiate. Menu da ~25 a 130-250
+  fotogrammi al secondo → `analisi/d3d9.md`.
+- `ColorFill` a tutta superficie eseguito (85 chiamate nella sessione: nero e `0xff203050`);
+  nessun `StretchRect` con rettangoli parziali visto finora.
+- **Video Bink veri** (`bink.rs`): li decodifica `ffmpeg` (già presente in WSL) come processo,
+  letto da una pipe; l'audio va nel mixer. Il gioco usa `BinkCopyToBuffer` a 32 bit, 15 funzioni
+  di `binkw32.dll` in tutto. Si vedono logo Ubisoft, avvisi e filmato introduttivo (l'aquila);
+  Invio lo salta → `analisi/runtime.md`.
+- **Finestra vera** (`window.rs`, `ALTAIR_WINDOW=1`): winit sul thread principale, superficie
+  wgpu, tastiera e mouse reali verso DirectInput e i messaggi della finestra.

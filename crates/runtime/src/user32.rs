@@ -31,7 +31,7 @@ fn register_class_ex_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     0xc001
 }
 fn create_window_ex_a(rt: &mut Runtime, c: &mut Call) -> u32 {
-    eprintln!("[finestra] CreateWindowExA \"{}\" {}x{} (senza schermo)", rt.mem.cstr(c.arg(2)), c.arg(6) as i32, c.arg(7) as i32);
+    eprintln!("[finestra] CreateWindowExA \"{}\" {}x{}", rt.mem.cstr(c.arg(2)), c.arg(6) as i32, c.arg(7) as i32);
     rt.window_thread = rt.mem.r32(c.teb() + 0x24);
     rt.text_script = parse_text();
     HWND
@@ -47,8 +47,9 @@ fn get_rect(rt: &mut Runtime, c: &mut Call) -> u32 {
     write_rect(rt, c.arg(1))
 }
 fn get_cursor_pos(rt: &mut Runtime, c: &mut Call) -> u32 {
-    rt.mem.w32(c.arg(0), SCREEN.0 / 2);
-    rt.mem.w32(c.arg(0) + 4, SCREEN.1 / 2);
+    let (x, y) = if crate::window::enabled() { crate::window::state().cursor } else { (SCREEN.0 / 2, SCREEN.1 / 2) };
+    rt.mem.w32(c.arg(0), x);
+    rt.mem.w32(c.arg(0) + 4, y);
     1
 }
 fn get_keyboard_state(rt: &mut Runtime, c: &mut Call) -> u32 {
@@ -111,7 +112,32 @@ fn peek_message_a(rt: &mut Runtime, c: &mut Call) -> u32 {
             let vk = ch.to_ascii_uppercase() as u32;
             // Niente WM_CHAR: la procedura della finestra ricava il carattere da sé, con ToUnicode.
             rt.messages.extend([(0x100, vk, 1), (0x101, vk, 0xc000_0001)]);
-            rt.typed.push_back(ch);
+            rt.typed.push_back((vk, ch));
+        }
+    }
+    // Tastiera e mouse veri, dalla finestra.
+    if crate::window::enabled() {
+        use crate::window::Event;
+        let events: Vec<Event> = crate::window::state().events.drain(..).collect();
+        for e in events {
+            match e {
+                Event::Key { vk, scan, down: true, ch } => {
+                    rt.messages.push_back((0x100, vk, 1 | scan << 16));
+                    if let Some(ch) = ch {
+                        rt.typed.push_back((vk, ch));
+                        if rt.typed.len() > 32 {
+                            rt.typed.pop_front();
+                        }
+                    }
+                }
+                Event::Key { vk, scan, down: false, .. } => rt.messages.push_back((0x101, vk, 0xc000_0001 | scan << 16)),
+                Event::MouseMove(x, y) => rt.messages.push_back((0x200, 0, x | y << 16)),
+                Event::Button { index, down } => {
+                    let (x, y) = crate::window::state().cursor;
+                    // WM_LBUTTONDOWN 0x201, WM_RBUTTONDOWN 0x204, WM_MBUTTONDOWN 0x207; il rilascio è il successivo.
+                    rt.messages.push_back((0x201 + 3 * index as u32 + !down as u32, 0, x | y << 16));
+                }
+            }
         }
     }
     let Some((msg, wparam, lparam)) = rt.messages.pop_front() else { return 0 };
@@ -126,14 +152,14 @@ fn peek_message_a(rt: &mut Runtime, c: &mut Call) -> u32 {
 /// tasti arrivano solo dal copione, quindi il carattere è quello in attesa.
 fn to_unicode(rt: &mut Runtime, c: &mut Call) -> u32 {
     let vk = c.arg(0);
-    match rt.typed.front().copied() {
-        Some(ch) if ch.to_ascii_uppercase() as u32 == vk && c.arg(4) >= 1 => {
-            rt.typed.pop_front();
-            rt.mem.w16(c.arg(3), ch as u16);
-            1
-        }
-        _ => 0,
+    // Il carattere in attesa per questo tasto; quelli più vecchi, mai chiesti, si buttano.
+    let Some(i) = rt.typed.iter().position(|(v, _)| *v == vk) else { return 0 };
+    let (_, ch) = rt.typed.drain(..=i).last().unwrap();
+    if c.arg(4) < 1 {
+        return 0;
     }
+    rt.mem.w16(c.arg(3), ch as u16);
+    1
 }
 
 /// Consegna un messaggio alla procedura della finestra, che è codice del gioco.

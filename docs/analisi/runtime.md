@@ -137,6 +137,95 @@ porta al laboratorio Abstergo con il profilo "Claude" (secondo dell'elenco):
 ALTAIR_KEYS="900:28,1500:208:6,1700:208:6,1900:28,3300:28,3900:28:30,4500:28:3"
 ```
 
+### Canale di comando (dal 2026-11-15)
+
+I copioni a fotogrammi restano, ma per esplorare si usa il canale di comando: con
+`ALTAIR_CTL=cartella` il runtime, a ogni `Present`, legge e cancella `cartella/cmd` (una riga
+per comando) e scrive in `cartella/stato` il numero del fotogramma.
+
+| Comando | Effetto |
+|---|---|
+| `key DIK [fotogrammi]` | preme un tasto (predefinito 10 fotogrammi) |
+| `text TESTO` | batte un testo come messaggi della finestra |
+| `shot FILE.png` | salva il back buffer in `cartella/FILE.png` |
+| `quit` | stampa il censimento ed esce |
+
+```sh
+tools/avvia.sh --partita          # avvia in background e arriva alla partita del profilo "Claude"
+tools/ctl.sh "key 28" "shot a.png"
+tools/ctl.sh quit
+```
+
+## Registro e lingua
+
+Verificato con `ALTAIR_TRACE`: il gioco apre una sola chiave, `HKLM\SOFTWARE\Ubisoft\Assassin's Creed`
+(da `0x00402289`), e ne legge il valore `Language` (da `0x004022AD`). I nomi accettati sono
+nell'eseguibile accanto alla chiave (`0x1680D24` e seguenti): `English`, `French`, `Spanish`,
+`German`, `Italian`, `Japanese`, `Korean`, `Russian`, `Czech`, `Polish`. Senza la chiave il
+gioco parte in inglese e cerca `DataPC_StreamedSoundsEng.forge`, che nell'installazione
+italiana non c'è.
+
+`system.rs` emula quella chiave: `Language` vale `ALTAIR_LANG` (predefinito `Italian`),
+`InstallDir` vale `C:\AC1\`. Con `Italian` il gioco apre `DataPC_StreamedSoundsIta.forge` e
+mostra i testi in italiano.
+
+## Audio
+
+`dsound.rs`. Il gioco (motore audio DARE) crea decine di buffer secondari da 38.400 byte,
+48 kHz, con `Play` in ciclo, e li riempie man mano seguendo il cursore di riproduzione: sono
+flussi, la miscelazione finale la fa DirectSound. Quindi:
+
+- un thread `mixer` ogni 10 ms somma 480 fotogrammi di ogni buffer che suona (8/16 bit, mono o
+  stereo, ricampionamento lineare se la frequenza non è 48 kHz, volume e bilanciamento in
+  centesimi di decibel) ed è **lui a far avanzare i cursori**: il gioco tiene il ritmo anche
+  senza uscita;
+- i buffer hanno un lock loro: quello del runtime è quasi sempre in mano al gioco;
+- un thread `audio-out` scrive su PulseAudio con `pa_simple_write` di `libpulse-simple.so.0`,
+  caricata con `dlopen` (presente in WSL, niente da installare, niente header). Tra i due c'è
+  una coda di 60 ms: se l'uscita non consuma, i blocchi si scartano e si contano;
+- `ALTAIR_AUDIO=0` spegne l'uscita; `ALTAIR_AUDIO_DUMP=file.raw` salva il miscelato
+  (S16LE, 48 kHz, stereo).
+
+Misurato: nel menu il miscelato ha picchi intorno a 15.000 su 32.767, quindi il gioco decodifica
+e suona davvero. Il server PulseAudio di WSLg, senza una finestra aperta, consuma a singhiozzo
+(circa un sesto del tempo reale): da riprovare con la finestra vera. Non fatto: suono 3D
+(posizione, distanza), EAX.
+
+## Video Bink
+
+`bink.rs`. Il gioco importa 15 funzioni di `binkw32.dll` e riproduce cinque filmati da
+`videos\`: `LoadingScreen` (in ciclo durante i caricamenti, 15 fps, muto), `UBI_LOGO`,
+`Ubisoft_Presents`, `Warning_Disclaimer` e `DemoIntro` (29,97 fps, 3.020 fotogrammi, quattro
+tracce audio: fronte, centro, bassi, retro). Tutti 1280×720.
+
+Sequenza osservata per fotogramma (conteggi stampati alla chiusura di ogni filmato):
+`BinkWait` finché non è ora → `BinkDoFrame` → `BinkCopyToBuffer` (formato 32 bit, dentro una
+texture bloccata) → `BinkShouldSkip` → `BinkNextFrame`. `BinkGetFrameBuffersInfo` è chiamata una
+volta sola per filmato. Della struttura `BINK` bastano i primi campi (larghezza, altezza,
+fotogrammi, fotogramma corrente, cadenza).
+
+Non c'è la libreria di RAD: l'intestazione del file dà dimensioni e cadenza, e i fotogrammi li
+decodifica **`ffmpeg`** (già installato in WSL), avviato come processo con uscita `rawvideo
+yuv420p` su una pipe; la conversione in BGRA è nostra (BT.601). L'audio lo decodifica un
+secondo `ffmpeg` (somma di fronte, centro e retro in stereo a 48 kHz) e finisce nel mixer.
+Senza `ffmpeg`, o con `ALTAIR_VIDEO=0`, `BinkOpen` fallisce e il gioco salta il filmato.
+Invio salta il filmato introduttivo.
+
+## Finestra vera
+
+`window.rs`, con `ALTAIR_WINDOW=1`. Il thread principale del runtime, che altrimenti aspetta
+soltanto la fine del gioco, esegue il ciclo degli eventi di winit; il renderer crea la
+superficie wgpu sulla finestra e a ogni `Present` ci copia il back buffer, scalato alla
+dimensione della finestra. Gli eventi si accumulano in uno stato condiviso:
+
+- tasti → tabella dei codici DIK per `GetDeviceState` della tastiera, e messaggi
+  `WM_KEYDOWN`/`WM_KEYUP` con il carattere pronto per `ToUnicode`;
+- mouse → `DIMOUSESTATE` (spostamento dall'ultima lettura, rotella, pulsanti), `GetCursorPos`
+  e messaggi `WM_MOUSEMOVE`, `WM_xBUTTONDOWN/UP`;
+- chiusura della finestra → uscita immediata del processo.
+
+Senza la variabile tutto resta fuori schermo, come prima.
+
 ## Cosa ha insegnato
 
 - **Una funzione che la scoperta non vedeva.** La prima chiamata indiretta fallita è stata verso

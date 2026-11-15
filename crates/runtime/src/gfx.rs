@@ -13,7 +13,9 @@ use std::collections::{BTreeMap, HashMap};
 const CONSTS_SIZE: u64 = 256 * 16 + 16 * 16 + 16 + 16;
 const CONSTS_SLOT: u64 = 4608; // CONSTS_SIZE arrotondato all'allineamento degli offset (256)
 const UBUF_SIZE: u64 = CONSTS_SLOT * 4096;
-const SCRATCH_SIZE: u64 = 32 << 20;
+const SCRATCH_SIZE: u64 = 64 << 20;
+/// Dimensione massima di un buffer che, riscritto mentre è in uso, va nel buffer di appoggio.
+const SHADOW_MAX: u64 = 1 << 20;
 
 struct Tex {
     texture: wgpu::Texture,
@@ -51,7 +53,7 @@ struct PipeKey {
     depth: Option<wgpu::TextureFormat>,
     topology: u32,
     index16: bool,
-    states: [u32; 14],
+    states: [u32; 30],
 }
 
 pub struct Gfx {
@@ -79,6 +81,20 @@ pub struct Gfx {
     zero_vb: wgpu::Buffer,
     dummies: [wgpu::TextureView; 3],
     blit: Option<(wgpu::ShaderModule, HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>)>,
+    /// La superficie della finestra, se c'è (`ALTAIR_WINDOW=1`), con la sua configurazione.
+    /// Buffer usati da draw non ancora inviati; versioni di appoggio (offset nel buffer di
+    /// appoggio); buffer veri rimasti indietro rispetto alla memoria guest.
+    used: std::collections::HashSet<u32>,
+    shadow: HashMap<u32, u64>,
+    stale: std::collections::HashSet<u32>,
+    flushes: u64,
+    uploaded: u64,
+    /// Bind group delle texture già creati, per (stadio, texture e stati dei campionatori).
+    groups: HashMap<Vec<[u32; 9]>, wgpu::BindGroup>,
+    /// Ultimo blocco di costanti scritto per vertex e pixel shader, con il suo offset.
+    consts_last: [(Vec<u8>, Option<u32>); 2],
+    consts_tmp: Vec<u8>,
+    surface: Option<(wgpu::Surface<'static>, wgpu::SurfaceConfiguration, std::sync::Arc<winit::window::Window>)>,
     pub drawn: u64,
     pub skipped: BTreeMap<String, u64>,
     shot_dir: Option<std::path::PathBuf>,
@@ -143,6 +159,20 @@ fn blend_factor(f: u32) -> wgpu::BlendFactor {
     }
 }
 
+fn stencil_op(o: u32) -> wgpu::StencilOperation {
+    use wgpu::StencilOperation::*;
+    match o {
+        2 => Zero,
+        3 => Replace,
+        4 => IncrementClamp,
+        5 => DecrementClamp,
+        6 => Invert,
+        7 => IncrementWrap,
+        8 => DecrementWrap,
+        _ => Keep,
+    }
+}
+
 fn blend_op(o: u32) -> wgpu::BlendOperation {
     use wgpu::BlendOperation::*;
     match o {
@@ -191,7 +221,18 @@ struct V { @builtin(position) p: vec4f, @location(0) uv: vec2f }
 impl Gfx {
     pub fn new() -> Option<Gfx> {
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor { backends: wgpu::Backends::all(), ..Default::default() });
+        let window = crate::window::window();
+        let surface = window.as_ref().and_then(|w| match instance.create_surface(w.clone()) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                eprintln!("[gfx] superficie della finestra non creabile ({e}): fuori schermo");
+                None
+            }
+        });
         let mut adapters = instance.enumerate_adapters(wgpu::Backends::all());
+        if let Some(s) = &surface {
+            adapters.retain(|a| a.is_surface_supported(s));
+        }
         adapters.sort_by_key(|a| a.get_info().device_type == wgpu::DeviceType::Cpu);
         let adapter = adapters.into_iter().next()?;
         let info = adapter.get_info();
@@ -206,6 +247,18 @@ impl Gfx {
             None,
         ))
         .ok()?;
+        let surface = surface.zip(window).and_then(|(s, w)| {
+            let size = w.inner_size();
+            let mut config = s.get_default_config(&adapter, size.width.max(1), size.height.max(1))?;
+            // Il gioco scrive colori già pronti per lo schermo: niente conversione sRGB.
+            let caps = s.get_capabilities(&adapter);
+            if let Some(f) = caps.formats.iter().find(|f| !f.is_srgb()) {
+                config.format = *f;
+            }
+            s.configure(&device, &config);
+            eprintln!("[gfx] finestra: {}x{} {:?}", config.width, config.height, config.format);
+            Some((s, config, w))
+        });
         // Un errore di validazione non deve abbattere il gioco: lo si segnala e si va avanti.
         device.on_uncaptured_error(Box::new(|e| {
             let text = e.to_string();
@@ -272,6 +325,15 @@ impl Gfx {
             zero_vb,
             dummies,
             blit: None,
+            used: Default::default(),
+            shadow: HashMap::new(),
+            stale: Default::default(),
+            flushes: 0,
+            uploaded: 0,
+            groups: HashMap::new(),
+            consts_last: Default::default(),
+            consts_tmp: Vec::new(),
+            surface,
             drawn: 0,
             skipped: BTreeMap::new(),
             shot_dir: std::env::var_os("ALTAIR_SHOT_DIR").map(Into::into),
@@ -380,9 +442,20 @@ impl Gfx {
         self.end_pass();
         if let Some(e) = self.encoder.take() {
             self.queue.submit([e.finish()]);
+            self.flushes += 1;
         }
         self.ubuf_off = 0;
         self.scratch_off = 0;
+        self.consts_last[0].1 = None;
+        self.consts_last[1].1 = None;
+        // Le versioni di appoggio non valgono più: i buffer veri vanno riallineati.
+        self.used.clear();
+        self.stale.extend(self.shadow.drain().map(|(obj, _)| obj));
+    }
+
+    /// Contatori dall'ultima lettura: (invii alla GPU, byte di buffer caricati).
+    pub fn take_stats(&mut self) -> (u64, u64) {
+        (std::mem::take(&mut self.flushes), std::mem::take(&mut self.uploaded))
     }
 
     fn view_of(&self, d: &D3d, surface: u32) -> Option<(wgpu::TextureView, wgpu::TextureFormat, u32, u32)> {
@@ -501,6 +574,29 @@ impl Gfx {
         self.begin_pass(d);
     }
 
+    /// `ColorFill` su un'intera superficie: un pass che fa solo il clear.
+    pub fn fill(&mut self, d: &D3d, surface: u32, color: u32) {
+        self.end_pass();
+        let (obj, ..) = Self::owner(d, surface);
+        if !self.ensure_texture(d, obj) {
+            return self.skip("ColorFill: superficie non creabile");
+        }
+        let Some((view, format, ..)) = self.view_of(d, surface) else { return self.skip("ColorFill: superficie non creabile") };
+        if format.is_depth_stencil_format() {
+            return self.skip("ColorFill su un depth buffer");
+        }
+        let c = [(color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff, color >> 24].map(|v| v as f64 / 255.0);
+        self.pending_clear.remove(&surface);
+        let encoder = self.encoder.get_or_insert_with(|| self.device.create_command_encoder(&Default::default()));
+        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &view, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: c[0], g: c[1], b: c[2], a: c[3] }), store: wgpu::StoreOp::Store } })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+    }
+
     fn module(&mut self, d: &D3d, obj: u32, opts: sh::Options) -> bool {
         if !self.parsed.contains_key(&obj) {
             let parsed = match d.res.get(&obj) {
@@ -573,7 +669,24 @@ impl Gfx {
     }
 
     /// Bind group delle texture di uno stadio; None se una texture è anche un target del pass.
+    /// I gruppi si riusano: crearne due per draw costava più del draw stesso.
     fn tex_group(&mut self, d: &D3d, sig: &[(u32, u32)], base: u32, stage: wgpu::ShaderStages) -> Option<wgpu::BindGroup> {
+        let st = |index: u32, ty: u32, default: u32| d.sampler_states.get(&(index, ty)).copied().unwrap_or(default);
+        let targets: Vec<u32> = d.render_targets.iter().chain([&d.depth_target]).filter(|s| **s != 0).map(|s| Self::owner(d, *s).0).collect();
+        let mut key = Vec::with_capacity(sig.len() + 1);
+        key.push([base, 0, 0, 0, 0, 0, 0, 0, 0]);
+        for &(n, kind) in sig {
+            let index = base + (n & 0xff);
+            let bound = d.textures.get(&index).copied().unwrap_or(0);
+            // Una texture non può essere letta e scritta nello stesso pass.
+            if bound != 0 && targets.contains(&bound) {
+                return None;
+            }
+            key.push([n, kind, bound, st(index, 1, 1), st(index, 2, 1), st(index, 3, 1), st(index, 5, 1), st(index, 6, 1), st(index, 7, 0)]);
+        }
+        if let Some(g) = self.groups.get(&key) {
+            return Some(g.clone());
+        }
         let layout = self.tex_layout(sig, stage);
         let mut views = Vec::new();
         let mut samplers = Vec::new();
@@ -586,11 +699,6 @@ impl Gfx {
             };
             let mut view = None;
             if bound != 0 && self.ensure_texture(d, bound) {
-                // Una texture non può essere letta e scritta nello stesso pass.
-                let targets = d.render_targets.iter().chain([&d.depth_target]).map(|s| Self::owner(d, *s).0);
-                if targets.into_iter().any(|o| o == bound) {
-                    return None;
-                }
                 let t = &self.textures[&bound];
                 if t.dim == want && !t.format.is_depth_stencil_format() {
                     view = Some(t.texture.create_view(&wgpu::TextureViewDescriptor { dimension: Some(want), ..Default::default() }));
@@ -604,18 +712,37 @@ impl Gfx {
             entries.push(wgpu::BindGroupEntry { binding: 2 * (n & 0xff), resource: wgpu::BindingResource::TextureView(&views[i]) });
             entries.push(wgpu::BindGroupEntry { binding: 2 * (n & 0xff) + 1, resource: wgpu::BindingResource::Sampler(&samplers[i]) });
         }
-        Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &layout, entries: &entries }))
+        let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &layout, entries: &entries });
+        if self.groups.len() > 20_000 {
+            self.groups.clear();
+        }
+        self.groups.insert(key, group.clone());
+        Some(group)
     }
 
-    fn write_consts(&mut self, f: &[f32], i: &[i32], b: u32, misc: [f32; 4]) -> u32 {
-        let mut bytes = Vec::with_capacity(CONSTS_SIZE as usize);
-        bytes.extend(f.iter().flat_map(|v| v.to_le_bytes()));
-        bytes.extend(i.iter().flat_map(|v| v.to_le_bytes()));
+    /// Scrive un blocco di costanti nel buffer uniforme e ne ritorna l'offset. Se è identico
+    /// all'ultimo scritto per quello stadio (capita spesso tra draw consecutivi) lo riusa.
+    fn write_consts(&mut self, stage: usize, f: &[f32], i: &[i32], b: u32, misc: [f32; 4]) -> u32 {
+        // SAFETY: f32 e i32 non hanno byte di riempimento; l'host è little-endian come il formato atteso.
+        let (fb, ib) = unsafe { (std::slice::from_raw_parts(f.as_ptr() as *const u8, f.len() * 4), std::slice::from_raw_parts(i.as_ptr() as *const u8, i.len() * 4)) };
+        let mut bytes = std::mem::take(&mut self.consts_tmp);
+        bytes.clear();
+        bytes.extend_from_slice(fb);
+        bytes.extend_from_slice(ib);
         bytes.extend([b, 0, 0, 0].iter().flat_map(|v| v.to_le_bytes()));
         bytes.extend(misc.iter().flat_map(|v| v.to_le_bytes()));
+        let last = &mut self.consts_last[stage];
+        if let Some(off) = last.1.filter(|_| last.0 == bytes) {
+            self.consts_tmp = bytes;
+            return off;
+        }
         let off = self.ubuf_off;
         self.queue.write_buffer(&self.ubuf, off, &bytes);
         self.ubuf_off += CONSTS_SLOT;
+        let last = &mut self.consts_last[stage];
+        std::mem::swap(&mut last.0, &mut bytes);
+        last.1 = Some(off as u32);
+        self.consts_tmp = bytes;
         off as u32
     }
 
@@ -634,37 +761,66 @@ impl Gfx {
         off
     }
 
-    fn gpu_buffer(&mut self, d: &D3d, mem: Mem, obj: u32) -> Option<wgpu::Buffer> {
+    /// Il buffer GPU di un vertex o index buffer D3D9, con l'offset a cui stanno i suoi dati.
+    ///
+    /// Un buffer riscritto dopo essere stato usato da un draw non ancora inviato non si può
+    /// aggiornare sul posto (cambierebbe i dati di quel draw). Inviare tutto a ogni riscrittura
+    /// costa troppo: i buffer dinamici del gioco vengono riscritti decine o centinaia di volte
+    /// per fotogramma. La nuova versione va allora nel buffer di appoggio, e il buffer vero si
+    /// riallinea dopo il prossimo invio.
+    fn gpu_buffer(&mut self, d: &D3d, mem: Mem, obj: u32) -> Option<(wgpu::Buffer, u64)> {
         let &Res::Buffer { mem: data, size, index, .. } = d.res.get(&obj)? else { return None };
         if size == 0 {
             return None;
         }
         let padded = (size as u64).next_multiple_of(4);
         let fresh = !self.buffers.contains_key(&obj);
-        if fresh {
+        let dirty = d.dirty_buffers.borrow_mut().remove(&obj);
+        let stale = self.stale.remove(&obj);
+        let new_buffer = |g: &Gfx| {
             let usage = if index { wgpu::BufferUsages::INDEX } else { wgpu::BufferUsages::VERTEX } | wgpu::BufferUsages::COPY_DST;
-            self.buffers.insert(obj, self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: padded, usage, mapped_at_creation: false }));
-        }
-        if fresh || d.dirty_buffers.borrow_mut().remove(&obj) {
-            // Scrivere in un buffer usato da un draw già registrato ne cambierebbe i dati.
-            self.flush_if_used(obj);
+            g.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: padded, usage, mapped_at_creation: false })
+        };
+        if fresh {
+            self.buffers.insert(obj, new_buffer(self));
             self.queue.write_buffer(&self.buffers[&obj], 0, mem.bytes(data, padded as u32));
-        }
-        self.buffers.get(&obj).cloned()
-    }
-
-    fn flush_if_used(&mut self, _obj: u32) {
-        // Semplice e prudente: prima di riscrivere un buffer si inviano i comandi in sospeso.
-        if self.encoder.is_some() {
-            let key = self.pass_key;
-            self.end_pass();
-            if let Some(e) = self.encoder.take() {
-                self.queue.submit([e.finish()]);
+            self.uploaded += padded;
+        } else if stale || dirty.is_some() {
+            let had_shadow = self.shadow.remove(&obj).is_some();
+            // Con una versione di appoggio in giro il buffer vero è indietro: si ricarica tutto.
+            let (lo, hi, append, discard) = match dirty {
+                Some(x) if !stale && !had_shadow => x,
+                _ => (0, size, false, false),
+            };
+            let (lo, hi) = ((lo & !3) as u64, (hi as u64).next_multiple_of(4).min(padded));
+            let in_use = self.used.contains(&obj);
+            if hi <= lo {
+                // Lock senza scrittura utile.
+            } else if !in_use || append {
+                // Nessun draw in sospeso legge quell'intervallo: si aggiorna sul posto.
+                self.queue.write_buffer(&self.buffers[&obj], lo, mem.bytes(data + lo as u32, (hi - lo) as u32));
+                self.uploaded += hi - lo;
+            } else if discard {
+                // Il gioco rinuncia al vecchio contenuto: buffer nuovo, il vecchio resta ai draw in sospeso.
+                self.buffers.insert(obj, new_buffer(self));
+                self.queue.write_buffer(&self.buffers[&obj], lo, mem.bytes(data + lo as u32, (hi - lo) as u32));
+                self.uploaded += hi - lo;
+            } else if padded <= SHADOW_MAX && self.scratch_off + padded + (4 << 20) <= SCRATCH_SIZE {
+                let off = self.scratch_write(mem.bytes(data, padded as u32));
+                self.shadow.insert(obj, off);
+                self.uploaded += padded;
+                return Some((self.scratch.clone(), off));
+            } else {
+                self.buffers.insert(obj, new_buffer(self));
+                self.queue.write_buffer(&self.buffers[&obj], 0, mem.bytes(data, padded as u32));
+                self.uploaded += padded;
             }
-            self.ubuf_off = 0;
-            self.scratch_off = 0;
-            let _ = key;
         }
+        if let Some(&off) = self.shadow.get(&obj) {
+            return Some((self.scratch.clone(), off));
+        }
+        self.used.insert(obj);
+        self.buffers.get(&obj).cloned().map(|b| (b, 0))
     }
 
     /// Un draw. `up` porta i vertici passati al volo: (dati, passo); `indexed`: (indice di
@@ -703,9 +859,9 @@ impl Gfx {
             for s in 0..4 {
                 let (obj, offset, stride) = d.streams[s];
                 if obj != 0 {
-                    let Some(b) = self.gpu_buffer(d, mem, obj) else { return self.skip("vertex buffer non disponibile") };
+                    let Some((b, base)) = self.gpu_buffer(d, mem, obj) else { return self.skip("vertex buffer non disponibile") };
                     strides[s] = stride;
-                    vbs[s] = Some((b, offset as u64));
+                    vbs[s] = Some((b, base + offset as u64));
                 }
             }
         }
@@ -788,7 +944,17 @@ impl Gfx {
 
         let Some((colors, depth_format)) = self.begin_pass(d) else { return self.skip("render target non utilizzabile") };
 
-        let states = [rs(7, 1), rs(14, 1), rs(23, 4), rs(27, 0), rs(19, 2), rs(20, 1), rs(171, 1), rs(206, 0), rs(207, 2), rs(208, 1), rs(209, 1), rs(22, 3), rs(168, 0xf), rs(190, 0xf)];
+        // Da 14 in poi: stencil (52 attivo, 53-56 fronte, 58/59 maschere, 185 due facce,
+        // 186-189 retro) e scostamento di profondità (195 costante, 175 pendenza; sono float).
+        // Senza stencil attivo i suoi stati valgono zero, per non moltiplicare le pipeline.
+        let st = |id: u32, default: u32| if rs(52, 0) != 0 { rs(id, default) } else { 0 };
+        let two = st(185, 0) != 0;
+        let states = [
+            rs(7, 1), rs(14, 1), rs(23, 4), rs(27, 0), rs(19, 2), rs(20, 1), rs(171, 1), rs(206, 0), rs(207, 2), rs(208, 1), rs(209, 1), rs(22, 3), rs(168, 0xf), rs(190, 0xf),
+            st(52, 0), st(53, 1), st(54, 1), st(55, 1), st(56, 8), st(58, 0xffff_ffff) & 0xff, st(59, 0xffff_ffff) & 0xff,
+            if two { st(186, 1) } else { st(53, 1) }, if two { st(187, 1) } else { st(54, 1) }, if two { st(188, 1) } else { st(55, 1) }, if two { st(189, 8) } else { st(56, 8) },
+            rs(195, 0), rs(175, 0), 0, 0, 0,
+        ];
         let key = PipeKey { vs, ps, decl, strides, opts_vs, opts_ps, colors, depth: depth_format, topology: prim_type, index16, states };
         if !self.pipelines.contains_key(&key) {
             let ps_layout = self.tex_layout(&ps_samplers, wgpu::ShaderStages::FRAGMENT);
@@ -850,8 +1016,19 @@ impl Gfx {
                     format,
                     depth_write_enabled: states[0] != 0 && states[1] != 0,
                     depth_compare: if states[0] != 0 { compare(states[2]) } else { wgpu::CompareFunction::Always },
-                    stencil: Default::default(),
-                    bias: Default::default(),
+                    stencil: if states[14] != 0 && format.has_stencil_aspect() {
+                        let face = |i: usize| wgpu::StencilFaceState { compare: compare(states[i + 3]), fail_op: stencil_op(states[i]), depth_fail_op: stencil_op(states[i + 1]), pass_op: stencil_op(states[i + 2]) };
+                        wgpu::StencilState { front: face(15), back: face(21), read_mask: states[19], write_mask: states[20] }
+                    } else {
+                        Default::default()
+                    },
+                    // D3DRS_DEPTHBIAS è in unità di profondità; wgpu vuole multipli del passo
+                    // minimo di un buffer a 24 bit. Solo sui triangoli.
+                    bias: if matches!(prim_type, 4..=6) {
+                        wgpu::DepthBiasState { constant: (f32::from_bits(states[25]) * 16_777_216.0) as i32, slope_scale: f32::from_bits(states[26]), clamp: 0.0 }
+                    } else {
+                        Default::default()
+                    },
                 }),
                 multisample: Default::default(),
                 multiview: None,
@@ -868,8 +1045,8 @@ impl Gfx {
 
         let (w, h) = self.pass_size;
         let half = [1.0 / w as f32, -1.0 / h as f32, rs(24, 0) as f32 / 255.0, 0.0];
-        let vs_off = self.write_consts(&d.vs_f, &d.vs_i, d.vs_b, half);
-        let ps_off = self.write_consts(&d.ps_f, &d.ps_i, d.ps_b, half);
+        let vs_off = self.write_consts(0, &d.vs_f, &d.vs_i, d.vs_b, half);
+        let ps_off = self.write_consts(1, &d.ps_f, &d.ps_i, d.ps_b, half);
 
         let pass = self.pass.as_mut().unwrap();
         pass.set_pipeline(&pipeline);
@@ -879,6 +1056,11 @@ impl Gfx {
         pass.set_bind_group(0, &self.g0, &[vs_off, ps_off]);
         pass.set_bind_group(1, &ps_group, &[]);
         pass.set_bind_group(2, &vs_group, &[]);
+        pass.set_stencil_reference(rs(57, 0) & 0xff);
+        // D3DRS_SCISSORTESTENABLE (174): il rettangolo vale solo quando è acceso.
+        let sc = if rs(174, 0) != 0 { d.scissor } else { [0, 0, w, h] };
+        let (sx, sy) = (sc[0].min(w), sc[1].min(h));
+        pass.set_scissor_rect(sx, sy, sc[2].clamp(sx, w) - sx, sc[3].clamp(sy, h) - sy);
         let vp = d.viewport;
         let (vx, vy) = (vp[0].min(w.saturating_sub(1)) as f32, vp[1].min(h.saturating_sub(1)) as f32);
         let (vw, vh) = ((vp[2] as f32).min(w as f32 - vx).max(1.0), (vp[3] as f32).min(h as f32 - vy).max(1.0));
@@ -897,7 +1079,7 @@ impl Gfx {
         pass.set_vertex_buffer(slot, self.zero_vb.slice(..));
         match (indexed, fan) {
             (Some(base), _) => {
-                pass.set_index_buffer(ib.as_ref().unwrap().slice(..), if index16 { wgpu::IndexFormat::Uint16 } else { wgpu::IndexFormat::Uint32 });
+                pass.set_index_buffer(ib.as_ref().map(|(b, off)| b.slice(*off..)).unwrap(), if index16 { wgpu::IndexFormat::Uint16 } else { wgpu::IndexFormat::Uint32 });
                 pass.draw_indexed(start..start + vcount, base, 0..1);
             }
             (None, Some(off)) => {
@@ -920,6 +1102,11 @@ impl Gfx {
         if sf.is_depth_stencil_format() || df.is_depth_stencil_format() {
             return self.skip("copia di un depth buffer");
         }
+        self.blit_views(&sv, &dv, df);
+    }
+
+    /// Disegna una vista su un'altra con un triangolo a tutto schermo.
+    fn blit_views(&mut self, sv: &wgpu::TextureView, dv: &wgpu::TextureView, df: wgpu::TextureFormat) {
         if self.blit.is_none() {
             let m = self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: None, source: wgpu::ShaderSource::Wgsl(BLIT.into()) });
             self.blit = Some((m, HashMap::new()));
@@ -942,12 +1129,12 @@ impl Gfx {
         let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
             layout: &pipeline.get_bind_group_layout(0),
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&sv) }, wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) }],
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(sv) }, wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) }],
         });
         let encoder = self.encoder.get_or_insert_with(|| self.device.create_command_encoder(&Default::default()));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: None,
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &dv, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: dv, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store } })],
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
@@ -957,8 +1144,37 @@ impl Gfx {
         pass.draw(0..3, 0..1);
     }
 
+    /// Porta il back buffer sulla finestra, se c'è, adattandolo alla sua dimensione.
+    fn show(&mut self, d: &D3d) {
+        let Some((surface, mut config, window)) = self.surface.take() else { return };
+        self.end_pass();
+        let size = window.inner_size();
+        if size.width > 0 && size.height > 0 && (size.width, size.height) != (config.width, config.height) {
+            config.width = size.width;
+            config.height = size.height;
+            surface.configure(&self.device, &config);
+        }
+        match surface.get_current_texture() {
+            Ok(frame) => {
+                let (obj, ..) = Self::owner(d, d.backbuffer);
+                if self.ensure_texture(d, obj) {
+                    if let Some((sv, ..)) = self.view_of(d, d.backbuffer) {
+                        let dv = frame.texture.create_view(&Default::default());
+                        self.blit_views(&sv, &dv, config.format);
+                    }
+                }
+                self.flush();
+                frame.present();
+            }
+            // Superficie persa o cambiata (ridimensionamento): si riconfigura e si salta un fotogramma.
+            Err(_) => surface.configure(&self.device, &config),
+        }
+        self.surface = Some((surface, config, window));
+    }
+
     /// Fine del fotogramma: invia i comandi e, ogni tanto, salva il back buffer.
     pub fn present(&mut self, d: &D3d, frame: u64) {
+        self.show(d);
         self.flush();
         let Some(dir) = self.shot_dir.clone() else { return };
         if frame % self.shot_every != 0 && frame != 1 {

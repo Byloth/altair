@@ -1,11 +1,21 @@
-//! DirectSound 8 muto. Il gioco non parte senza un dispositivo audio, quindi ne offriamo uno
-//! che accetta tutto e non suona nulla: i buffer esistono in memoria guest e il cursore di
-//! riproduzione avanza con l'orologio, così il mixer del gioco (DARE) tiene il suo ritmo.
-//! L'uscita vera arriva in Fase 3.
+//! DirectSound 8 su un mixer nostro. I buffer esistono in memoria guest; un thread li
+//! miscela ogni 10 ms a 48 kHz stereo e manda il risultato a PulseAudio (`libpulse-simple`,
+//! caricata a tempo di esecuzione: se manca, o con `ALTAIR_AUDIO=0`, il mixer gira muto).
+//! È il mixer a far avanzare i cursori di riproduzione, quindi il gioco (DARE) tiene il suo
+//! ritmo anche senza uscita audio.
 
 use crate::com::{self, Method};
 use crate::win32::{Call, Runtime, Shim::L};
-use std::time::Instant;
+use std::collections::HashMap;
+use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+
+/// I buffer hanno un lock loro, separato da quello del runtime: il mixer non deve aspettare
+/// il gioco, che il lock del runtime lo tiene quasi sempre.
+static BUFFERS: std::sync::LazyLock<Mutex<HashMap<u32, Buffer>>> = std::sync::LazyLock::new(Default::default);
+fn buffers() -> MutexGuard<'static, HashMap<u32, Buffer>> {
+    BUFFERS.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 const IID_BUFFER8: &str = "6825A449-7524-4D82-920F-50E36AB3AB1E";
 const IID_BUFFER: &str = "279AFA85-4981-11CE-A521-0020AF0BE560";
@@ -18,9 +28,9 @@ pub struct Buffer {
     size: u32,
     format: [u8; 18],
     bytes_per_sec: u32,
-    /// Posizione al momento dell'ultimo Play/Stop/SetCurrentPosition.
-    base: u32,
-    playing: Option<Instant>,
+    /// Cursore di riproduzione, in fotogrammi audio (con parte frazionaria).
+    cursor: f64,
+    playing: bool,
     looping: bool,
     volume: u32,
     pan: u32,
@@ -29,14 +39,246 @@ pub struct Buffer {
 }
 
 impl Buffer {
+    fn block(&self) -> u32 {
+        (u16::from_le_bytes([self.format[12], self.format[13]]) as u32).max(1)
+    }
     fn position(&self) -> u32 {
-        let Some(t) = self.playing else { return self.base };
         if self.size == 0 {
             return 0;
         }
-        let adv = (t.elapsed().as_micros() as u64 * self.bytes_per_sec as u64 / 1_000_000) & !3;
-        let p = self.base as u64 + adv;
-        if self.looping { (p % self.size as u64) as u32 } else { p.min(self.size as u64) as u32 }
+        (self.cursor as u32 * self.block()).min(if self.looping { self.size - 1 } else { self.size })
+    }
+}
+
+// --- mixer ----------------------------------------------------------------------------------
+
+const RATE: u32 = 48_000;
+/// Fotogrammi per giro del mixer: 10 ms.
+const TICK: usize = 480;
+
+/// `libpulse-simple` caricata con `dlopen`: bastano tre funzioni.
+struct Pulse {
+    handle: *mut libc::c_void,
+    write: unsafe extern "C" fn(*mut libc::c_void, *const u8, usize, *mut i32) -> i32,
+}
+
+impl Pulse {
+    fn open() -> Option<Pulse> {
+        if std::env::var("ALTAIR_AUDIO").is_ok_and(|v| v == "0") {
+            return None;
+        }
+        unsafe {
+            let lib = libc::dlopen(c"libpulse-simple.so.0".as_ptr(), libc::RTLD_NOW);
+            if lib.is_null() {
+                eprintln!("[audio] libpulse-simple non trovata: mixer muto");
+                return None;
+            }
+            let new = libc::dlsym(lib, c"pa_simple_new".as_ptr());
+            let write = libc::dlsym(lib, c"pa_simple_write".as_ptr());
+            if new.is_null() || write.is_null() {
+                return None;
+            }
+            type New = unsafe extern "C" fn(*const i8, *const i8, i32, *const i8, *const i8, *const u32, *const u8, *const u32, *mut i32) -> *mut libc::c_void;
+            let new: New = std::mem::transmute(new);
+            // pa_sample_spec { format, rate, channels }: S16LE (3), 48 kHz, stereo.
+            let spec = [3u32, RATE, 2];
+            // pa_buffer_attr { maxlength, tlength, prebuf, minreq, fragsize }: 60 ms di coda.
+            let attr = [u32::MAX, RATE * 4 * 60 / 1000, u32::MAX, u32::MAX, u32::MAX];
+            let mut err = 0;
+            let handle = new(std::ptr::null(), c"altair".as_ptr(), 1, std::ptr::null(), c"Assassin's Creed".as_ptr(), spec.as_ptr(), std::ptr::null(), attr.as_ptr(), &mut err);
+            if handle.is_null() {
+                eprintln!("[audio] PulseAudio non raggiungibile (errore {err}): mixer muto");
+                return None;
+            }
+            eprintln!("[audio] uscita su PulseAudio, 48 kHz stereo");
+            Some(Pulse { handle, write: std::mem::transmute::<*mut libc::c_void, unsafe extern "C" fn(*mut libc::c_void, *const u8, usize, *mut i32) -> i32>(write) })
+        }
+    }
+}
+
+/// Guadagno lineare da un'attenuazione DirectSound in centesimi di decibel (0 … -10000).
+fn gain(hundredths_db: i32) -> f32 {
+    if hundredths_db <= -10_000 { 0.0 } else { 10f32.powf(hundredths_db.min(0) as f32 / 2000.0) }
+}
+
+/// Aggiunge a `out` (stereo intercalato) `TICK` fotogrammi di ogni buffer che suona e fa
+/// avanzare i cursori.
+fn mix(mem: crate::machine::Mem, out: &mut [f32]) {
+    for b in buffers().values_mut() {
+        if !b.playing || b.size == 0 || b.primary {
+            continue;
+        }
+        let block = b.block();
+        let channels = u16::from_le_bytes([b.format[2], b.format[3]]).max(1) as u32;
+        let bits = u16::from_le_bytes([b.format[14], b.format[15]]);
+        let frames = b.size / block;
+        if frames == 0 {
+            continue;
+        }
+        let sample = |frame: u32, ch: u32| -> f32 {
+            let a = b.data + frame * block + ch.min(channels - 1) * (bits as u32 / 8);
+            match bits {
+                8 => (mem.r8(a) as f32 - 128.0) / 128.0,
+                16 => mem.r16(a) as i16 as f32 / 32768.0,
+                _ => 0.0,
+            }
+        };
+        let volume = gain(b.volume as i32);
+        let pan = b.pan as i32;
+        let (gl, gr) = (volume * gain(-pan.max(0)), volume * gain(pan.min(0)));
+        let step = b.frequency as f64 / RATE as f64;
+        let mut cursor = b.cursor;
+        let mut ended = false;
+        for i in 0..TICK {
+            if cursor >= frames as f64 {
+                if !b.looping {
+                    ended = true;
+                    break;
+                }
+                cursor -= frames as f64;
+            }
+            if volume > 0.0 {
+                let f0 = cursor as u32;
+                let f1 = if f0 + 1 < frames { f0 + 1 } else if b.looping { 0 } else { f0 };
+                let t = (cursor - f0 as f64) as f32;
+                let l = sample(f0, 0) * (1.0 - t) + sample(f1, 0) * t;
+                let r = if channels > 1 { sample(f0, 1) * (1.0 - t) + sample(f1, 1) * t } else { l };
+                out[2 * i] += l * gl;
+                out[2 * i + 1] += r * gr;
+            }
+            cursor += step;
+        }
+        b.cursor = if ended { frames as f64 } else { cursor };
+        if ended {
+            b.playing = false;
+        }
+    }
+}
+
+// --- audio dei filmati -------------------------------------------------------------------------
+
+/// L'audio di un filmato: ffmpeg lo decodifica in un thread (48 kHz, stereo, 16 bit) e il mixer
+/// lo suona man mano che arriva.
+struct FileSound {
+    samples: std::sync::Arc<Mutex<Vec<i16>>>,
+    /// Prossimo campione da suonare.
+    pos: usize,
+    paused: bool,
+    volume: f32,
+}
+
+static FILES: std::sync::LazyLock<Mutex<HashMap<u32, FileSound>>> = std::sync::LazyLock::new(Default::default);
+fn files() -> MutexGuard<'static, HashMap<u32, FileSound>> {
+    FILES.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Avvia l'audio di un file multimediale. Le tracce di un Bink in 5.1 sono separate (fronte,
+/// centro, bassi, retro): si sommano fronte, centro e retro.
+pub fn play_file(path: &std::path::Path, tracks: u32) -> Option<u32> {
+    use std::io::Read;
+    let mut cmd = std::process::Command::new("ffmpeg");
+    cmd.args(["-v", "error", "-nostdin", "-i"]).arg(path);
+    if tracks >= 4 {
+        cmd.args(["-filter_complex", "[0:a:0][0:a:1][0:a:3]amix=inputs=3:normalize=0[a]", "-map", "[a]"]);
+    } else {
+        cmd.args(["-map", "0:a:0"]);
+    }
+    cmd.args(["-vn", "-f", "s16le", "-ar", "48000", "-ac", "2", "-"]);
+    let mut child = cmd.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn().ok()?;
+    let mut out = child.stdout.take()?;
+    let samples = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let sink = samples.clone();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 1 << 16];
+        let mut odd: Option<u8> = None;
+        while let Ok(n) = out.read(&mut buf) {
+            if n == 0 || std::sync::Arc::strong_count(&sink) == 1 {
+                break; // fine del flusso, o nessuno ascolta più
+            }
+            let mut v = sink.lock().unwrap_or_else(|e| e.into_inner());
+            for &b in &buf[..n] {
+                match odd.take() {
+                    Some(lo) => v.push(i16::from_le_bytes([lo, b])),
+                    None => odd = Some(b),
+                }
+            }
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    });
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+    let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    files().insert(id, FileSound { samples, pos: 0, paused: false, volume: 1.0 });
+    Some(id)
+}
+pub fn stop_file(id: u32) {
+    files().remove(&id);
+}
+pub fn pause_file(id: u32, paused: bool) {
+    if let Some(f) = files().get_mut(&id) {
+        f.paused = paused;
+    }
+}
+pub fn volume_file(id: u32, volume: f32) {
+    if let Some(f) = files().get_mut(&id) {
+        f.volume = volume.clamp(0.0, 1.0);
+    }
+}
+
+fn mix_files(out: &mut [f32]) {
+    for f in files().values_mut().filter(|f| !f.paused) {
+        let samples = f.samples.lock().unwrap_or_else(|e| e.into_inner());
+        let n = out.len().min(samples.len().saturating_sub(f.pos));
+        for (o, s) in out.iter_mut().zip(&samples[f.pos..f.pos + n]) {
+            *o += *s as f32 / 32768.0 * f.volume;
+        }
+        f.pos += n;
+    }
+}
+
+/// Il thread del mixer: parte con il primo dispositivo DirectSound.
+fn mixer_thread(mem: crate::machine::Mem) {
+    // L'uscita sta in un thread a parte, dietro una coda corta: se PulseAudio si ferma (con
+    // WSLg capita) si perde del suono, ma i cursori, e con loro il gioco, non rallentano.
+    let (tx, rx) = std::sync::mpsc::sync_channel::<[u8; 4 * TICK]>(6);
+    let _ = std::thread::Builder::new().name("audio-out".into()).spawn(move || {
+        let Some(p) = Pulse::open() else { return };
+        for chunk in rx {
+            let mut err = 0;
+            unsafe { (p.write)(p.handle, chunk.as_ptr(), chunk.len(), &mut err) };
+        }
+    });
+    let mut dropped = 0u64;
+    // `ALTAIR_AUDIO_DUMP=file.raw`: il miscelato anche su file (S16LE, 48 kHz, stereo), per
+    // controllarlo senza ascoltare.
+    let mut dump = std::env::var_os("ALTAIR_AUDIO_DUMP").and_then(|p| std::fs::File::create(p).ok());
+    let mut next = Instant::now();
+    let mut out = [0f32; 2 * TICK];
+    let mut pcm = [0u8; 4 * TICK];
+    loop {
+        next += Duration::from_millis(10);
+        let now = Instant::now();
+        if next > now {
+            std::thread::sleep(next - now);
+        } else if now - next > Duration::from_millis(200) {
+            next = now; // rimasto indietro (gioco fermo in un caricamento): non si rincorre
+        }
+        out.fill(0.0);
+        mix(mem, &mut out);
+        mix_files(&mut out);
+        for (i, v) in out.iter().enumerate() {
+            let s = (v.clamp(-1.0, 1.0) * 32767.0) as i16;
+            pcm[2 * i..2 * i + 2].copy_from_slice(&s.to_le_bytes());
+        }
+        if let Some(f) = &mut dump {
+            let _ = std::io::Write::write_all(f, &pcm);
+        }
+        if let Err(std::sync::mpsc::TrySendError::Full(_)) = tx.try_send(pcm) {
+            dropped += 1;
+            if dropped.is_power_of_two() {
+                eprintln!("[audio] uscita in ritardo: {dropped} blocchi da 10 ms scartati finora");
+            }
+        }
     }
 }
 
@@ -45,7 +287,12 @@ impl Buffer {
 pub fn direct_sound_create8(rt: &mut Runtime, c: &mut Call) -> u32 {
     let obj = com::create(rt, "IDirectSound8", DSOUND, 0);
     rt.mem.w32(c.arg(1), obj);
-    eprintln!("[audio] DirectSound muto creato");
+    let mem = rt.mem;
+    static MIXER: std::sync::Once = std::sync::Once::new();
+    MIXER.call_once(|| {
+        std::thread::Builder::new().name("mixer".into()).spawn(move || mixer_thread(mem)).expect("thread del mixer");
+    });
+    eprintln!("[audio] DirectSound creato");
     0
 }
 
@@ -78,16 +325,19 @@ fn ds_create_sound_buffer(rt: &mut Runtime, c: &mut Call) -> u32 {
     if rt.trace {
         eprintln!("    buffer audio {obj:#x}: {size} byte, {rate} Hz, flag {flags:#x}{}", if primary { " (primario)" } else { "" });
     }
-    rt.ds_buffers.insert(obj, Buffer { data, size, format, bytes_per_sec, base: 0, playing: None, looping: false, volume: 0, pan: 0, frequency: rate, primary });
+    buffers().insert(obj, Buffer { data, size, format, bytes_per_sec, cursor: 0.0, playing: false, looping: false, volume: 0, pan: 0, frequency: rate, primary });
     rt.mem.w32(c.arg(2), obj);
     0
 }
 
 fn ds_duplicate(rt: &mut Runtime, c: &mut Call) -> u32 {
-    let Some(src) = rt.ds_buffers.get(&c.arg(1)) else { return 0x8007_0057 };
-    let copy = Buffer { playing: None, base: 0, ..Buffer { format: src.format, ..*src } };
+    let copy = {
+        let all = buffers();
+        let Some(src) = all.get(&c.arg(1)) else { return 0x8007_0057 };
+        Buffer { playing: false, cursor: 0.0, ..Buffer { format: src.format, ..*src } }
+    };
     let obj = com::create(rt, "IDirectSoundBuffer8", BUFFER, 0);
-    rt.ds_buffers.insert(obj, copy);
+    buffers().insert(obj, copy);
     rt.mem.w32(c.arg(2), obj);
     0
 }
@@ -114,8 +364,23 @@ static DSOUND: &[Method] = &[
 
 // --- IDirectSoundBuffer8 --------------------------------------------------------------------
 
-fn buf<'a>(rt: &'a mut Runtime, c: &Call) -> Option<&'a mut Buffer> {
-    rt.ds_buffers.get_mut(&c.arg(0))
+/// Un buffer con il lock della tabella ancora in mano.
+struct BufRef(MutexGuard<'static, HashMap<u32, Buffer>>, u32);
+impl std::ops::Deref for BufRef {
+    type Target = Buffer;
+    fn deref(&self) -> &Buffer {
+        &self.0[&self.1]
+    }
+}
+impl std::ops::DerefMut for BufRef {
+    fn deref_mut(&mut self) -> &mut Buffer {
+        self.0.get_mut(&self.1).unwrap()
+    }
+}
+
+fn buf(_: &mut Runtime, c: &Call) -> Option<BufRef> {
+    let all = buffers();
+    all.contains_key(&c.arg(0)).then(|| BufRef(all, c.arg(0)))
 }
 
 fn buf_query_interface(rt: &mut Runtime, c: &mut Call) -> u32 {
@@ -187,7 +452,7 @@ fn buf_get_frequency(rt: &mut Runtime, c: &mut Call) -> u32 {
 fn buf_get_status(rt: &mut Runtime, c: &mut Call) -> u32 {
     let st = buf(rt, c).map_or(0, |b| {
         let ended = !b.looping && b.position() >= b.size;
-        if b.playing.is_some() && !ended { 1 | if b.looping { 4 } else { 0 } } else { 0 }
+        if b.playing && !ended { 1 | if b.looping { 4 } else { 0 } } else { 0 }
     });
     rt.mem.w32(c.arg(1), st);
     0
@@ -222,34 +487,31 @@ fn buf_lock(rt: &mut Runtime, c: &mut Call) -> u32 {
 
 fn buf_play(rt: &mut Runtime, c: &mut Call) -> u32 {
     let looping = c.arg(3) & 1 != 0;
-    if let Some(b) = buf(rt, c) {
-        if b.playing.is_none() {
-            b.playing = Some(Instant::now());
+    if let Some(mut b) = buf(rt, c) {
+        if !b.playing && !looping && b.position() >= b.size {
+            b.cursor = 0.0; // un suono finito riparte dall'inizio
         }
+        b.playing = true;
         b.looping = looping;
     }
     0
 }
 fn buf_stop(rt: &mut Runtime, c: &mut Call) -> u32 {
-    if let Some(b) = buf(rt, c) {
-        b.base = b.position();
-        b.playing = None;
+    if let Some(mut b) = buf(rt, c) {
+        b.playing = false;
     }
     0
 }
 fn buf_set_current_position(rt: &mut Runtime, c: &mut Call) -> u32 {
     let pos = c.arg(1);
-    if let Some(b) = buf(rt, c) {
-        b.base = pos;
-        if b.playing.is_some() {
-            b.playing = Some(Instant::now());
-        }
+    if let Some(mut b) = buf(rt, c) {
+        b.cursor = (pos / b.block()) as f64;
     }
     0
 }
 fn buf_set_format(rt: &mut Runtime, c: &mut Call) -> u32 {
     let f: [u8; 18] = rt.mem.bytes(c.arg(1), 18).try_into().unwrap();
-    if let Some(b) = buf(rt, c) {
+    if let Some(mut b) = buf(rt, c) {
         b.format = f;
         b.bytes_per_sec = u32::from_le_bytes(f[8..12].try_into().unwrap());
         b.frequency = u32::from_le_bytes(f[4..8].try_into().unwrap());
@@ -258,30 +520,24 @@ fn buf_set_format(rt: &mut Runtime, c: &mut Call) -> u32 {
 }
 fn buf_set_volume(rt: &mut Runtime, c: &mut Call) -> u32 {
     let v = c.arg(1);
-    if let Some(b) = buf(rt, c) {
+    if let Some(mut b) = buf(rt, c) {
         b.volume = v;
     }
     0
 }
 fn buf_set_pan(rt: &mut Runtime, c: &mut Call) -> u32 {
     let v = c.arg(1);
-    if let Some(b) = buf(rt, c) {
+    if let Some(mut b) = buf(rt, c) {
         b.pan = v;
     }
     0
 }
 fn buf_set_frequency(rt: &mut Runtime, c: &mut Call) -> u32 {
     let v = c.arg(1);
-    if let Some(b) = buf(rt, c) {
+    if let Some(mut b) = buf(rt, c) {
         if v != 0 {
-            // Cambiare frequenza cambia la velocità del cursore.
-            let block = u16::from_le_bytes([b.format[12], b.format[13]]) as u32;
-            b.base = b.position();
-            if b.playing.is_some() {
-                b.playing = Some(Instant::now());
-            }
             b.frequency = v;
-            b.bytes_per_sec = v * block.max(1);
+            b.bytes_per_sec = v * b.block();
         }
     }
     0

@@ -27,6 +27,9 @@ fn di_create_device(rt: &mut Runtime, c: &mut Call) -> u32 {
         rt.keyboard = obj;
         rt.key_script = parse_keys();
     }
+    if name == "mouse" {
+        rt.mouse = obj;
+    }
     eprintln!("[input] dispositivo: {name}");
     0
 }
@@ -55,6 +58,23 @@ fn dev_get_device_state(rt: &mut Runtime, c: &mut Call) -> u32 {
             if (from..to).contains(&frame) {
                 rt.mem.w8(c.arg(2) + key as u32, 0x80);
             }
+        }
+        if crate::window::enabled() {
+            let keys = crate::window::state().keys;
+            for (i, k) in keys.iter().enumerate().filter(|(_, k)| **k != 0) {
+                rt.mem.w8(c.arg(2) + i as u32, *k);
+            }
+        }
+    }
+    // DIMOUSESTATE (16 byte) o DIMOUSESTATE2 (20): spostamento dall'ultima lettura e pulsanti.
+    if c.arg(0) == rt.mouse && c.arg(1) >= 16 && crate::window::enabled() {
+        let mut s = crate::window::state();
+        let (dx, dy, dz) = std::mem::take(&mut s.motion);
+        for (i, v) in [dx, dy, dz].iter().enumerate() {
+            rt.mem.w32(c.arg(2) + 4 * i as u32, *v as u32);
+        }
+        for i in 0..(c.arg(1) - 12).min(8) {
+            rt.mem.w8(c.arg(2) + 12 + i, if s.buttons[i as usize] { 0x80 } else { 0 });
         }
     }
     0

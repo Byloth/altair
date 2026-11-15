@@ -22,15 +22,51 @@ fn co_create_instance(rt: &mut Runtime, c: &mut Call) -> u32 {
     0x8004_0154
 }
 
-// --- registro: non c'è nulla. Il gioco usa i valori predefiniti. ----------------------------
+// --- registro: esiste una sola chiave, quella che l'installatore di Steam scrive. ------------
+// `HKLM\SOFTWARE\Ubisoft\Assassin's Creed` con `Language` e `InstallDir`
+// (vedi `installscript.vdf` nella cartella del gioco). La lingua si sceglie con ALTAIR_LANG.
+const REG_KEY: u32 = 0x5245_4701;
 fn reg_open_key_ex_a(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let name = rt.mem.cstr(c.arg(1));
+    let found = name.trim_end_matches('\\').eq_ignore_ascii_case("SOFTWARE\\Ubisoft\\Assassin's Creed");
     if rt.trace {
-        eprintln!("    RegOpenKeyExA(\"{}\"): assente", rt.mem.cstr(c.arg(1)));
+        eprintln!("    RegOpenKeyExA(\"{}\"): {}", name, if found { "presente" } else { "assente" });
     }
-    2 // ERROR_FILE_NOT_FOUND
+    if !found {
+        return 2; // ERROR_FILE_NOT_FOUND
+    }
+    rt.mem.w32(c.arg(4), REG_KEY);
+    0
 }
-fn file_not_found(_: &mut Runtime, _: &mut Call) -> u32 {
-    2
+fn reg_query_value_ex_a(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let name = if c.arg(1) != 0 { rt.mem.cstr(c.arg(1)) } else { String::new() };
+    let value = match name.to_ascii_lowercase().as_str() {
+        _ if c.arg(0) != REG_KEY => None,
+        "language" => Some(std::env::var("ALTAIR_LANG").unwrap_or_else(|_| "Italian".into())),
+        "installdir" => Some("C:\\AC1\\".to_string()),
+        _ => None,
+    };
+    if rt.trace {
+        eprintln!("    RegQueryValueExA(\"{}\"): {:?}", name, value);
+    }
+    let Some(value) = value else { return 2 };
+    let need = value.len() as u32 + 1;
+    if c.arg(3) != 0 {
+        rt.mem.w32(c.arg(3), 1); // REG_SZ
+    }
+    let (data, size_ptr) = (c.arg(4), c.arg(5));
+    let mut status = 0;
+    if data != 0 && size_ptr != 0 {
+        if rt.mem.r32(size_ptr) >= need {
+            rt.mem.write_cstr(data, value.as_bytes());
+        } else {
+            status = 234; // ERROR_MORE_DATA
+        }
+    }
+    if size_ptr != 0 {
+        rt.mem.w32(size_ptr, need);
+    }
+    status
 }
 
 // --- utente e macchina ----------------------------------------------------------------------
@@ -149,12 +185,6 @@ fn bad_device(_: &mut Runtime, _: &mut Call) -> u32 {
     2 // MMSYSERR_BADDEVICEID
 }
 
-// --- video Bink: nessun decodificatore, i filmati vengono saltati (Fase 3) -------------------
-fn bink_open(rt: &mut Runtime, c: &mut Call) -> u32 {
-    eprintln!("[video] {} saltato: Bink non disponibile", rt.mem.cstr(c.arg(0)));
-    0
-}
-
 // --- numeri casuali di sistema --------------------------------------------------------------
 fn crypt_acquire_context_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.mem.w32(c.arg(0), 0x0c0c_0001);
@@ -188,7 +218,7 @@ pub static SHIMS: &[(&str, u32, Shim)] = &[
     ("CoUninitialize", 0, L(zero)),
     ("CoCreateInstance", 5, L(co_create_instance)),
     ("RegOpenKeyExA", 5, L(reg_open_key_ex_a)),
-    ("RegQueryValueExA", 6, L(file_not_found)),
+    ("RegQueryValueExA", 6, L(reg_query_value_ex_a)),
     ("RegCloseKey", 1, L(zero)),
     ("GetUserNameA", 2, L(get_user_name_a)),
     ("GetComputerNameExA", 3, L(get_computer_name_ex_a)),
@@ -213,20 +243,6 @@ pub static SHIMS: &[(&str, u32, Shim)] = &[
     ("dsound.dll!#2", 2, L(zero)),
     ("eax.dll!#6", 3, L(ds_no_driver)),
     ("waveOutGetDevCapsA", 3, L(bad_device)),
-    ("_BinkSetMemory@8", 2, L(zero)),
-    ("_BinkSetSoundSystem@8", 2, L(one)),
-    ("_BinkOpenDirectSound@4", 1, L(one)),
-    ("_BinkSetSoundTrack@8", 2, L(zero)),
-    ("_BinkOpen@8", 2, L(bink_open)),
-    ("_BinkClose@4", 1, L(zero)),
-    ("_BinkCopyToBuffer@28", 7, L(zero)),
-    ("_BinkDoFrame@4", 1, L(zero)),
-    ("_BinkNextFrame@4", 1, L(zero)),
-    ("_BinkPause@8", 2, L(zero)),
-    ("_BinkSetVolume@12", 3, L(zero)),
-    ("_BinkShouldSkip@4", 1, L(zero)),
-    ("_BinkWait@4", 1, L(zero)),
-    ("_BinkGetFrameBuffersInfo@8", 2, L(zero)),
     ("CryptAcquireContextA", 5, L(crypt_acquire_context_a)),
     ("CryptGenRandom", 3, L(crypt_gen_random)),
     ("CryptReleaseContext", 2, L(one)),

@@ -137,3 +137,19 @@ target/release/altair-shaderc private/shaders/vs_….bin                # il WGS
 
 Variabili del renderer in `tools/run.sh`: `ALTAIR_SHOT_DIR`, `ALTAIR_SHOT_EVERY`,
 `ALTAIR_FRAMES`, `ALTAIR_GFX=0`. Vedi `docs/analisi/d3d9.md`.
+
+## `avvia.sh`, `ctl.sh`
+
+Pilotano il gioco tradotto mentre gira, attraverso il canale di comando del runtime
+(`ALTAIR_CTL`, cartella `run/ctl/`, ignorata da git).
+
+```sh
+tools/avvia.sh              # avvia in background; registro in run/ctl/log.txt
+tools/avvia.sh --partita    # in più: titolo → profilo "Claude" → menu → CONTINUA
+tools/ctl.sh "key 28" "shot a.png"   # tasto Invio e schermata in run/ctl/a.png
+tools/ctl.sh quit           # censimento ed uscita
+```
+
+Comandi: `key DIK [fotogrammi]`, `text TESTO`, `shot FILE.png`, `stats`, `quit`. `ctl.sh` aspetta
+che il gioco li abbia eseguiti e stampa fotogramma, ritmo e filmato in corso. Non lanciare `avvia.sh` sotto
+`timeout`: ucciderebbe anche il gioco.
