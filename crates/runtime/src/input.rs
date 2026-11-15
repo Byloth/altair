@@ -59,6 +59,11 @@ fn dev_get_device_state(rt: &mut Runtime, c: &mut Call) -> u32 {
                 rt.mem.w8(c.arg(2) + key as u32, 0x80);
             }
         }
+        let now = std::time::Instant::now();
+        rt.key_timed.retain(|(until, _)| now < *until);
+        for &(_, key) in &rt.key_timed {
+            rt.mem.w8(c.arg(2) + key as u32, 0x80);
+        }
         // Tasti veri (finestra) o simulati dal canale di comando: stessa tabella.
         let keys = crate::window::state().keys;
         for (i, k) in keys.iter().enumerate().filter(|(_, k)| **k != 0) {

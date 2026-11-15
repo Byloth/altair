@@ -488,8 +488,15 @@ fn dev_present(rt: &mut Runtime, _: &mut Call) -> u32 {
 /// `cartella/stato` il numero del fotogramma, così chi comanda sa che è stato eseguito.
 fn control(rt: &mut Runtime, frame: u64) {
     // Rilascio dei pulsanti del mouse premuti da un comando.
-    if !rt.button_script.is_empty() {
+    if !rt.button_script.is_empty() || !rt.button_timed.is_empty() {
         let mut s = crate::window::state();
+        let now = std::time::Instant::now();
+        let mut due: Vec<usize> = Vec::new();
+        rt.button_timed.retain(|&(until, index)| now < until || { due.push(index); false });
+        for index in due {
+            s.buttons[index] = false;
+            s.events.push_back(crate::window::Event::Button { index, down: false });
+        }
         rt.button_script.retain(|&(until, index)| {
             if frame < until {
                 return true;
@@ -506,10 +513,14 @@ fn control(rt: &mut Runtime, frame: u64) {
     for line in text.lines() {
         let mut words = line.split_whitespace();
         match words.next() {
+            // La durata è in fotogrammi, oppure in tempo reale con il suffisso `ms` (`key 17 3000ms`).
             Some("key") => {
                 let Some(key) = words.next().and_then(|v| v.parse::<u8>().ok()) else { continue };
-                let hold = words.next().and_then(|v| v.parse::<u64>().ok()).unwrap_or(10);
-                rt.key_script.push((frame + 1, frame + 1 + hold, key));
+                let hold = words.next().unwrap_or("10");
+                match hold.strip_suffix("ms").and_then(|v| v.parse::<u64>().ok()) {
+                    Some(ms) => rt.key_timed.push((std::time::Instant::now() + std::time::Duration::from_millis(ms), key)),
+                    None => rt.key_script.push((frame + 1, frame + 1 + hold.parse().unwrap_or(10), key)),
+                }
             }
             // Il mouse passa per lo stesso stato della finestra: stessa strada di quello vero.
             Some("mouse") => {
@@ -523,13 +534,16 @@ fn control(rt: &mut Runtime, frame: u64) {
             }
             Some("button") => {
                 let Some(index) = words.next().and_then(|v| v.parse::<usize>().ok()).filter(|i| *i < 8) else { continue };
-                let hold = words.next().and_then(|v| v.parse::<u64>().ok()).unwrap_or(10);
+                let hold = words.next().unwrap_or("10");
                 let mut s = crate::window::state();
                 s.buttons[index] = true;
                 if index < 3 {
                     s.events.push_back(crate::window::Event::Button { index, down: true });
                 }
-                rt.button_script.push((frame + hold, index));
+                match hold.strip_suffix("ms").and_then(|v| v.parse::<u64>().ok()) {
+                    Some(ms) => rt.button_timed.push((std::time::Instant::now() + std::time::Duration::from_millis(ms), index)),
+                    None => rt.button_script.push((frame + hold.parse().unwrap_or(10), index)),
+                }
             }
             Some("move") | Some("click") => {
                 let click = line.trim_start().starts_with("click");

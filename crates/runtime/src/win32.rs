@@ -59,6 +59,9 @@ pub struct Runtime {
     pub input_seen: (Vec<u32>, ([bool; 8], bool)),
     /// Pulsanti del mouse premuti dal canale di comando: (fotogramma del rilascio, pulsante).
     pub button_script: Vec<(u64, usize)>,
+    /// Tasti e pulsanti premuti dal canale di comando per un tempo reale: (rilascio, codice).
+    pub key_timed: Vec<(std::time::Instant, u8)>,
+    pub button_timed: Vec<(std::time::Instant, usize)>,
     start: Instant,
     cmdline: u32,
     env_a: u32,
@@ -208,6 +211,8 @@ impl Runtime {
             mouse: 0,
             input_seen: Default::default(),
             button_script: Vec::new(),
+            key_timed: Vec::new(),
+            button_timed: Vec::new(),
             fs: fs::FsState::new(
                 std::path::Path::new(exe).parent().map(Into::into).unwrap_or_default(),
                 std::env::current_dir().unwrap_or_default().join("run").join("c"),

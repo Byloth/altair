@@ -147,11 +147,12 @@ Pilotano il gioco tradotto mentre gira, attraverso il canale di comando del runt
 tools/avvia.sh              # avvia in background; registro in run/ctl/log.txt
 tools/avvia.sh --partita    # in più: titolo → profilo "Claude" → menu → CONTINUA
 tools/avvia.sh --animus     # in più: laboratorio → Animus → corridoio con Altaïr (5 minuti)
+tools/avvia.sh --tutorial   # in più: i primi tre passi del tutorial
 tools/ctl.sh "key 28" "shot a.png"   # tasto Invio e schermata in run/ctl/a.png
 tools/ctl.sh quit           # censimento ed uscita
 ```
 
-Comandi: `key DIK [fotogrammi]`, `text TESTO`, `mouse DX DY`, `button N [fotogrammi]`,
+Comandi (le durate sono in fotogrammi, o in tempo reale con `ms`: `key 17 3000ms`): `key DIK [durata]`, `text TESTO`, `mouse DX DY`, `button N [fotogrammi]`,
 `move X Y`, `click X Y`, `shot FILE.png`, `stats`, `quit`. `ctl.sh` aspetta
 che il gioco li abbia eseguiti e stampa fotogramma, ritmo e filmato in corso. Non lanciare `avvia.sh` sotto
 `timeout`: ucciderebbe anche il gioco.

@@ -256,3 +256,8 @@ Fase 1, lettore `.forge`, e un **decodificatore Bink nostro** al posto di `ffmpe
   l'invio OpenGL di Mesa su D3D12: non si muove né togliendo gli stati ripetuti né con
   `mesa_glthread`. 9 → 12 fps nella folla, 45 → 55 nel laboratorio → `analisi/d3d9.md`.
   Obiettivo dei 25 fps non raggiunto in WSL.
+- **Tutorial**: `tools/avvia.sh --tutorial` rifà da solo i tre passi noti, con durate in tempo
+  reale (`key 17 3000ms`). Quarto passo (agguantare e scagliare) non superato: serve mirare, e
+  a schermate non ci riesco. Il `.sav` non cambia durante il tutorial: niente checkpoint da
+  verificare prima della fine del blocco. Passi 3 e 4 del piano fermi qui, in attesa di una
+  persona.

@@ -189,6 +189,17 @@ Con i comandi simulati di tastiera e mouse (`tools/ctl.sh`), dopo `tools/avvia.s
 | Scostare | "Tieni premuto Mano nuda mentre cammini", raggiungere l'indicatore | `key 42 300` + `key 17 300` (Maiusc + W) | Altaïr attraversa la fila di monaci e raggiunge la luce |
 | Alto/basso profilo | "Premi senza rilasciare" Alto profilo | `button 1 300` (tasto destro) | accettato, compare un bersaglio |
 
+| Agguantare e scagliare | "Premi senza rilasciare (Mouse destro) e premi (Maiusc sinistro)", scagliare l'uomo sull'indicatore | — | **non superato**: vedi sotto |
+
+`tools/avvia.sh --tutorial` esegue da solo i primi tre passi (durate in tempo reale, suffisso
+`ms` nei comandi `key` e `button`) e lascia il gioco davanti al quarto.
+
+Il quarto passo chiede di avvicinarsi a un uomo, afferrarlo e orientare il lancio: pilotando
+con una schermata ogni qualche secondo ho perso il bersaglio dalla visuale al secondo
+tentativo. Non è un difetto del gioco tradotto (i comandi arrivano), è il limite di questo modo
+di giocare: da qui serve una persona. Il salvataggio non cambia durante il tutorial (ultima
+scrittura del `.sav`: la nuova partita), quindi il tutorial va fatto in una sola sessione.
+
 La barra di sincronia sale di una tacca a ogni passo (da 1 a 4). Quindi tastiera, pulsanti e
 movimento del mouse arrivano tutti al gioco e il tutorial è percorribile. Mi sono fermato al
 bersaglio: i passi successivi (combattimento) è meglio giocarli che scriverli.
