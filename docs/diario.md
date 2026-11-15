@@ -261,3 +261,5 @@ Fase 1, lettore `.forge`, e un **decodificatore Bink nostro** al posto di `ffmpe
   a schermate non ci riesco. Il `.sav` non cambia durante il tutorial: niente checkpoint da
   verificare prima della fine del blocco. Passi 3 e 4 del piano fermi qui, in attesa di una
   persona.
+- **Finestra e 60 fps**: la superficie offre solo `Fifo`. Limite di OpenGL su Wayland in WSLg;
+  documentato, nessuna soluzione da parte nostra → `analisi/runtime.md`.

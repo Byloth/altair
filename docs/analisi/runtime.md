@@ -326,6 +326,14 @@ dimensione della finestra. Gli eventi si accumulano in uno stato condiviso:
 
 Senza la variabile tutto resta fuori schermo, come prima. `tools/gioca.sh` la imposta.
 
+**In finestra il ritmo è legato allo schermo.** La superficie offre una sola modalità di
+presentazione, `Fifo` (stampato all'avvio: "modalità di presentazione offerte: [Fifo]"): con
+il backend OpenGL di wgpu su Wayland `Present` aspetta sempre il refresh. Quindi non più di
+60 fotogrammi al secondo, e una scena che fuori schermo ne fa 45 in finestra scende a 30
+(perde un refresh su due). Presentare da un altro thread non aiuterebbe: lo scambio dei buffer
+tiene il lock del contesto OpenGL, che serve anche al thread del gioco. Limite di WSLg con
+OpenGL, non nostro; con Vulkan o D3D12 nativi le modalità senza attesa esistono.
+
 ### Diagnosi dell'input: `ALTAIR_INPUT_LOG=1`
 
 Una riga per ogni passaggio di un evento: `finestra:` (winit l'ha ricevuto), `messaggio:`

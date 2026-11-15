@@ -283,7 +283,7 @@ impl Gfx {
             // dentro `Present` gli toglie tempo.
             config.present_mode = wgpu::PresentMode::AutoNoVsync;
             s.configure(&device, &config);
-            eprintln!("[gfx] finestra: {}x{} {:?}", config.width, config.height, config.format);
+            eprintln!("[gfx] finestra: {}x{} {:?}; modalità di presentazione offerte: {:?}", config.width, config.height, config.format, caps.present_modes);
             Some((s, config, w))
         });
         // Un errore di validazione non deve abbattere il gioco: lo si segnala e si va avanti.
