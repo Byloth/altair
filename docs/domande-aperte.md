@@ -58,3 +58,41 @@ giusto è l'hardware: un programmino nativo x86 che esegue l'istruzione reale e 
 la nostra traduzione. Da fare quando servirà l'identità al bit (replay, confronto con
 l'originale); per giocare, differenze di un'unità sull'ultima cifra non contano. Il Passo 6
 del piano del 2026-11-15 si ferma qui: non c'erano altre istruzioni annotate come non verificate.
+
+## Laboratorio: telecamera sbagliata e interferenze dell'Animus assenti (2026-11-15)
+
+Segnalato dall'utente giocando su Windows (schermata `ac1-bug_wrong_camera.png`, fuori dal
+repository). Non ancora indagato: qui solo i fatti riferiti e i punti da cui partire.
+
+Fatti riferiti:
+
+- Nelle scene del laboratorio un clic sinistro cambia telecamera di sorveglianza. Una delle
+  inquadrature punta su una zona vuota (finestre e pavimento), e il suo effetto di distorsione
+  è fermo, mentre nelle altre si muove. Continuando a cliccare si passa oltre; i dialoghi
+  proseguono.
+- Nell'originale, in certi momenti compaiono interferenze con i simboli dell'Animus in
+  sovrimpressione, e cliccando in quel momento si ottiene un'inquadratura speciale. Da noi le
+  interferenze sembrano esserci solo come distorsione più forte, senza simboli, e
+  l'inquadratura speciale non si è ottenuta (l'utente non esclude di aver cliccato tardi).
+
+Ipotesi, nessuna verificata:
+
+1. L'inquadratura vuota con l'effetto fermo è proprio quella speciale, raggiunta fuori dal
+   suo momento: senza un'interferenza attiva non ha né posa né tempo. Le due segnalazioni
+   sarebbero una sola: la condizione "interferenza in corso" da noi non scatta, o scatta male.
+2. Le interferenze sono legate ai tempi del dialogo, cioè all'audio: il nostro DirectSound
+   non offre le notifiche di posizione (`IDirectSoundNotify`), e fino a oggi il thread audio
+   del gioco arrivava in ritardo.
+3. Un errore di traduzione in una funzione mai confrontata con l'originale (il test
+   differenziale ne copre circa metà delle candidate).
+4. I simboli sono disegnati per una strada che non eseguiamo. Poco probabile: nel censimento
+   non ci sono draw saltati né metodi D3D non gestiti lungo quel percorso.
+
+Da dove partire: l'RTTI dell'eseguibile ha le classi `Glitcher`, `GlitcherSettings`,
+`GlitchCameraClip`, `MissCinematicGlitchConditionClip`, `SecurityCamera`,
+`SecurityCameraSettings`, `CameraSwitcher` (`private/rtti-dx9.json`). Servono le loro vtable,
+uno strumento che registri quali dei loro metodi vengono eseguiti durante la scena, e il
+confronto con la DX10 originale, che sulla macchina dell'utente funziona.
+
+Segnalata nella stessa sessione, anch'essa da capire: telecamera troppo vicina al personaggio
+durante il gioco (`ac1-bug_shadows.png`).
