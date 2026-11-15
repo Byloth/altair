@@ -217,7 +217,7 @@ impl Runtime {
                 std::path::Path::new(exe).parent().map(Into::into).unwrap_or_default(),
                 std::env::current_dir().unwrap_or_default().join("run").join("c"),
             ),
-            start: Instant::now(),
+            start: *START.get_or_init(Instant::now),
             cmdline: 0,
             env_a: 0,
             env_w: 0,
@@ -592,13 +592,17 @@ fn sleep(c: &mut Call) -> u32 {
 
 // --- kernel32: tempo ------------------------------------------------------------------------
 
-fn query_performance_counter(rt: &mut Runtime, c: &mut Call) -> u32 {
+/// L'istante di avvio, da cui si contano i tempi dati al gioco.
+pub static START: OnceLock<Instant> = OnceLock::new();
+
+// Senza lock del runtime: il thread audio del gioco legge l'orologio di continuo.
+fn query_performance_counter(c: &mut Call) -> u32 {
     // 10 MHz dall'avvio del processo: valori grandi mandano in overflow i conti del gioco.
-    rt.mem.w64(c.arg(0), (rt.start.elapsed().as_nanos() / 100) as u64);
+    c.mem.w64(c.arg(0), (START.get_or_init(Instant::now).elapsed().as_nanos() / 100) as u64);
     1
 }
-fn query_performance_frequency(rt: &mut Runtime, c: &mut Call) -> u32 {
-    rt.mem.w64(c.arg(0), 10_000_000);
+fn query_performance_frequency(c: &mut Call) -> u32 {
+    c.mem.w64(c.arg(0), 10_000_000);
     1
 }
 fn get_tick_count(rt: &mut Runtime, _: &mut Call) -> u32 {
@@ -1072,8 +1076,8 @@ static SHIMS: &[(&str, u32, Shim)] = &[
     ("IsDebuggerPresent", 0, L(ret0)),
     ("SetErrorMode", 1, L(ret0)),
     ("SetConsoleCtrlHandler", 2, L(ret1)),
-    ("QueryPerformanceCounter", 1, L(query_performance_counter)),
-    ("QueryPerformanceFrequency", 1, L(query_performance_frequency)),
+    ("QueryPerformanceCounter", 1, F(query_performance_counter)),
+    ("QueryPerformanceFrequency", 1, F(query_performance_frequency)),
     ("GetTickCount", 0, L(get_tick_count)),
     ("GetSystemTimeAsFileTime", 1, L(get_system_time_as_file_time)),
     ("HeapCreate", 3, L(heap_create)),

@@ -71,6 +71,9 @@ mod imp {
         unsafe { libc::_exit(code) }
     }
 
+    /// Su Linux i timer sono già fini.
+    pub fn fine_timers() {}
+
     /// PulseAudio attraverso `libpulse-simple`, caricata a tempo di esecuzione.
     pub struct AudioOut {
         handle: *mut c_void,
@@ -204,6 +207,18 @@ mod imp {
         unsafe { ExitProcess(code as u32) }
     }
 
+    #[link(name = "winmm")]
+    extern "system" {
+        fn timeBeginPeriod(ms: u32) -> u32;
+    }
+
+    /// Porta a 1 ms il passo dei timer di sistema, che altrimenti è di 15,6 ms: le attese
+    /// con scadenza dei thread del gioco (quello dell'audio riempie i buffer a segmenti di
+    /// 60 ms) arriverebbero in ritardo. È ciò che fa ogni gioco su Windows.
+    pub fn fine_timers() {
+        unsafe { timeBeginPeriod(1) };
+    }
+
     // --- uscita audio: l'API waveOut, la più semplice che Windows offra -----------------------
 
     #[repr(C, packed)]
@@ -290,7 +305,7 @@ mod imp {
     }
 }
 
-pub use imp::{discard, exit_now, guard, AudioOut, Library};
+pub use imp::{discard, exit_now, fine_timers, guard, AudioOut, Library};
 
 // I puntatori dentro sono handle del sistema, usati da un thread solo alla volta.
 unsafe impl Send for AudioOut {}

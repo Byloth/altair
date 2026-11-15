@@ -2,7 +2,8 @@
 //! soltanto. Il renderer ci presenta sopra il back buffer; tastiera e mouse arrivano al gioco
 //! per le sue due strade, lo stato di DirectInput e i messaggi della finestra.
 //!
-//! F10 cattura o libera il puntatore del mouse.
+//! F10 cattura o libera il puntatore del mouse; F8 mostra o nasconde i fotogrammi al secondo
+//! nel titolo della finestra.
 //!
 //! Qui non si tocca il runtime: gli eventi si accumulano in `State`, e gli shim li leggono
 //! quando il gioco li chiede.
@@ -37,6 +38,19 @@ pub struct State {
     raw_motion: bool,
     grabbed: bool,
     last_cursor: Option<(f64, f64)>,
+}
+
+const TITLE: &str = "AC1 Recompiled - Altaïr";
+static SHOW_FPS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Chiamata dal renderer un paio di volte al secondo: se F8 li ha accesi, scrive nel titolo
+/// della finestra i fotogrammi al secondo e i draw per fotogramma.
+pub fn show_fps(fps: f64, draws: u64) {
+    if SHOW_FPS.load(std::sync::atomic::Ordering::Relaxed) {
+        if let Some(w) = WINDOW.get() {
+            w.set_title(&format!("{TITLE} · {fps:.0} fps · {draws} draw"));
+        }
+    }
 }
 
 static WINDOW: OnceLock<Arc<Window>> = OnceLock::new();
@@ -121,7 +135,7 @@ impl ApplicationHandler for App {
         if WINDOW.get().is_some() {
             return;
         }
-        let attrs = Window::default_attributes().with_title("AC1 Recompiled - Altaïr").with_inner_size(winit::dpi::PhysicalSize::new(SCREEN.0, SCREEN.1));
+        let attrs = Window::default_attributes().with_title(TITLE).with_inner_size(winit::dpi::PhysicalSize::new(SCREEN.0, SCREEN.1));
         match el.create_window(attrs) {
             Ok(w) => {
                 eprintln!("[finestra] finestra aperta, {}x{}", SCREEN.0, SCREEN.1);
@@ -160,6 +174,18 @@ impl ApplicationHandler for App {
                             let ok = if s.grabbed { w.set_cursor_grab(Locked).or_else(|_| w.set_cursor_grab(Confined)).is_ok() } else { w.set_cursor_grab(None).is_ok() };
                             w.set_cursor_visible(!s.grabbed);
                             eprintln!("[finestra] puntatore {}{}", if s.grabbed { "catturato (F10 per liberarlo)" } else { "libero" }, if ok { "" } else { " (il compositore ha rifiutato la cattura)" });
+                        }
+                    }
+                    return;
+                }
+                // F8 non va al gioco: mostra o nasconde i fotogrammi al secondo nel titolo.
+                if code == KeyCode::F8 {
+                    if event.state == ElementState::Pressed && !event.repeat {
+                        let on = !SHOW_FPS.fetch_xor(true, std::sync::atomic::Ordering::Relaxed);
+                        if !on {
+                            if let Some(w) = WINDOW.get() {
+                                w.set_title(TITLE);
+                            }
                         }
                     }
                     return;

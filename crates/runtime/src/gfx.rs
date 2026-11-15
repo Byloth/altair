@@ -234,6 +234,9 @@ pub struct Gfx {
     shot_every: u64,
 }
 
+/// La scheda sa filtrare le texture a 32 bit in virgola mobile (deciso alla creazione del device).
+static FLOAT32: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn d3d_format(f: u32, depth: bool) -> (wgpu::TextureFormat, Conv) {
     use wgpu::TextureFormat as F;
     if depth {
@@ -251,7 +254,13 @@ fn d3d_format(f: u32, depth: bool) -> (wgpu::TextureFormat, Conv) {
         28 => (F::Bgra8Unorm, Conv::A8),
         50 => (F::Bgra8Unorm, Conv::L8),
         51 => (F::Bgra8Unorm, Conv::A8L8),
-        // I target in virgola mobile: a 16 bit, che si possono filtrare su ogni backend.
+        // I target a 32 bit in virgola mobile restano a 32 bit quando la scheda li sa filtrare
+        // (FLOAT32): il gioco ci tiene le mappe d'ombra, e a 16 bit la profondità perde
+        // precisione fino a rigare d'ombra le superfici in luce.
+        114 if FLOAT32.load(std::sync::atomic::Ordering::Relaxed) => (F::R32Float, Conv::Unsupported),
+        115 if FLOAT32.load(std::sync::atomic::Ordering::Relaxed) => (F::Rg32Float, Conv::Unsupported),
+        116 if FLOAT32.load(std::sync::atomic::Ordering::Relaxed) => (F::Rgba32Float, Conv::Unsupported),
+        // Gli altri target in virgola mobile: a 16 bit, che si possono filtrare su ogni backend.
         111..=116 | 36 => (F::Rgba16Float, Conv::Unsupported),
         70..=83 => (F::Depth24PlusStencil8, Conv::Unsupported),
         _ => (F::Bgra8Unorm, Conv::Unsupported),
@@ -384,11 +393,13 @@ impl Gfx {
         adapters.sort_by_key(rank);
         let adapter = adapters.into_iter().next()?;
         let info = adapter.get_info();
-        eprintln!("[gfx] adattatore: {:?} | {} | {:?}", info.backend, info.name, info.device_type);
+        let float32 = adapter.features() & wgpu::Features::FLOAT32_FILTERABLE;
+        FLOAT32.store(!float32.is_empty(), std::sync::atomic::Ordering::Relaxed);
+        eprintln!("[gfx] adattatore: {:?} | {} | {:?}{}", info.backend, info.name, info.device_type, if float32.is_empty() { " | target float a 16 bit" } else { " | target float a 32 bit" });
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: None,
-                required_features: wgpu::Features::TEXTURE_COMPRESSION_BC,
+                required_features: wgpu::Features::TEXTURE_COMPRESSION_BC | float32,
                 required_limits: wgpu::Limits { max_bind_groups: 4, ..Default::default() },
                 memory_hints: Default::default(),
             },
@@ -1334,7 +1345,8 @@ impl Gfx {
                 .map(|(i, f)| {
                     f.map(|format| wgpu::ColorTargetState {
                         format,
-                        blend,
+                        // I formati a 32 bit in virgola mobile non ammettono la fusione.
+                        blend: if matches!(format, wgpu::TextureFormat::R32Float | wgpu::TextureFormat::Rg32Float | wgpu::TextureFormat::Rgba32Float) { None } else { blend },
                         write_mask: if ps_outputs.contains(&(i as u32)) { wgpu::ColorWrites::from_bits_truncate(if i == 0 { states[12] } else { states[13] }) } else { wgpu::ColorWrites::empty() },
                     })
                 })

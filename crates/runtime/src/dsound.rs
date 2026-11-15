@@ -5,7 +5,7 @@
 //! ritmo anche senza uscita audio.
 
 use crate::com::{self, Method};
-use crate::win32::{Call, Runtime, Shim::L};
+use crate::win32::{Call, Runtime, Shim::{F, L}};
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -36,6 +36,12 @@ pub struct Buffer {
     pan: u32,
     frequency: u32,
     primary: bool,
+    /// Per ogni trentaduesimo del buffer, se è stato scritto dopo l'ultima volta che il mixer
+    /// l'ha suonato; il trentaduesimo in cui sta il cursore e se è "vecchio"; se il gioco
+    /// riempie il buffer mentre suona (un flusso). Servono a contare i ritardi del gioco.
+    fresh: [bool; 32],
+    at: (usize, bool),
+    streamed: bool,
 }
 
 impl Buffer {
@@ -49,6 +55,19 @@ impl Buffer {
         (self.cursor as u32 * self.block()).min(if self.looping { self.size - 1 } else { self.size })
     }
 }
+
+/// `ALTAIR_AUDIO_LOG=1`: una riga per ogni Play, Stop, cambio di posizione e Lock dei buffer,
+/// con il cursore di riproduzione in quel momento. Serve a capire come il gioco li riempie.
+fn audio_log() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("ALTAIR_AUDIO_LOG").is_ok_and(|v| v == "1"))
+}
+
+/// Giri del mixer dall'avvio; giri in cui un flusso ha suonato dati non riscritti in tempo, e
+/// giri di flusso in tutto (per dare una proporzione).
+static TICKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static STALE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static STREAMED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 // --- mixer ----------------------------------------------------------------------------------
 
@@ -64,6 +83,7 @@ fn gain(hundredths_db: i32) -> f32 {
 /// Aggiunge a `out` (stereo intercalato) `TICK` fotogrammi di ogni buffer che suona e fa
 /// avanzare i cursori.
 fn mix(mem: crate::machine::Mem, out: &mut [f32]) {
+    TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     for b in buffers().values_mut() {
         if !b.playing || b.size == 0 || b.primary {
             continue;
@@ -88,6 +108,21 @@ fn mix(mem: crate::machine::Mem, out: &mut [f32]) {
         let (gl, gr) = (volume * gain(-pan.max(0)), volume * gain(pan.min(0)));
         let step = b.frequency as f64 / RATE as f64;
         let mut cursor = b.cursor;
+        // Un flusso che entra in una zona già suonata e non più riscritta sta ripetendo dati
+        // vecchi di un giro: il gioco non l'ha riempita in tempo.
+        if b.streamed && b.looping {
+            let chunk = ((cursor as u64 % frames as u64) * 32 / frames as u64) as usize;
+            if chunk != b.at.0 {
+                b.at = (chunk, !b.fresh[chunk]);
+                b.fresh[chunk] = false;
+            }
+            if volume > 0.0 {
+                STREAMED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if b.at.1 {
+                    STALE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
         let mut ended = false;
         for i in 0..TICK {
             if cursor >= frames as f64 {
@@ -230,8 +265,16 @@ fn mixer_thread(mem: crate::machine::Mem) {
         let now = Instant::now();
         if next > now {
             std::thread::sleep(next - now);
-        } else if now - next > Duration::from_millis(200) {
-            next = now; // rimasto indietro (gioco fermo in un caricamento): non si rincorre
+        } else if now - next > Duration::from_millis(20) {
+            // In ritardo: non si rincorre. Recuperare il tempo perso farebbe avanzare i cursori
+            // a scatti, e il gioco tiene pronti solo 60 ms di suono oltre il cursore.
+            next = now;
+        }
+        if TICKS.load(std::sync::atomic::Ordering::Relaxed) % 500 == 499 {
+            let (stale, all) = (STALE.swap(0, std::sync::atomic::Ordering::Relaxed), STREAMED.swap(0, std::sync::atomic::Ordering::Relaxed));
+            if stale > 0 {
+                eprintln!("[audio] negli ultimi 5 s, {} ms di flussi su {} suonati da zone non riscritte in tempo dal gioco", stale * 10, all * 10);
+            }
         }
         out.fill(0.0);
         mix(mem, &mut out);
@@ -295,7 +338,7 @@ fn ds_create_sound_buffer(rt: &mut Runtime, c: &mut Call) -> u32 {
     if rt.trace {
         eprintln!("    buffer audio {obj:#x}: {size} byte, {rate} Hz, flag {flags:#x}{}", if primary { " (primario)" } else { "" });
     }
-    buffers().insert(obj, Buffer { data, size, format, bytes_per_sec, cursor: 0.0, playing: false, looping: false, volume: 0, pan: 0, frequency: rate, primary });
+    buffers().insert(obj, Buffer { data, size, format, bytes_per_sec, cursor: 0.0, playing: false, looping: false, volume: 0, pan: 0, frequency: rate, primary, fresh: [true; 32], at: (usize::MAX, false), streamed: false });
     rt.mem.w32(c.arg(2), obj);
     0
 }
@@ -304,7 +347,7 @@ fn ds_duplicate(rt: &mut Runtime, c: &mut Call) -> u32 {
     let copy = {
         let all = buffers();
         let Some(src) = all.get(&c.arg(1)) else { return 0x8007_0057 };
-        Buffer { playing: false, cursor: 0.0, ..Buffer { format: src.format, ..*src } }
+        Buffer { playing: false, cursor: 0.0, fresh: [true; 32], at: (usize::MAX, false), streamed: false, ..Buffer { format: src.format, ..*src } }
     };
     let obj = com::create(rt, "IDirectSoundBuffer8", BUFFER, 0);
     buffers().insert(obj, copy);
@@ -348,7 +391,7 @@ impl std::ops::DerefMut for BufRef {
     }
 }
 
-fn buf(_: &mut Runtime, c: &Call) -> Option<BufRef> {
+fn buf(c: &Call) -> Option<BufRef> {
     let all = buffers();
     all.contains_key(&c.arg(0)).then(|| BufRef(all, c.arg(0)))
 }
@@ -369,68 +412,68 @@ fn buf_query_interface(rt: &mut Runtime, c: &mut Call) -> u32 {
     0
 }
 
-fn buf_get_caps(rt: &mut Runtime, c: &mut Call) -> u32 {
+fn buf_get_caps(c: &mut Call) -> u32 {
     let p = c.arg(1);
-    let (size, primary) = buf(rt, c).map_or((0, false), |b| (b.size, b.primary));
-    rt.mem.w32(p + 4, if primary { 0x1 } else { 0x8 | 0xe0 }); // software, volume/pan/frequenza
-    rt.mem.w32(p + 8, size);
-    rt.mem.w32(p + 12, 0);
-    rt.mem.w32(p + 16, 0);
+    let (size, primary) = buf(c).map_or((0, false), |b| (b.size, b.primary));
+    c.mem.w32(p + 4, if primary { 0x1 } else { 0x8 | 0xe0 }); // software, volume/pan/frequenza
+    c.mem.w32(p + 8, size);
+    c.mem.w32(p + 12, 0);
+    c.mem.w32(p + 16, 0);
     0
 }
 
-fn buf_get_current_position(rt: &mut Runtime, c: &mut Call) -> u32 {
-    let Some(b) = buf(rt, c) else { return 0x8007_0057 };
+fn buf_get_current_position(c: &mut Call) -> u32 {
+    let Some(b) = buf(c) else { return 0x8007_0057 };
     let (play, size, lead) = (b.position(), b.size, b.bytes_per_sec / 50 & !3);
     let write = if size > 0 { (play + lead) % size } else { 0 };
     if c.arg(1) != 0 {
-        rt.mem.w32(c.arg(1), play);
+        c.mem.w32(c.arg(1), play);
     }
     if c.arg(2) != 0 {
-        rt.mem.w32(c.arg(2), write);
+        c.mem.w32(c.arg(2), write);
     }
     0
 }
 
-fn buf_get_format(rt: &mut Runtime, c: &mut Call) -> u32 {
-    let Some(format) = buf(rt, c).map(|b| b.format) else { return 0x8007_0057 };
+fn buf_get_format(c: &mut Call) -> u32 {
+    let Some(format) = buf(c).map(|b| b.format) else { return 0x8007_0057 };
     let n = c.arg(2).min(18);
     if c.arg(1) != 0 {
-        rt.mem.write(c.arg(1), &format[..n as usize]);
+        c.mem.write(c.arg(1), &format[..n as usize]);
     }
     if c.arg(3) != 0 {
-        rt.mem.w32(c.arg(3), 18);
+        c.mem.w32(c.arg(3), 18);
     }
     0
 }
 
-fn buf_get_volume(rt: &mut Runtime, c: &mut Call) -> u32 {
-    let v = buf(rt, c).map_or(0, |b| b.volume);
-    rt.mem.w32(c.arg(1), v);
+fn buf_get_volume(c: &mut Call) -> u32 {
+    let v = buf(c).map_or(0, |b| b.volume);
+    c.mem.w32(c.arg(1), v);
     0
 }
-fn buf_get_pan(rt: &mut Runtime, c: &mut Call) -> u32 {
-    let v = buf(rt, c).map_or(0, |b| b.pan);
-    rt.mem.w32(c.arg(1), v);
+fn buf_get_pan(c: &mut Call) -> u32 {
+    let v = buf(c).map_or(0, |b| b.pan);
+    c.mem.w32(c.arg(1), v);
     0
 }
-fn buf_get_frequency(rt: &mut Runtime, c: &mut Call) -> u32 {
-    let v = buf(rt, c).map_or(0, |b| b.frequency);
-    rt.mem.w32(c.arg(1), v);
+fn buf_get_frequency(c: &mut Call) -> u32 {
+    let v = buf(c).map_or(0, |b| b.frequency);
+    c.mem.w32(c.arg(1), v);
     0
 }
-fn buf_get_status(rt: &mut Runtime, c: &mut Call) -> u32 {
-    let st = buf(rt, c).map_or(0, |b| {
+fn buf_get_status(c: &mut Call) -> u32 {
+    let st = buf(c).map_or(0, |b| {
         let ended = !b.looping && b.position() >= b.size;
         if b.playing && !ended { 1 | if b.looping { 4 } else { 0 } } else { 0 }
     });
-    rt.mem.w32(c.arg(1), st);
+    c.mem.w32(c.arg(1), st);
     0
 }
 
-fn buf_lock(rt: &mut Runtime, c: &mut Call) -> u32 {
+fn buf_lock(c: &mut Call) -> u32 {
     let (mut offset, mut bytes, flags) = (c.arg(1), c.arg(2), c.arg(7));
-    let Some(b) = buf(rt, c) else { return 0x8007_0057 };
+    let Some(mut b) = buf(c) else { return 0x8007_0057 };
     let (data, size) = (b.data, b.size);
     if size == 0 {
         return 0x8878_0064; // DSERR_BUFFERLOST: il primario non si blocca
@@ -443,68 +486,89 @@ fn buf_lock(rt: &mut Runtime, c: &mut Call) -> u32 {
     }
     offset %= size;
     let bytes = bytes.min(size);
+    // Segna quando ogni zona è stata scritta: il mixer se ne serve per accorgersi di quando suona
+    // dati vecchi di un giro.
+    b.streamed |= b.playing;
+    let (first_chunk, chunks) = (offset as u64 * 32 / size as u64, (bytes as u64 * 32).div_ceil(size as u64).min(32));
+    for k in 0..chunks {
+        b.fresh[((first_chunk + k) % 32) as usize] = true;
+    }
+    if audio_log() {
+        static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        eprintln!("[audio] {:#x} Lock offset {offset} byte {bytes} flag {flags:#x}; cursore {} di {size}, {}; t={} ms thread {}", c.arg(0), b.position(), if b.playing { "suona" } else { "fermo" }, START.get_or_init(Instant::now).elapsed().as_millis(), std::thread::current().name().unwrap_or("?"));
+    }
     let first = bytes.min(size - offset);
-    rt.mem.w32(c.arg(3), data + offset);
-    rt.mem.w32(c.arg(4), first);
+    c.mem.w32(c.arg(3), data + offset);
+    c.mem.w32(c.arg(4), first);
     if c.arg(5) != 0 {
-        rt.mem.w32(c.arg(5), if bytes > first { data } else { 0 });
+        c.mem.w32(c.arg(5), if bytes > first { data } else { 0 });
     }
     if c.arg(6) != 0 {
-        rt.mem.w32(c.arg(6), bytes - first);
+        c.mem.w32(c.arg(6), bytes - first);
     }
     0
 }
 
-fn buf_play(rt: &mut Runtime, c: &mut Call) -> u32 {
+fn buf_play(c: &mut Call) -> u32 {
     let looping = c.arg(3) & 1 != 0;
-    if let Some(mut b) = buf(rt, c) {
+    if let Some(mut b) = buf(c) {
         if !b.playing && !looping && b.position() >= b.size {
             b.cursor = 0.0; // un suono finito riparte dall'inizio
         }
         b.playing = true;
         b.looping = looping;
+        if audio_log() {
+            let f = b.format;
+            eprintln!("[audio] {:#x} Play ciclo={looping} cursore {} di {}; formato tag {} canali {} {} Hz {} bit, frequenza {}, volume {}", c.arg(0), b.position(), b.size, u16::from_le_bytes([f[0], f[1]]), u16::from_le_bytes([f[2], f[3]]), u32::from_le_bytes([f[4], f[5], f[6], f[7]]), u16::from_le_bytes([f[14], f[15]]), b.frequency, b.volume as i32);
+        }
     }
     0
 }
-fn buf_stop(rt: &mut Runtime, c: &mut Call) -> u32 {
-    if let Some(mut b) = buf(rt, c) {
+fn buf_stop(c: &mut Call) -> u32 {
+    if let Some(mut b) = buf(c) {
         b.playing = false;
+        if audio_log() {
+            eprintln!("[audio] {:#x} Stop al cursore {}", c.arg(0), b.position());
+        }
     }
     0
 }
-fn buf_set_current_position(rt: &mut Runtime, c: &mut Call) -> u32 {
+fn buf_set_current_position(c: &mut Call) -> u32 {
     let pos = c.arg(1);
-    if let Some(mut b) = buf(rt, c) {
+    if let Some(mut b) = buf(c) {
+        if audio_log() {
+            eprintln!("[audio] {:#x} SetCurrentPosition {pos} (era {})", c.arg(0), b.position());
+        }
         b.cursor = (pos / b.block()) as f64;
     }
     0
 }
-fn buf_set_format(rt: &mut Runtime, c: &mut Call) -> u32 {
-    let f: [u8; 18] = rt.mem.bytes(c.arg(1), 18).try_into().unwrap();
-    if let Some(mut b) = buf(rt, c) {
+fn buf_set_format(c: &mut Call) -> u32 {
+    let f: [u8; 18] = c.mem.bytes(c.arg(1), 18).try_into().unwrap();
+    if let Some(mut b) = buf(c) {
         b.format = f;
         b.bytes_per_sec = u32::from_le_bytes(f[8..12].try_into().unwrap());
         b.frequency = u32::from_le_bytes(f[4..8].try_into().unwrap());
     }
     0
 }
-fn buf_set_volume(rt: &mut Runtime, c: &mut Call) -> u32 {
+fn buf_set_volume(c: &mut Call) -> u32 {
     let v = c.arg(1);
-    if let Some(mut b) = buf(rt, c) {
+    if let Some(mut b) = buf(c) {
         b.volume = v;
     }
     0
 }
-fn buf_set_pan(rt: &mut Runtime, c: &mut Call) -> u32 {
+fn buf_set_pan(c: &mut Call) -> u32 {
     let v = c.arg(1);
-    if let Some(mut b) = buf(rt, c) {
+    if let Some(mut b) = buf(c) {
         b.pan = v;
     }
     0
 }
-fn buf_set_frequency(rt: &mut Runtime, c: &mut Call) -> u32 {
+fn buf_set_frequency(c: &mut Call) -> u32 {
     let v = c.arg(1);
-    if let Some(mut b) = buf(rt, c) {
+    if let Some(mut b) = buf(c) {
         if v != 0 {
             b.frequency = v;
             b.bytes_per_sec = v * b.block();
@@ -513,30 +577,38 @@ fn buf_set_frequency(rt: &mut Runtime, c: &mut Call) -> u32 {
     0
 }
 
+/// Questi metodi non toccano il runtime e non ne prendono il lock: il thread audio del gioco
+/// li chiama di continuo e deve riempire ogni buffer entro 60 ms, mentre quel lock è conteso
+/// dal thread che disegna (centinaia di migliaia di volte per fotogramma). Aspettandolo
+/// arrivava tardi e il mixer suonava dati vecchi: il suono "gracchiava".
+fn free_ok(_: &mut Call) -> u32 {
+    0
+}
+
 static BUFFER: &[Method] = &[
     ("QueryInterface", 3, Some(L(buf_query_interface))),
     ("AddRef", 1, Some(L(com::add_ref))),
     ("Release", 1, Some(L(com::release))),
-    ("GetCaps", 2, Some(L(buf_get_caps))),
-    ("GetCurrentPosition", 3, Some(L(buf_get_current_position))),
-    ("GetFormat", 4, Some(L(buf_get_format))),
-    ("GetVolume", 2, Some(L(buf_get_volume))),
-    ("GetPan", 2, Some(L(buf_get_pan))),
-    ("GetFrequency", 2, Some(L(buf_get_frequency))),
-    ("GetStatus", 2, Some(L(buf_get_status))),
-    ("Initialize", 3, Some(L(com::ok))),
-    ("Lock", 8, Some(L(buf_lock))),
-    ("Play", 4, Some(L(buf_play))),
-    ("SetCurrentPosition", 2, Some(L(buf_set_current_position))),
-    ("SetFormat", 2, Some(L(buf_set_format))),
-    ("SetVolume", 2, Some(L(buf_set_volume))),
-    ("SetPan", 2, Some(L(buf_set_pan))),
-    ("SetFrequency", 2, Some(L(buf_set_frequency))),
-    ("Stop", 1, Some(L(buf_stop))),
-    ("Unlock", 5, Some(L(com::ok))),
-    ("Restore", 1, Some(L(com::ok))),
-    ("SetFX", 4, Some(L(com::ok))),
-    ("AcquireResources", 4, Some(L(com::ok))),
+    ("GetCaps", 2, Some(F(buf_get_caps))),
+    ("GetCurrentPosition", 3, Some(F(buf_get_current_position))),
+    ("GetFormat", 4, Some(F(buf_get_format))),
+    ("GetVolume", 2, Some(F(buf_get_volume))),
+    ("GetPan", 2, Some(F(buf_get_pan))),
+    ("GetFrequency", 2, Some(F(buf_get_frequency))),
+    ("GetStatus", 2, Some(F(buf_get_status))),
+    ("Initialize", 3, Some(F(free_ok))),
+    ("Lock", 8, Some(F(buf_lock))),
+    ("Play", 4, Some(F(buf_play))),
+    ("SetCurrentPosition", 2, Some(F(buf_set_current_position))),
+    ("SetFormat", 2, Some(F(buf_set_format))),
+    ("SetVolume", 2, Some(F(buf_set_volume))),
+    ("SetPan", 2, Some(F(buf_set_pan))),
+    ("SetFrequency", 2, Some(F(buf_set_frequency))),
+    ("Stop", 1, Some(F(buf_stop))),
+    ("Unlock", 5, Some(F(free_ok))),
+    ("Restore", 1, Some(F(free_ok))),
+    ("SetFX", 4, Some(F(free_ok))),
+    ("AcquireResources", 4, Some(F(free_ok))),
     ("GetObjectInPath", 5, None),
 ];
 

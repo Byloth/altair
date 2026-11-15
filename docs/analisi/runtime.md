@@ -289,6 +289,35 @@ coda predefinita o da 200 ms, e SDL2 (`libSDL2`, presente in WSL, che usa PulseA
 suo), consumano tutti 4 secondi in 4,0-4,2. SDL2 resta l'alternativa pronta se `pa_simple`
 tornasse a dare problemi.
 
+### Il suono che gracchia: il thread audio del gioco arrivava tardi (2026-11-15)
+
+Segnalato dall'utente alla prima prova su Windows: nel menu e in partita, sopra l'audio giusto,
+un secondo audio "rotto"; i filmati invece puliti. È la prima volta che qualcuno ascolta.
+
+Come il gioco usa i buffer (visto con `ALTAIR_AUDIO_LOG=1`, che stampa Play, Stop e ogni
+`Lock` con cursore, istante e thread): ogni voce è un buffer da 19.200 byte, mono a 16 bit,
+suonato in ciclo a 24-36 kHz (`SetFrequency`), diviso in cinque segmenti da 3.840 byte, circa
+60 ms. Un thread dedicato (quello che chiama `SetThreadPriority`) interroga la posizione e
+riempie **il segmento successivo a quello in cui sta il cursore**: ha quindi al più 60 ms di
+margine. Se arriva tardi, il mixer suona un segmento vecchio di un giro: suono giusto con
+sopra pezzi sbagliati. I filmati non ne soffrono perché il loro audio è già tutto decodificato.
+
+Perché arrivava tardi: ogni sua chiamata (`GetCurrentPosition`, `Lock`, `Unlock`, `GetStatus`,
+`QueryPerformanceCounter`) prendeva il lock globale del runtime, conteso dal thread che
+disegna. Misura su un minuto, dal menu al laboratorio: **123 riempimenti arrivati con più di
+100 ms di distanza** dal precedente.
+
+Correzioni:
+
+- i metodi dei buffer e l'orologio non prendono più il lock del runtime (shim `F`);
+- il mixer non recupera più il tempo perso avanzando i cursori a scatti;
+- su Windows, `timeBeginPeriod(1)` all'avvio: i timer di sistema passano da 15,6 ms a 1 ms.
+
+Dopo: 70 ritardi nello stesso percorso, concentrati all'avvio e durante i caricamenti (lì il
+thread audio aspetta i lock del gioco stesso); a regime, nel menu e nel laboratorio, nessuno.
+Il mixer ora li conta: stampa "N ms di flussi suonati da zone non riscritte in tempo" ogni
+5 secondi in cui capita. **Da riascoltare su Windows.**
+
 ## Video Bink
 
 `bink.rs`. Il gioco importa 15 funzioni di `binkw32.dll` e riproduce cinque filmati da
@@ -321,6 +350,7 @@ dimensione della finestra. Gli eventi si accumulano in uno stato condiviso:
 - mouse → `DIMOUSESTATE` (spostamento dall'ultima lettura, rotella, pulsanti), `GetCursorPos`
   e messaggi `WM_MOUSEMOVE`, `WM_xBUTTONDOWN/UP`;
 - chiusura della finestra → uscita immediata del processo;
+- **F8** mostra o nasconde nel titolo della finestra i fotogrammi al secondo e i draw;
 - **F10** cattura o libera il puntatore (non arriva al gioco): catturato, il mouse muove la
   visuale senza fermarsi ai bordi; libero, serve per i menu.
 

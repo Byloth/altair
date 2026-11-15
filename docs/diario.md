@@ -314,3 +314,14 @@ Richiesta dell'utente mentre prova `tools/gioca.sh`.
   l'ha creata. Ora istanza wgpu e superficie nascono in `window.rs`, sul thread della
   finestra, e il renderer le riceve (`take_graphics`). Verificato su Linux che la finestra
   funzioni ancora; su Windows da riprovare.
+- **Seconda prova su Windows** (utente): la finestra funziona, arriva in partita. Vulkan: il
+  thread di invio costa 0,5-1,5 ms contro i 9-38 di WSL. Segnalati: suono che gracchia sopra
+  quello giusto (menu e partita, non nei filmati), ombre a strisce sulle superfici in luce,
+  telecamera troppo vicina; chiesto F8 per i fotogrammi al secondo.
+  - Ombre: mappe d'ombra `R32F` create a 16 bit → ora a 32 bit dove la scheda le filtra.
+  - Suono: il thread audio del gioco ha 60 ms per riempire ogni segmento e aspettava il lock
+    globale del runtime; 123 ritardi al minuto. Metodi dei buffer e orologio fuori dal lock,
+    niente recupero a scatti nel mixer, `timeBeginPeriod(1)` su Windows. Contatore dei
+    ritardi nel mixer, `ALTAIR_AUDIO_LOG` → `analisi/runtime.md`.
+  - F8: fotogrammi al secondo nel titolo della finestra.
+  - Telecamera: non ancora capita, servono dettagli.

@@ -57,6 +57,7 @@ fn sym<T: Copy>(lib: &host::Library, name: &str) -> Result<T, String> {
 }
 
 fn run() -> Result<i32, String> {
+    host::fine_timers();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let exe = args.first().ok_or(USAGE)?;
     let lib_path = args.iter().position(|a| a == "--lib").and_then(|i| args.get(i + 1)).ok_or(USAGE)?;
