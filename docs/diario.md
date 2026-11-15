@@ -356,3 +356,6 @@ Richiesta dell'utente mentre prova `tools/gioca.sh`.
 - Versione dell'Animus ("1.28" → `2.0.0-dev.1`): trovato il testo (`Animus_MGB`), niente `α`
   nei caratteri, e in memoria non c'è spazio per un testo più lungo. Serve un aggancio nel
   traduttore → `domande-aperte.md`. Comandi `find`/`findhex`, `tools/ritaglio.py`.
+- Telecamera sbagliata del laboratorio: sparita dopo le correzioni x87/EFLAGS di oggi
+  (utente su Windows, e otto clic qui su WSL). Restano da riprovare interferenze e
+  inquadratura speciale → `domande-aperte.md`.

@@ -90,6 +90,14 @@ del piano del 2026-11-15 si ferma qui: non c'erano altre istruzioni annotate com
 
 ## Laboratorio: telecamera sbagliata e interferenze dell'Animus assenti (2026-11-15)
 
+**Aggiornamento, stesso giorno: l'inquadratura vuota è sparita.** Dopo la correzione di
+`frndint`/`fistp` e del bit ID di EFLAGS (`analisi/traduttore.md`, punti 7 e 8) l'utente
+conferma su Windows che la telecamera sbagliata non c'è più. Verificato anche qui su WSL: otto
+clic nel laboratorio, tre inquadrature che si alternano, tutte sui personaggi
+(`run/scatti/cam-foglio.png`). Quale delle due correzioni l'abbia risolta non è stato isolato:
+l'ipotesi 3 qui sotto (errore di traduzione) era quella giusta. **Restano da riprovare** le
+interferenze con i simboli e l'inquadratura speciale, e la telecamera "troppo vicina" in gioco.
+
 Segnalato dall'utente giocando su Windows (schermata `ac1-bug_wrong_camera.png`, fuori dal
 repository). Non ancora indagato: qui solo i fatti riferiti e i punti da cui partire.
 
