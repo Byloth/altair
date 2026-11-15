@@ -328,6 +328,20 @@ pub unsafe extern "C" fn host_call(ctx: *mut Ctx, addr: u32) -> i32 {
 }
 
 /// Stampa lo stato al momento dell'arresto: registri e una traccia dello stack guest.
+/// Le ultime destinazioni di chiamate indirette del thread corrente, dalla più recente.
+pub fn trail_text() -> String {
+    let mut trail = [0u32; 32];
+    let n = TRAIL.get().map_or(0, |f| unsafe { f(trail.as_mut_ptr(), 32) });
+    trail[..n as usize]
+        .iter()
+        .map(|&a| match lookup(a) {
+            Some((name, _)) => name.rsplit('!').next().unwrap_or(&name).to_string(),
+            None => format!("{a:#010x}"),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub fn report_stop(ctx: &Ctx) {
     let rt = rt();
     let mem = rt.mem;

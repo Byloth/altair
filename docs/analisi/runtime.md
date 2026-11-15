@@ -194,6 +194,26 @@ italiana non c'è.
 `InstallDir` vale `C:\AC1\`. Con `Italian` il gioco apre `DataPC_StreamedSoundsIta.forge` e
 mostra i testi in italiano.
 
+## File INI
+
+`system.rs`. Le funzioni `GetPrivateProfile*` e `WritePrivateProfileStringA` leggono e scrivono
+file veri nel disco scrivibile (`run/c/…`); la cartella del gioco resta in sola lettura. Alla
+prima corsa il gioco crea, in `C:\Users\Player\AppData\Roaming\Ubisoft\Assassin's Creed\`:
+
+- `Assassin.ini`: `[Player] LastUsedProfile=<numero del profilo>`;
+- `DARE.INI`: opzioni del motore audio (`DS3D_CACHE_SIZE`, `NB_AUDIBLE_VOICES=48`, …).
+
+Con `LastUsedProfile` il percorso dei menu all'avvio resta quello di prima (verificato:
+`tools/avvia.sh --partita` arriva ancora al laboratorio).
+
+## Puntatori nulli e accessi non validi
+
+I primi 64 KB dello spazio guest sono protetti, come in Windows (`ALTAIR_NULL=0` toglie la
+protezione), e un gestore di `SIGSEGV` stampa l'indirizzo guest, il thread e le ultime
+destinazioni di chiamate indirette, poi esce con codice 3. Prima un accesso sbagliato dava un
+core dump muto, e una lettura da un puntatore nullo passava inosservata. Percorso completo
+fino al corridoio dell'Animus con la protezione attiva: nessun accesso non valido.
+
 ## Audio
 
 `dsound.rs`. Il gioco (motore audio DARE) crea decine di buffer secondari da 38.400 byte,

@@ -234,3 +234,7 @@ renderer per le città e robustezza.
   tempo reale: 100 s, zero blocchi scartati. `tools/audio-probe.py` per misurare fuori dal
   gioco (anche SDL2, alternativa pronta). L'ipotesi sulla crisi notturna (coda da 60 ms) resta
   non dimostrata → `analisi/runtime.md`.
+- **Robustezza**: prima pagina guest protetta e gestore di `SIGSEGV` con diagnosi; percorso
+  fino al corridoio senza accessi non validi. **File INI veri**: il gioco scrive
+  `Assassin.ini` (ultimo profilo) e `DARE.INI` → `analisi/runtime.md`.
+- Sei minuti di gioco con l'audio acceso: zero blocchi scartati.

@@ -160,8 +160,9 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 - [x] **Apertura dei `.forge`** (il gate): `DataPC_Common`, `DataPC`, `DataPC_StreamedSounds`
 - [x] Il gioco crea la finestra e chiama `Direct3DCreate9`: confine con la Fase 3
 - [x] Lingua del gioco: registro emulato, `Language` = `Italian` (`ALTAIR_LANG`)
-- [ ] SEH ed eccezioni C++; file INI veri; `WaitForMultipleObjects` con attesa di tutti
-- [ ] Proteggere la prima pagina dello spazio guest, per vedere subito i puntatori nulli
+- [ ] SEH ed eccezioni C++; `WaitForMultipleObjects` con attesa di tutti
+- [x] File INI veri (`Assassin.ini`, `DARE.INI` in `run/c/`)
+- [x] Prima pagina dello spazio guest protetta e gestore degli accessi non validi
 
 ## Fase 3 · Grafica, audio, input
 

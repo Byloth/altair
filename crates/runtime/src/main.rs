@@ -74,6 +74,7 @@ fn run() -> Result<i32, String> {
         return Err("impossibile riservare lo spazio di indirizzamento guest".into());
     }
     let mem = Mem(base);
+    guard_guest_memory(base);
     for s in &img.sections {
         mem.write(s.va, img.section_bytes(s));
     }
@@ -135,6 +136,40 @@ fn run() -> Result<i32, String> {
     }
     eprintln!("l'entry point è ritornato (eax = {:#x})", ctx.eax);
     Ok(0)
+}
+
+static GUEST_BASE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Protegge i primi 64 KB dello spazio guest (in Windows non sono mai mappati: lì cadono i
+/// puntatori nulli) e installa un gestore che, a un accesso guest non valido, dice dove è
+/// successo invece di lasciare un core dump muto. `ALTAIR_NULL=0` toglie la protezione.
+fn guard_guest_memory(base: *mut u8) {
+    GUEST_BASE.store(base as usize, std::sync::atomic::Ordering::Relaxed);
+    unsafe {
+        if !std::env::var("ALTAIR_NULL").is_ok_and(|v| v == "0") {
+            libc::mprotect(base.cast(), 0x1_0000, libc::PROT_NONE);
+        }
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = on_fault as *const () as usize;
+        action.sa_flags = libc::SA_SIGINFO;
+        libc::sigaction(libc::SIGSEGV, &action, std::ptr::null_mut());
+    }
+}
+
+/// Gestore di SIGSEGV. Non è codice "sicuro per i segnali" (stampa, prende un lock), ma il
+/// processo sta morendo comunque e quello che stampa è l'unica traccia utile.
+extern "C" fn on_fault(_: libc::c_int, info: *mut libc::siginfo_t, _: *mut libc::c_void) {
+    let addr = unsafe { (*info).si_addr() } as usize;
+    let base = GUEST_BASE.load(std::sync::atomic::Ordering::Relaxed);
+    if base != 0 && (base..base + (1usize << 32)).contains(&addr) {
+        let guest = (addr - base) as u32;
+        let thread = std::thread::current();
+        eprintln!("\nACCESSO NON VALIDO alla memoria guest {guest:#010x}{} (thread {})", if guest < 0x1_0000 { ": puntatore nullo" } else { "" }, thread.name().unwrap_or("?"));
+        eprintln!("  ultime funzioni guest chiamate per indirizzo, dalla più recente: {}", win32::trail_text());
+    } else {
+        eprintln!("\nSIGSEGV fuori dalla memoria guest, all'indirizzo host {addr:#x}");
+    }
+    unsafe { libc::_exit(3) }
 }
 
 pub fn trap_text(ctx: &Ctx) -> String {

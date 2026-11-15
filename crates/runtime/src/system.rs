@@ -134,32 +134,127 @@ fn get_time_zone_information(rt: &mut Runtime, c: &mut Call) -> u32 {
     0 // TIME_ZONE_ID_UNKNOWN
 }
 
-// --- file INI: nessun file, sempre il valore predefinito ------------------------------------
-fn get_private_profile_int_a(rt: &mut Runtime, c: &mut Call) -> u32 {
-    if rt.trace {
-        eprintln!("    ini [{}] {} in {}", rt.mem.cstr(c.arg(0)), rt.mem.cstr(c.arg(1)), rt.mem.cstr(c.arg(3)));
+// --- file INI veri, nel disco scrivibile del gioco (`run/c/…`) ------------------------------
+/// Le righe di un file INI guest; vuoto se non esiste.
+fn ini_lines(rt: &Runtime, file: u32) -> (Option<std::path::PathBuf>, Vec<String>) {
+    let path = if file != 0 { rt.fs.resolve(&rt.mem.cstr(file)).map(|p| p.0) } else { None };
+    let text = path.as_ref().and_then(|p| std::fs::read(p).ok()).unwrap_or_default();
+    (path, String::from_utf8_lossy(&text).lines().map(|l| l.trim_end_matches('\r').to_string()).collect())
+}
+fn section_name(line: &str) -> Option<&str> {
+    line.trim().strip_prefix('[')?.strip_suffix(']')
+}
+/// Indici delle righe di una sezione (intestazione esclusa).
+fn section_range(lines: &[String], section: &str) -> Option<std::ops::Range<usize>> {
+    let start = lines.iter().position(|l| section_name(l).is_some_and(|n| n.eq_ignore_ascii_case(section)))? + 1;
+    let end = lines[start..].iter().position(|l| section_name(l).is_some()).map_or(lines.len(), |i| start + i);
+    Some(start..end)
+}
+fn key_value(line: &str) -> Option<(&str, &str)> {
+    let (k, v) = line.split_once('=')?;
+    (!k.trim_start().starts_with(';')).then(|| (k.trim(), v.trim()))
+}
+fn ini_get(rt: &Runtime, section: u32, key: u32, file: u32) -> Option<String> {
+    if section == 0 || key == 0 {
+        return None;
     }
-    c.arg(2)
+    let (_, lines) = ini_lines(rt, file);
+    let (section, key) = (rt.mem.cstr(section), rt.mem.cstr(key));
+    let value = section_range(&lines, &section).and_then(|r| lines[r].iter().filter_map(|l| key_value(l)).find(|(k, _)| k.eq_ignore_ascii_case(&key)).map(|(_, v)| v.trim_matches('"').to_string()));
+    if rt.trace {
+        eprintln!("    ini [{section}] {key} in {} → {value:?}", rt.mem.cstr(file));
+    }
+    value
+}
+fn get_private_profile_int_a(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let Some(v) = ini_get(rt, c.arg(0), c.arg(1), c.arg(3)) else { return c.arg(2) };
+    // Come Windows: cifre iniziali, con segno; altrimenti zero.
+    let digits: String = v.chars().enumerate().take_while(|(i, ch)| ch.is_ascii_digit() || (*i == 0 && *ch == '-')).map(|(_, ch)| ch).collect();
+    digits.parse::<i64>().unwrap_or(0) as u32
+}
+/// Scrive nel buffer una serie di stringhe chiuse da zero, con uno zero finale in più.
+fn write_list(rt: &mut Runtime, buf: u32, size: u32, items: &[String]) -> u32 {
+    let mut out = Vec::new();
+    for item in items {
+        out.extend_from_slice(item.as_bytes());
+        out.push(0);
+    }
+    if size < 2 {
+        return 0;
+    }
+    out.truncate(size as usize - 2);
+    let n = out.len() as u32;
+    out.extend([0, 0]);
+    rt.mem.write(buf, &out);
+    n
 }
 fn get_private_profile_string_a(rt: &mut Runtime, c: &mut Call) -> u32 {
-    let (default, buf, size) = (c.arg(2), c.arg(3), c.arg(4));
-    if rt.trace {
-        eprintln!("    ini [{}] {} in {}", rt.mem.cstr(c.arg(0)), rt.mem.cstr(c.arg(1)), rt.mem.cstr(c.arg(5)));
+    let (section, key, default, buf, size, file) = (c.arg(0), c.arg(1), c.arg(2), c.arg(3), c.arg(4), c.arg(5));
+    if section != 0 && key == 0 {
+        // Senza chiave: l'elenco delle chiavi della sezione.
+        let (_, lines) = ini_lines(rt, file);
+        let keys: Vec<String> = section_range(&lines, &rt.mem.cstr(section)).map(|r| lines[r].iter().filter_map(|l| key_value(l)).map(|(k, _)| k.to_string()).collect()).unwrap_or_default();
+        return write_list(rt, buf, size, &keys);
     }
-    let d = if default != 0 { rt.mem.cstr_bytes(default).to_vec() } else { Vec::new() };
-    let n = d.len().min(size.saturating_sub(1) as usize);
+    let value = match ini_get(rt, section, key, file) {
+        Some(v) => v.into_bytes(),
+        None if default != 0 => rt.mem.cstr_bytes(default).to_vec(),
+        None => Vec::new(),
+    };
+    let n = value.len().min(size.saturating_sub(1) as usize);
     if size > 0 {
-        rt.mem.write_cstr(buf, &d[..n]);
+        rt.mem.write_cstr(buf, &value[..n]);
     }
     n as u32
 }
-fn empty_section(rt: &mut Runtime, c: &mut Call) -> u32 {
-    // GetPrivateProfileSectionA(app, buf, size, file) / SectionNamesA(buf, size, file)
-    let (buf, size) = if c.arg(3) != 0 && c.arg(2) < 0x10000 { (c.arg(1), c.arg(2)) } else { (c.arg(0), c.arg(1)) };
-    if size >= 2 {
-        rt.mem.w16(buf, 0);
+/// `GetPrivateProfileSectionA(sezione, buffer, capienza, file)`: le righe `chiave=valore`.
+fn get_private_profile_section_a(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let (_, lines) = ini_lines(rt, c.arg(3));
+    let section = if c.arg(0) != 0 { rt.mem.cstr(c.arg(0)) } else { String::new() };
+    let items: Vec<String> = section_range(&lines, &section).map(|r| lines[r].iter().filter_map(|l| key_value(l)).map(|(k, v)| format!("{k}={v}")).collect()).unwrap_or_default();
+    write_list(rt, c.arg(1), c.arg(2), &items)
+}
+/// `GetPrivateProfileSectionNamesA(buffer, capienza, file)`.
+fn get_private_profile_section_names_a(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let (_, lines) = ini_lines(rt, c.arg(2));
+    let names: Vec<String> = lines.iter().filter_map(|l| section_name(l)).map(str::to_string).collect();
+    write_list(rt, c.arg(0), c.arg(1), &names)
+}
+/// `WritePrivateProfileStringA(sezione, chiave, valore, file)`: valore nullo cancella la chiave.
+fn write_private_profile_string_a(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let (section, key, value, file) = (c.arg(0), c.arg(1), c.arg(2), c.arg(3));
+    if section == 0 || key == 0 {
+        return 1; // cancellare un'intera sezione non serve al gioco
     }
-    0
+    let (Some(path), mut lines) = ini_lines(rt, file) else { return 0 };
+    if !rt.fs.resolve(&rt.mem.cstr(file)).is_some_and(|p| p.1) {
+        return 0; // cartella del gioco: sola lettura
+    }
+    let (section, key) = (rt.mem.cstr(section), rt.mem.cstr(key));
+    let value = (value != 0).then(|| rt.mem.cstr(value));
+    if rt.trace {
+        eprintln!("    ini scrive [{section}] {key} = {value:?} in {}", path.display());
+    }
+    let range = match section_range(&lines, &section) {
+        Some(r) => r,
+        None => {
+            lines.push(format!("[{section}]"));
+            lines.len()..lines.len()
+        }
+    };
+    let at = range.clone().find(|&i| key_value(&lines[i]).is_some_and(|(k, _)| k.eq_ignore_ascii_case(&key)));
+    match (at, value) {
+        (Some(i), Some(v)) => lines[i] = format!("{key}={v}"),
+        (Some(i), None) => {
+            lines.remove(i);
+        }
+        (None, Some(v)) => lines.insert(range.end, format!("{key}={v}")),
+        (None, None) => {}
+    }
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(&path, lines.join("\r\n") + "\r\n").is_ok() as u32
 }
 
 // --- rete: non disponibile ------------------------------------------------------------------
@@ -231,9 +326,9 @@ pub static SHIMS: &[(&str, u32, Shim)] = &[
     ("GetTimeZoneInformation", 1, L(get_time_zone_information)),
     ("GetPrivateProfileIntA", 4, L(get_private_profile_int_a)),
     ("GetPrivateProfileStringA", 6, L(get_private_profile_string_a)),
-    ("GetPrivateProfileSectionA", 4, L(empty_section)),
-    ("GetPrivateProfileSectionNamesA", 3, L(empty_section)),
-    ("WritePrivateProfileStringA", 4, L(one)),
+    ("GetPrivateProfileSectionA", 4, L(get_private_profile_section_a)),
+    ("GetPrivateProfileSectionNamesA", 3, L(get_private_profile_section_names_a)),
+    ("WritePrivateProfileStringA", 4, L(write_private_profile_string_a)),
     ("ws2_32.dll!#115", 2, L(wsa_startup)),
     ("ws2_32.dll!#116", 0, L(zero)),
     ("ws2_32.dll!#111", 0, L(wsa_get_last_error)),
