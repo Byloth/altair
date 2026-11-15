@@ -201,6 +201,8 @@ pub struct Gfx {
     blit: Option<(wgpu::ShaderModule, HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>)>,
     /// Il pannello di diagnostica (F8): shader e una pipeline per formato di destinazione.
     overlay: Option<(wgpu::ShaderModule, HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>)>,
+    /// L'atlante dei caratteri del pannello (uno bianco da un pixel se non ci sono) e il campionatore.
+    overlay_atlas: Option<(wgpu::TextureView, wgpu::Sampler)>,
     /// La superficie della finestra, se c'è (`ALTAIR_WINDOW=1`), con la sua configurazione.
     /// Buffer usati da draw non ancora inviati; versioni di appoggio (offset nel buffer di
     /// appoggio); buffer veri rimasti indietro rispetto alla memoria guest.
@@ -505,6 +507,7 @@ impl Gfx {
             dummies,
             blit: None,
             overlay: None,
+            overlay_atlas: None,
             used: Default::default(),
             shadow: HashMap::new(),
             pool: HashMap::new(),
@@ -1572,11 +1575,40 @@ impl Gfx {
 
     /// Disegna il pannello di diagnostica sopra una vista di `w`×`h` pixel.
     fn draw_overlay(&mut self, dv: &wgpu::TextureView, df: wgpu::TextureFormat, w: u32, h: u32) {
-        let vertices = crate::overlay::build(w, h, df.is_srgb());
+        let fonts = crate::animus_font::get();
+        let vertices = crate::overlay::build(w, h, df.is_srgb(), fonts);
         if vertices.is_empty() {
             return;
         }
         let _gate = gate();
+        if self.overlay_atlas.is_none() {
+            let (size, bytes) = match fonts {
+                Some(f) => (f.size, f.atlas.clone()),
+                None => ((1, 1), vec![255]),
+            };
+            let extent = wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 };
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: None,
+                size: extent,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            // I dati partono con il prossimo lotto, prima dei comandi che li usano.
+            self.writes.push(Write::Texture {
+                texture: texture.clone(),
+                level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                bytes,
+                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(size.0), rows_per_image: Some(size.1) },
+                extent,
+            });
+            let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, ..Default::default() });
+            self.overlay_atlas = Some((texture.create_view(&Default::default()), sampler));
+        }
         if self.overlay.is_none() {
             let m = self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: None, source: wgpu::ShaderSource::Wgsl(crate::overlay::SHADER.into()) });
             self.overlay = Some((m, HashMap::new()));
@@ -1590,9 +1622,9 @@ impl Gfx {
                     module,
                     entry_point: Some("vs"),
                     buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: 24,
+                        array_stride: 32,
                         step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4],
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32x4],
                     }],
                     compilation_options: Default::default(),
                 },
@@ -1615,6 +1647,12 @@ impl Gfx {
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: data.len() as u64, usage: wgpu::BufferUsages::VERTEX, mapped_at_creation: true });
         buffer.slice(..).get_mapped_range_mut().copy_from_slice(data);
         buffer.unmap();
+        let (view, sampler) = self.overlay_atlas.as_ref().unwrap();
+        let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &pipeline.get_bind_group_layout(0),
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view) }, wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) }],
+        });
         drop(_gate);
         let encoder = self.encoder.get_or_insert_with(|| self.device.create_command_encoder(&Default::default()));
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1625,6 +1663,7 @@ impl Gfx {
             occlusion_query_set: None,
         });
         pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &group, &[]);
         pass.set_vertex_buffer(0, buffer.slice(..));
         pass.draw(0..vertices.len() as u32, 0..1);
     }

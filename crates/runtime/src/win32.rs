@@ -648,6 +648,31 @@ fn heap_realloc(rt: &mut Runtime, c: &mut Call) -> u32 {
 fn heap_size(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.heap.size(c.arg(2)).unwrap_or(0xffff_ffff)
 }
+impl Runtime {
+    /// Cerca un testo UTF-16 nelle zone di `VirtualAlloc` (heap del gioco compresi) e ritorna
+    /// gli indirizzi. Strumento di indagine: comando `find` del canale di comando.
+    pub fn find_utf16(&self, text: &str) -> Vec<u32> {
+        self.find_bytes(&text.encode_utf16().flat_map(|u| u.to_le_bytes()).collect::<Vec<u8>>())
+    }
+
+    /// Cerca una sequenza di byte nelle stesse zone (comando `findhex`), anche nell'immagine.
+    pub fn find_bytes(&self, needle: &[u8]) -> Vec<u32> {
+        let mut out = Vec::new();
+        if needle.is_empty() {
+            return out;
+        }
+        for (&base, &size) in &self.regions {
+            let hay = self.mem.bytes(base, size);
+            let mut from = 0;
+            while let Some(i) = hay[from..].windows(needle.len()).position(|w| w == needle) {
+                out.push(base + (from + i) as u32);
+                from += i + 1;
+            }
+        }
+        out
+    }
+}
+
 fn virtual_alloc(rt: &mut Runtime, c: &mut Call) -> u32 {
     let (addr, size) = (c.arg(0), c.arg(1));
     if addr != 0 {

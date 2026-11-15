@@ -75,6 +75,7 @@ name = "altair-runtime"
 version = "0.1.0"
 dependencies = [
  "altair-bink",
+ "altair-forge",
  "altair-pe",
  "altair-shader",
  "libc",

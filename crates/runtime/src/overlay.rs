@@ -94,6 +94,8 @@ pub fn frame(draws: u64) {
 #[derive(Clone, Copy)]
 pub struct Vertex {
     pub pos: [f32; 2],
+    /// Nell'atlante dei caratteri; negativo per le forme piene.
+    pub uv: [f32; 2],
     pub color: [f32; 4],
 }
 
@@ -137,6 +139,8 @@ fn glyph(ch: char) -> [u8; 7] {
 struct Draw {
     v: Vec<Vertex>,
     srgb: bool,
+    /// I caratteri dell'Animus letti dai dati del gioco; senza, quelli 5×7 qui sopra.
+    fonts: Option<&'static crate::animus_font::Fonts>,
 }
 
 type Color = [f32; 4];
@@ -153,7 +157,7 @@ impl Draw {
 
     fn tri(&mut self, p: [[f32; 2]; 3], c: Color) {
         let color = self.color(c);
-        self.v.extend(p.iter().map(|&pos| Vertex { pos, color }));
+        self.v.extend(p.iter().map(|&pos| Vertex { pos, uv: [-1.0, -1.0], color }));
     }
 
     fn quad(&mut self, p: [[f32; 2]; 4], c: Color) {
@@ -170,11 +174,37 @@ impl Draw {
         self.quad([[cx, cy - r], [cx + r, cy], [cx, cy + r], [cx - r, cy]], c);
     }
 
-    /// Testo con caratteri 5×7 ingranditi di `k`; ritorna la x dopo l'ultimo carattere.
-    fn text(&mut self, mut x: f32, y: f32, k: f32, s: &str, c: Color) -> f32 {
+    /// Il carattere dell'Animus adatto a un'altezza delle maiuscole: quello dei titoli per i
+    /// numeri grandi, quello del testo per il resto. Ritorna anche il fattore di scala.
+    fn face(&self, cap: f32) -> Option<(&'static crate::animus_font::Face, f32)> {
+        let fonts = self.fonts?;
+        let face = if cap >= fonts.text.cap * 1.3 { &fonts.title } else { &fonts.text };
+        Some((face, cap / face.cap))
+    }
+
+    /// Testo con le maiuscole alte `cap` pixel e il bordo alto in `y`; ritorna la x dopo
+    /// l'ultimo carattere. `track` è spazio in più tra i caratteri, in pixel.
+    fn text(&mut self, mut x: f32, y: f32, cap: f32, track: f32, s: &str, c: Color) -> f32 {
+        if let Some((face, k)) = self.face(cap) {
+            let color = self.color(c);
+            let base = y + cap;
+            for ch in s.chars() {
+                let Some(g) = face.glyphs.get(&ch).or_else(|| face.glyphs.get(&'?')) else { continue };
+                if ch != ' ' {
+                    let (x0, y0) = (x + g.dx * k, base - g.dy * k);
+                    let (x1, y1) = (x0 + g.w * k, y0 + g.h * k);
+                    let [u0, v0, u1, v1] = g.uv;
+                    let corners = [([x0, y0], [u0, v0]), ([x1, y0], [u1, v0]), ([x1, y1], [u1, v1]), ([x0, y1], [u0, v1])];
+                    self.v.extend([0, 1, 2, 0, 2, 3].map(|i| Vertex { pos: corners[i].0, uv: corners[i].1, color }));
+                }
+                x += g.advance * k + track;
+            }
+            return x - track;
+        }
+        // Ripiego: caratteri 5×7, un rettangolo per ogni fila di punti accesi.
+        let k = cap / 7.0;
         for ch in s.chars() {
-            for (row, bits) in glyph(ch).iter().enumerate() {
-                // Le file di pixel accesi diventano un solo rettangolo: meno triangoli.
+            for (row, bits) in glyph(ch.to_ascii_uppercase()).iter().enumerate() {
                 let mut col = 0;
                 while col < 5 {
                     if bits >> (4 - col) & 1 == 1 {
@@ -188,25 +218,29 @@ impl Draw {
                     }
                 }
             }
-            x += 6.0 * k;
+            x += 6.0 * k + track;
         }
-        x - k
+        x - k - track
+    }
+
+    fn text_width(&self, cap: f32, track: f32, s: &str) -> f32 {
+        let n = s.chars().count() as f32;
+        match self.face(cap) {
+            Some((face, k)) => s.chars().filter_map(|ch| face.glyphs.get(&ch)).map(|g| g.advance * k).sum::<f32>() + track * (n - 1.0).max(0.0),
+            None => n * 6.0 * cap / 7.0 - cap / 7.0 + track * (n - 1.0).max(0.0),
+        }
     }
 }
 
-fn text_width(s: &str, k: f32) -> f32 {
-    s.chars().count() as f32 * 6.0 * k - k
-}
-
 /// I triangoli del pannello per una finestra di `w`×`h` pixel, già in coordinate di clip.
-pub fn build(w: u32, h: u32, srgb: bool) -> Vec<Vertex> {
+pub fn build(w: u32, h: u32, srgb: bool, fonts: Option<&'static crate::animus_font::Fonts>) -> Vec<Vertex> {
     let guard = STATS.lock().unwrap_or_else(|e| e.into_inner());
     let Some(s) = guard.as_ref() else { return Vec::new() };
-    let mut d = Draw { v: Vec::with_capacity(4096), srgb };
+    let mut d = Draw { v: Vec::with_capacity(4096), srgb, fonts };
     // Unità: un pixel a 720 righe, mai meno di uno, arrotondata al mezzo pixel perché i
     // caratteri restino netti.
     let u = ((h as f32 / 720.0) * 2.0).round().max(2.0) / 2.0;
-    let (pw, ph) = (254.0 * u, 78.0 * u);
+    let (pw, ph) = (268.0 * u, 78.0 * u);
     let (px, py) = (w as f32 - pw - 22.0 * u, 20.0 * u);
 
     // Colori dell'Animus: bianco freddo, azzurro, e il rosso della desincronizzazione.
@@ -247,26 +281,32 @@ pub fn build(w: u32, h: u32, srgb: bool) -> Vec<Vertex> {
         d.diamond(near, y, (2.2 + 1.0 * k) * u, if i % 3 == 0 { accent } else { ink });
     }
 
-    // Intestazione.
+    // Intestazione. Con i caratteri veri le scritte sono un po' più grandi di quelle a punti,
+    // e spaziate come nell'interfaccia dell'Animus.
+    let real = d.fonts.is_some();
+    let (label, track) = if real { (8.0 * u, 1.2 * u) } else { (7.0 * u, 0.0) };
     let tx = px + 46.0 * u;
-    let end = d.text(tx, py + 9.0 * u, u, "ANIMUS", dim);
-    d.text(end + 6.0 * u, py + 9.0 * u, u, "/ SINCRONIA", [dim[0], dim[1], dim[2], 0.5]);
+    let end = d.text(tx, py + 8.0 * u, label, track, "ANIMUS", dim);
+    d.text(end + 6.0 * u, py + 8.0 * u, label, track, "/ SINCRONIA", [dim[0], dim[1], dim[2], 0.5]);
 
     // Il numero grande, allineato a destra su quattro cifre, e la sua unità.
     let fps = format!("{:.0}", s.fps.min(9999.0));
-    let big = 4.0 * u;
-    let slot = text_width("0000", big);
-    let nx = tx + slot - text_width(&fps, big);
-    let end = d.text(nx, py + 22.0 * u, big, &fps, ink);
-    d.text(end + 5.0 * u, py + 22.0 * u + 3.0 * big, u, "FPS", accent);
+    let big = 28.0 * u;
+    let slot = d.text_width(big, 0.0, "0000");
+    let nx = tx + slot - d.text_width(big, 0.0, &fps);
+    let end = d.text(nx, py + 22.0 * u, big, 0.0, &fps, ink);
+    d.text(end + 6.0 * u, py + 22.0 * u + big - label, label, track, "FPS", accent);
 
     // Colonna di destra: millisecondi e draw.
-    let cx = px + 168.0 * u;
-    let small = 1.5 * u;
-    d.text(cx, py + 23.0 * u, u, "MS", dim);
-    d.text(cx + 34.0 * u, py + 21.5 * u, small, &format!("{:.1}", s.ms.min(999.9)), ink);
-    d.text(cx, py + 39.0 * u, u, "DRAW", dim);
-    d.text(cx + 34.0 * u, py + 37.5 * u, small, &format!("{}", s.draws.min(99999)), ink);
+    let cx = px + 180.0 * u;
+    let small = if real { 11.0 * u } else { 10.5 * u };
+    // I valori sono allineati a destra, contro il bordo del pannello.
+    let right = px + pw - 13.0 * u;
+    for (row, name, value) in [(0.0, "MS", format!("{:.1}", s.ms.min(999.9))), (16.0, "DRAW", format!("{}", s.draws.min(99999)))] {
+        d.text(cx, py + (24.0 + row) * u, label, track, name, dim);
+        let x = right - d.text_width(small, 0.0, &value);
+        d.text(x, py + (22.0 + row) * u, small, 0.0, &value, ink);
+    }
 
     // Lo storico: una barretta ogni quarto di secondo, alta quanto i fotogrammi al secondo di
     // quell'intervallo; le più vecchie a sinistra, più tenui. La scala è un gradino fisso
@@ -303,7 +343,13 @@ pub fn bytes(v: &[Vertex]) -> &[u8] {
 }
 
 pub const SHADER: &str = "
-struct V { @builtin(position) p: vec4f, @location(0) c: vec4f }
-@vertex fn vs(@location(0) pos: vec2f, @location(1) color: vec4f) -> V { return V(vec4f(pos, 0.0, 1.0), color); }
-@fragment fn fs(v: V) -> @location(0) vec4f { return v.c; }
+struct V { @builtin(position) p: vec4f, @location(0) c: vec4f, @location(1) uv: vec2f }
+@group(0) @binding(0) var atlas: texture_2d<f32>;
+@group(0) @binding(1) var samp: sampler;
+@vertex fn vs(@location(0) pos: vec2f, @location(1) uv: vec2f, @location(2) color: vec4f) -> V { return V(vec4f(pos, 0.0, 1.0), color, uv); }
+@fragment fn fs(v: V) -> @location(0) vec4f {
+    // Le forme piene hanno uv negative; i caratteri prendono la copertura dall'atlante.
+    let cover = textureSampleLevel(atlas, samp, max(v.uv, vec2f(0.0)), 0.0).r;
+    return vec4f(v.c.rgb, v.c.a * select(cover, 1.0, v.uv.x < 0.0));
+}
 ";

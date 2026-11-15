@@ -472,12 +472,20 @@ dopo. La prima versione aveva una barretta per fotogramma, con altezza e rosso r
 media del momento: scorreva via in mezzo secondo, si ridimensionava a ogni ricalcolo e le
 barrette cambiavano colore (segnalato dall'utente, illeggibile).
 
-**Niente asset del gioco:** caratteri 5×7, elica e cornice sono descritti in codice. Il logo
-Abstergo non c'è, apposta: è un marchio di Ubisoft e la regola 1 lo tiene fuori dal repository.
+**Niente asset del gioco nel repository:** elica e cornice sono descritte in codice, e il logo
+Abstergo non c'è, apposta: è un marchio di Ubisoft e la regola 1 lo tiene fuori.
+
+**I caratteri sono quelli dell'Animus, letti dai dati dell'utente.** Alla prima accensione
+`animus_font.rs` apre `DataPC.forge` nella cartella del gioco, prende dalla voce "Game
+Bootstrap Settings" i caratteri `AnimusText PC` (testo) e `Animus Title` (il numero grande)
+con le loro immagini, e ne fa un atlante solo (512×1280, un byte per pixel); 209 ms su WSL.
+`overlay.rs` disegna ogni glifo come un rettangolo con le coordinate dell'atlante. Formati in
+`forge.md`, "Caratteri dell'interfaccia". Se la lettura non riesce il pannello ripiega su
+caratteri 5×7 descritti in codice, e lo scrive nel registro.
 
 Si accende con F8, con il comando `fps` del canale di comando o con `ALTAIR_FPS=1`. Con il
 pannello acceso, `shot` salva ciò che si vede in finestra (back buffer più pannello, composti
-su una copia). Verificato su WSL nel laboratorio (`run/scatti/pannello-1.png`); su Windows da
+su una copia). Verificato su WSL nel laboratorio (`run/scatti/pannello-4.png`); su Windows da
 provare.
 
 **F8 e il gioco.** Il tasto è intercettato in `window.rs` e non raggiunge mai DirectInput, come

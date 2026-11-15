@@ -5,6 +5,7 @@ mod com;
 mod d3d9;
 mod dsound;
 mod fs;
+mod animus_font;
 mod gfx;
 mod overlay;
 mod host;
@@ -61,6 +62,9 @@ fn run() -> Result<i32, String> {
     host::fine_timers();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let exe = args.first().ok_or(USAGE)?;
+    if let Some(dir) = std::path::Path::new(exe).parent() {
+        animus_font::set_game_dir(dir);
+    }
     let lib_path = args.iter().position(|a| a == "--lib").and_then(|i| args.get(i + 1)).ok_or(USAGE)?;
     let trace = args.iter().any(|a| a == "--trace") || std::env::var_os("ALTAIR_TRACE").is_some();
 

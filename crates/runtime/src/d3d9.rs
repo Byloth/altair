@@ -575,6 +575,30 @@ fn control(rt: &mut Runtime, frame: u64) {
                 eprintln!("[ctl] fotogramma {frame}: {} {:?}", file.display(), saved);
             }
             Some("fps") => eprintln!("[ctl] pannello di diagnostica {}", if crate::overlay::toggle() { "acceso" } else { "spento" }),
+            // Indagine: dove sta in memoria un testo UTF-16, con i 32 byte che lo precedono.
+            Some("find") => {
+                let text = line.trim_start().strip_prefix("find").unwrap_or("").trim();
+                let hits = rt.find_utf16(text);
+                eprintln!("[ctl] \"{text}\": {} occorrenze", hits.len());
+                for &a in hits.iter().take(40) {
+                    let before = rt.mem.bytes(a.saturating_sub(32), 32).iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ");
+                    let tail: String = char::decode_utf16(rt.mem.bytes(a, 96).chunks(2).map(|p| u16::from_le_bytes([p[0], p[1]]))).map(|r| r.unwrap_or('?')).take_while(|&ch| ch != '\0').collect();
+                    let end = a + 2 * tail.chars().count() as u32;
+                    let after = rt.mem.bytes(end, 48).iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ");
+                    eprintln!("[ctl]   {a:#010x}: {before} | {tail} | {after}");
+                }
+            }
+            // Indagine: una sequenza di byte in esadecimale (per esempio un puntatore), con contorno.
+            Some("findhex") => {
+                let hex: String = words.collect();
+                let needle: Vec<u8> = (0..hex.len() / 2).filter_map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok()).collect();
+                let hits = rt.find_bytes(&needle);
+                eprintln!("[ctl] {hex}: {} occorrenze", hits.len());
+                for &a in hits.iter().take(24) {
+                    let dump = |from: u32, n: u32| rt.mem.bytes(from, n).chunks(4).map(|w| format!("{:08x}", u32::from_le_bytes([w[0], w[1], w[2], w[3]]))).collect::<Vec<_>>().join(" ");
+                    eprintln!("[ctl]   {a:#010x}: {} | {}", dump(a.saturating_sub(32), 32), dump(a, 32));
+                }
+            }
             Some("stats") => eprintln!("[ctl] fotogramma {frame}: {}", rt.d3d.last_stats),
             // `profile reset` azzera i campioni, `profile` stampa il resoconto (ALTAIR_PROFILE=1).
             Some("profile") => match words.next() {

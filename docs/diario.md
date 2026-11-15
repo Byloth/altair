@@ -350,3 +350,9 @@ Richiesta dell'utente mentre prova `tools/gioca.sh`.
 - Pannello F8: lo storico era una barretta per fotogramma con scala e rosso relativi alla
   media, illeggibile (utente). Ora una barretta ogni quarto di secondo, scala a gradini fissi,
   soglie assolute per il rosso → `analisi/runtime.md`.
+- Pannello F8 con i caratteri dell'Animus: decifrati `MagmaMftFile` (metriche dei glifi) e
+  `TextureMap` DXT3 dei caratteri; `animus_font.rs` li legge all'avvio da `DataPC.forge`
+  dell'utente (niente nel repository), ripiego sui caratteri a punti → `analisi/forge.md`.
+- Versione dell'Animus ("1.28" → `2.0.0-dev.1`): trovato il testo (`Animus_MGB`), niente `α`
+  nei caratteri, e in memoria non c'è spazio per un testo più lungo. Serve un aggancio nel
+  traduttore → `domande-aperte.md`. Comandi `find`/`findhex`, `tools/ritaglio.py`.

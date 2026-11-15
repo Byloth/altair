@@ -153,3 +153,39 @@ cmp build/forge-check/rs.txt build/forge-check/py.txt
 
 Non ancora portati: l'indice degli oggetti dentro una voce e il riconoscimento delle classi
 (`forge.py classes`).
+
+## Caratteri dell'interfaccia (2026-11-15)
+
+Verificato qui su `DataPC.forge`, con script usa e getta e poi con `crates/runtime/src/animus_font.rs`.
+
+L'interfaccia è della libreria "magma" (classi `magma::PixmapFont`, `GlyphFont`, `FontServer`…
+nell'RTTI). Nella voce "Game Bootstrap Settings" ci sono 4 oggetti `MagmaMftFile` (i caratteri)
+e 13 `MagmaMgbFile` (schermate e tabelle di testi):
+
+| Oggetto | Id | Immagine (`TextureMap`) |
+|---|---|---|
+| `AnimusText PC` | `0x4EBA10AB` | `0x47195956`, 256×256 |
+| `AnimusText Bold_PC` | `0x4EBA10A0` | tramite la specifica `0x4719595C` |
+| `AnimusTechno Regular 22_PC` | `0x4EBA1095` | tramite la specifica `0x4719598E` |
+| `Animus Title` (`AnimusTitle Thin 74`) | `0x87E599F1` | `0x87E599EC`, 512×1024 |
+
+Tutti coprono Latin-1 (da `0x20` a `0xFF`, 199 glifi; 261 per i titoli): **niente greco**.
+
+**`MagmaMftFile`.** Dopo la stringa `PixmapFont`: `u16` numero di glifi, poi un record da 30
+byte per glifo: `u16` codice, `u16` larghezza − 1, `u16` altezza − 1, `i16` spostamento x,
+`i16` altezza del bordo alto sopra la linea di base, `u16` avanzamento, quattro `f32` (u0, v0,
+u1, v1 nell'immagine), `u16` a zero. Ogni file ripete il carattere cinque volte, identico
+(ipotesi: una per lingua). Il riferimento all'immagine è una stringa, per esempio
+`0x47195953TGA32`: è l'id di un `TextureMapSpec`, che a sua volta nomina il `TextureMap`.
+
+**`TextureMap`.** Dopo intestazione comune, nome (con terminatore), id e classe: `u32`
+larghezza, `u32` altezza, altri campi; a +71 dalla larghezza `u32` dimensione dei dati, a +75
+i dati; in coda 61 byte. Per i caratteri i dati sono **DXT3** (16 byte per blocco 4×4: 8 di
+alfa a 4 bit, poi il colore, sempre bianco), con le **righe dal basso verso l'alto**. Il
+glifo sta tutto nell'alfa. Prova: una scritta composta con queste metriche si legge
+correttamente (`run/scatti/pannello-4.png`). Il significato degli altri campi non è verificato.
+
+**Testi.** Nei `MagmaMgbFile` i testi sono UTF-16 preceduti da un identificatore a 32 bit e
+dalla lunghezza in caratteri (`u32`), tutte le lingue una dopo l'altra. "Versione Animus 1.28"
+sta in `Animus_MGB` (`0x9D8BDA78`), dentro `DataPC_Present_Room.forge`, due volte per lingua.
+

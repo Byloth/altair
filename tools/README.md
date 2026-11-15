@@ -155,7 +155,8 @@ tools/ctl.sh quit           # censimento ed uscita
 
 Comandi (le durate sono in fotogrammi, o in tempo reale con `ms`: `key 17 3000ms`): `key DIK [durata]`, `text TESTO`, `mouse DX DY`, `button N [fotogrammi]`,
 `move X Y`, `click X Y`, `shot FILE.png`, `stats`, `profile [reset]`, `fps` (accende o spegne il
-pannello di diagnostica, come F8; con il pannello acceso `shot` lo comprende), `quit`. `ctl.sh` aspetta
+pannello di diagnostica, come F8; con il pannello acceso `shot` lo comprende), `find TESTO` e `findhex BYTE` (indagine: cercano nella memoria del gioco
+un testo UTF-16 o una sequenza di byte e ne stampano indirizzi e contorno), `quit`. `ctl.sh` aspetta
 che il gioco li abbia eseguiti e stampa fotogramma, ritmo e filmato in corso. Non lanciare `avvia.sh` sotto
 `timeout`: ucciderebbe anche il gioco. `avvia.sh` e `gioca.sh` chiudono all'avvio ogni
 istanza del gioco già in esecuzione: ne gira una sola alla volta.
@@ -212,3 +213,12 @@ powershell -ExecutionPolicy Bypass -File tools\gioca.ps1 [-Backend vulkan|dx12] 
 
 Chiude le istanze già aperte, avvia il gioco in finestra e lascia il registro in
 `run\win\log.txt`.
+
+## `ritaglio.py`
+
+Ritaglia e ingrandisce una zona di un PNG, per guardare da vicino un dettaglio di una schermata
+(solo libreria standard). X negativa: contata dal bordo destro.
+
+```sh
+python3 -I tools/ritaglio.py run/scatti/a.png run/scatti/a-zoom.png -310 0 310 110 3
+```
