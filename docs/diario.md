@@ -343,3 +343,7 @@ Richiesta dell'utente mentre prova `tools/gioca.sh`.
 - Filmati iniziali: logo, "presenta" e avvertenze ora scorrono via con un tasto o un clic
   (il logo in un secondo, le due schermate fisse in metà tempo: il gioco le conta a 30 al
   secondo) → `analisi/runtime.md`.
+- Filmati iniziali, seconda versione (l'utente: le avvertenze non si saltavano e il logo
+  accelerava): trovata la tabella dello `StartupVideoManager` (`0x18C2C08`) con il byte "si può
+  saltare"; il runtime lo mette a 1 per logo, "presenta" e avvertenze e il gioco li salta da
+  sé con la sua dissolvenza. Tolto l'avanzamento veloce di `BinkWait` → `analisi/runtime.md`.

@@ -31,10 +31,6 @@ struct Video {
     start: Option<Instant>,
     paused: Option<Instant>,
     audio: Option<u32>,
-    /// Pressioni di tasti e pulsanti viste all'apertura: una in più e i filmati iniziali che
-    /// il gioco non lascia saltare scorrono via (vedi `skipping`).
-    presses: u64,
-    skipped: bool,
     calls: HashMap<&'static str, u64>,
     /// Il decodificatore nostro; `None` quando si usa ffmpeg.
     ours: Option<Ours>,
@@ -238,8 +234,6 @@ fn bink_open(rt: &mut Runtime, c: &mut Call) -> u32 {
         frame: 1,
         decoded: 0,
         planes,
-        presses: crate::window::presses(),
-        skipped: false,
         start: None,
         paused: None,
         audio: None,
@@ -319,41 +313,11 @@ fn bink_next_frame(rt: &mut Runtime, c: &mut Call) -> u32 {
     0
 }
 
-/// I filmati che il gioco mostra per intero prima del titolo: logo, "presenta", avvertenze.
-/// L'originale non li lascia saltare; qui un tasto o un clic li fa scorrere a tutta velocità.
-/// Il gioco conta i fotogrammi mostrati, non il tempo: basta non farlo più aspettare.
-const FIXED_INTROS: [&str; 3] = ["ubi_logo.bik", "ubisoft_presents.bik", "warning_disclaimer.bik"];
-
-impl Video {
-    fn skipping(&mut self) -> bool {
-        if !self.skipped && crate::window::presses() != self.presses {
-            let file = self.name.rsplit(['\\', '/']).next().unwrap_or("").to_ascii_lowercase();
-            if FIXED_INTROS.contains(&file.as_str()) && std::env::var("ALTAIR_INTRO_SKIP").map(|v| v != "0").unwrap_or(true) {
-                self.skipped = true;
-                eprintln!("[video] {} saltato al fotogramma {} di {}", self.name, self.frame, self.frames);
-                // L'audio non può correre dietro al video: si ferma.
-                if let Some(id) = self.audio.take() {
-                    crate::dsound::stop_file(id);
-                }
-                if let Some(o) = self.ours.as_mut() {
-                    o.sink = None;
-                }
-            } else {
-                self.presses = crate::window::presses();
-            }
-        }
-        self.skipped
-    }
-}
-
 /// `BinkWait`: 1 finché non è il momento del fotogramma corrente.
 fn bink_wait(_: &mut Runtime, c: &mut Call) -> u32 {
     count(c, "Wait");
-    let mut all = videos();
-    let Some(v) = all.get_mut(&c.arg(0)) else { return 0 };
-    if v.skipping() {
-        return 0;
-    }
+    let all = videos();
+    let Some(v) = all.get(&c.arg(0)) else { return 0 };
     if v.paused.is_some() {
         return 1;
     }

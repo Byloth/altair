@@ -575,8 +575,6 @@ fn control(rt: &mut Runtime, frame: u64) {
                 eprintln!("[ctl] fotogramma {frame}: {} {:?}", file.display(), saved);
             }
             Some("fps") => eprintln!("[ctl] pannello di diagnostica {}", if crate::overlay::toggle() { "acceso" } else { "spento" }),
-            // Come un tasto qualunque per chi conta le pressioni (salto dei filmati iniziali).
-            Some("press") => crate::window::note_press(),
             Some("stats") => eprintln!("[ctl] fotogramma {frame}: {}", rt.d3d.last_stats),
             // `profile reset` azzera i campioni, `profile` stampa il resoconto (ALTAIR_PROFILE=1).
             Some("profile") => match words.next() {

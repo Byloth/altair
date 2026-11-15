@@ -14,9 +14,6 @@ Ricognizione in `analisi/funzioni-nascoste.md`. Restano da capire:
 3. Se la telecamera "troppo vicina" segnalata su Windows dipendeva da `frndint`/`fistp` che
    ignoravano l'arrotondamento x87 (corretto oggi, `traduttore.md` punto 7): da riprovare
    prima di indagare oltre.
-4. Dove il gioco conta gli avanzamenti delle schermate "presenta" e avvertenze (al più 30 al
-   secondo): serve per saltarle del tutto invece di dimezzarle (`runtime.md`, "Filmati
-   iniziali saltabili").
 
 ## Fase 0: binario
 

@@ -85,6 +85,16 @@ fn run() -> Result<i32, String> {
         mem.write(s.va, img.section_bytes(s));
     }
 
+    // I filmati iniziali sono descritti da una tabella nei dati del gioco (`StartupVideoManager`,
+    // voci da 36 byte da 0x18C2C08): nome, "si può saltare", dissolvenze, durata. L'originale
+    // lascia saltare solo DemoIntro; qui il permesso va anche a logo, "presenta" e avvertenze,
+    // così li salta il gioco stesso, con la sua dissolvenza. `ALTAIR_INTRO_SKIP=0` lo toglie.
+    if img.sha1() == AC1_DX9_STEAM_SHA1 && std::env::var("ALTAIR_INTRO_SKIP").map(|v| v != "0").unwrap_or(true) {
+        for entry in 1..=3 {
+            mem.w8(0x18C_2C08 + 36 * entry + 4, 1);
+        }
+    }
+
     // TEB, PEB e TLS statica del thread principale.
     mem.w32(TEB, 0xffff_ffff); // fine della catena SEH
     mem.w32(TEB + 0x04, STACK_TOP);

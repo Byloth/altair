@@ -41,18 +41,6 @@ pub struct State {
 }
 
 const TITLE: &str = "AC1 Recompiled - Altaïr";
-/// Quante volte è stato premuto un tasto o un pulsante del mouse: chi vuole sapere se "l'utente
-/// ha premuto qualcosa" da un certo momento confronta due letture (i filmati iniziali).
-static PRESSES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
-pub fn presses() -> u64 {
-    PRESSES.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-pub fn note_press() {
-    PRESSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-}
-
 static WINDOW: OnceLock<Arc<Window>> = OnceLock::new();
 /// Istanza wgpu e superficie della finestra, create dal thread della finestra e in attesa che
 /// il renderer le prenda.
@@ -187,9 +175,6 @@ impl ApplicationHandler for App {
                 }
                 let Some((dik, vk)) = map(code) else { return };
                 let down = event.state == ElementState::Pressed;
-                if down && !event.repeat {
-                    note_press();
-                }
                 s.keys[dik as usize] = if down { 0x80 } else { 0 };
                 let ch = if down { event.text.as_ref().and_then(|t| t.chars().next()).filter(|c| !c.is_control()) } else { None };
                 if log_enabled() && !event.repeat {
@@ -223,9 +208,6 @@ impl ApplicationHandler for App {
                     MouseButton::Other(_) => return,
                 };
                 let down = st == ElementState::Pressed;
-                if down {
-                    note_press();
-                }
                 if log_enabled() {
                     eprintln!("[input] finestra: pulsante {index} {} in {:?}", if down { "giù" } else { "su" }, s.cursor);
                 }

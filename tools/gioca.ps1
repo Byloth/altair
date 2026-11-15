@@ -9,7 +9,7 @@
 # Parametri: -Backend vulkan|dx12|gl (predefinito: Vulkan, poi Direct3D 12);
 #            -Gioco   percorso di AssassinsCreed_Dx9.exe;  -SenzaAudio;  -SenzaVideo.
 # Nella finestra: F8 mostra o nasconde il pannello di diagnostica in sovrimpressione (fps),
-# un tasto o un clic fa scorrere via i filmati iniziali,
+# i filmati iniziali si saltano come quello introduttivo,
 #                F10 cattura o libera il puntatore del mouse.
 # Eseguibile e DLL si compilano da WSL con tools/build-win.sh.
 # Il registro del gioco finisce in run\win\log.txt (lo si può leggere anche da WSL).

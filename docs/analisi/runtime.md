@@ -479,18 +479,33 @@ comando nel laboratorio, nessun effetto visibile; nel codice tradotto nessun tes
 
 ### Filmati iniziali saltabili (2026-11-15)
 
-L'originale lascia saltare solo `DemoIntro.bik`; `UBI_LOGO.bik` (257 fotogrammi, 8,6 s),
-`Ubisoft_Presents.bik` e `Warning_Disclaimer.bik` (due fotogrammi in ciclo, mostrati per 105 e
-213 avanzamenti: 7 e 14 s) vanno guardati per intero. Ora un tasto o un clic durante uno di
-questi tre li fa scorrere: `BinkWait` smette di far aspettare e l'audio del filmato si ferma
-(`bink.rs`, `Video::skipping`; `window.rs` conta le pressioni). Ogni pressione salta un filmato.
+L'originale lascia saltare solo `DemoIntro.bik`: logo Ubisoft, "presenta" e avvertenze vanno
+guardati per intero. Il permesso sta in una tabella nei dati del gioco, quella dello
+`StartupVideoManager`: voci da 36 byte a partire da `0x18C2C08`, lette dal codice intorno a
+`0x41D45D-0x41D6A6`. Verificato qui sul file e nel codice tradotto:
 
-Misure (WSL, comando `press` un secondo dopo l'apertura): logo chiuso 1,3 s dopo la pressione;
-"presenta" dopo 3 s; avvertenze dopo 7 s. Le due schermate fisse non scendono oltre perché il
-gioco conta gli avanzamenti e ne chiede al più 30 al secondo, qualunque cosa risponda
-`BinkWait` (durante il salto il ciclo del gioco gira a 200 al secondo, gli avanzamenti restano
-30). Per accorciarle ancora bisognerebbe trovare quel contatore nel gioco: non fatto.
-`ALTAIR_INTRO_SKIP=0` ripristina il comportamento originale.
+| Offset | Significato | LoadingScreen | UBI_LOGO | Ubisoft_Presents | Warning_Disclaimer | DemoIntro |
+|---|---|---|---|---|---|---|
+| +0 | puntatore al nome | | | | | |
+| +4 | **si può saltare** (byte) | 0 | 0 | 0 | 0 | 1 |
+| +8 | dissolvenza in entrata, ms | 0 | 1000 | 1000 | 1000 | 1000 |
+| +12 | durata, ms (−1: tutto il filmato) | −1 | −1 | 4000 | 8000 | −1 |
+| +16 | dissolvenza in uscita, ms | 1000 | 1000 | 1000 | 1000 | 1000 |
+| +20 | colore della dissolvenza | bianco | bianco | bianco | bianco | bianco |
+| +24 | altri flag (le due schermate fisse hanno `01 01`) | | | | | |
+
+Il significato di +8, +16 e +24 è dedotto dai valori (ipotesi); quello di +4 è provato dal
+risultato. All'avvio il runtime scrive 1 nel byte +4 delle voci 1, 2 e 3 (`main.rs`), e da lì
+fa tutto il gioco, come per il filmato introduttivo: alla pressione parte la dissolvenza sul
+bianco e il filmato si chiude. Misura (WSL, Invio 1,5 s dopo l'apertura): ognuno dei tre si
+chiude 1,2-1,3 s dopo il tasto; il logo al fotogramma 82 di 257, senza accelerare.
+`ALTAIR_INTRO_SKIP=0` lascia la tabella com'è.
+
+Primo tentativo, scartato lo stesso giorno: far rispondere a `BinkWait` "non aspettare" dopo
+un tasto. Il logo scorreva accelerato e le schermate fisse, che hanno una durata in
+millisecondi e non in fotogrammi, non si accorciavano abbastanza (segnalato dall'utente).
+Lezione: prima di aggirare il gioco dall'esterno, cercare se ha già la funzione e manca solo
+il permesso.
 
 ## Windows nativo (2026-11-15)
 
