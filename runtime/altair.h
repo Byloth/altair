@@ -20,6 +20,13 @@ typedef int64_t s64;
 
 typedef struct Ctx Ctx;
 
+/* Funzioni enormi: l'ottimizzatore ci passerebbe minuti. Il generatore le marca così. */
+#if defined(__clang__)
+#define ALTAIR_BIG __attribute__((optnone, noinline))
+#else
+#define ALTAIR_BIG __attribute__((optimize("O0"), noinline))
+#endif
+
 /* Un registro x87: sugli host x86 `long double` è il formato esteso a 80 bit. */
 typedef long double f80;
 

@@ -94,3 +94,9 @@
   le 116.077 funzioni.** Verifica delle 25: 17 identiche, 7 saltate, 1 diversa solo nei campi
   non modellati di `fnstenv`. Campione da 8.000: 4.199 identiche, 0 diverse.
   `altair coverage --list`, `difftest.py --funcs` → `analisi/traduttore.md`.
+- **`altair image`: l'immagine intera.** 116.077 funzioni in 242 file C (uno per finestra di
+  64 KB di indirizzi, 357 MB), generati in 3 secondi. Compilazione: 49 s con clang `-O1`, 55 s
+  con `-O2`, 50 s con gcc. Test sulla libreria intera: 9.892 funzioni identiche su 19.043
+  candidate, 0 diverse, con entrambi i compilatori. **Gate della Fase 1 raggiunto** →
+  `analisi/immagine.md`. (Primo tentativo compilato per sbaglio con gcc: `CC ?=` nel Makefile
+  non scavalca il `cc` predefinito di make.)

@@ -111,3 +111,4 @@ Rinomina o sposta la cartella del progetto portando con sé conversazioni e memo
 Code, poi ricrea il venv e ricompila. Va lanciato a sessione chiusa. Vedi `docs/ambiente.md`.
 
 `difftest.py --funcs 0xA,0xB --cases 40` prova funzioni scelte a mano, anche non candidate.
+`difftest.py --auto N --lib build/libaltair_ac1-clang.so` usa la libreria dell'immagine intera.

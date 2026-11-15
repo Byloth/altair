@@ -27,4 +27,4 @@ supporto del codice generato (`runtime/altair.h`). Il nome completo è "AC1 Reco
 
 ## Stato
 
-Fase 0 (fondamenta) chiusa il 2026-11-14. Fase 1 (il ricompilatore) in corso. Vedi `docs/PIANO.md`.
+Fase 0 (fondamenta) chiusa il 2026-11-14. Fase 1 (il ricompilatore): gate raggiunto il 2026-11-15, tutto il codice del gioco si traduce in C e compila. Vedi `docs/PIANO.md`.

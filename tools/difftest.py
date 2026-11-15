@@ -7,6 +7,8 @@ Uso (dalla radice del progetto, con il Python del venv):
         N funzioni scelte da `altair candidates`, K casi ciascuna (8) con ingressi generati;
     .venv/bin/python tools/difftest.py <AssassinsCreed_Dx9.exe> --funcs 0xA,0xB [--cases K]
         lo stesso sulle funzioni indicate, anche se non sono candidate;
+    ... --auto N --lib build/libaltair_ac1-clang.so
+        usa la libreria dell'immagine intera (`altair image` + make) invece di compilare il campione;
         il dettaglio va in build/difftest-auto.txt
 
 Passi:
@@ -418,7 +420,7 @@ def instruction_report(gen, ok_roots):
     return len(done), verified, sorted(present - set(verified))
 
 
-def run_auto(exe, count, cases, only=None):
+def run_auto(exe, count, cases, only=None, lib=None):
     import signal
     if only:
         roots = only
@@ -427,7 +429,12 @@ def run_auto(exe, count, cases, only=None):
                              text=True)
         print(out.stderr.strip())
         roots = [int(x, 16) for x in out.stdout.split()]
-    lib = build(exe, roots, name='difftest-auto', opt='-O1')
+    if lib is None:
+        lib = build(exe, roots, name='difftest-auto', opt='-O1')
+        gen = os.path.join(ROOT, 'build', 'gen', 'difftest-auto.c')
+    else:
+        gen = None                      # libreria dell'immagine intera: già compilata
+        print('libreria:', lib)
     oracle, native = harness.Guest(exe), Native(exe, lib)
     same, differ, never = [], [], []
     nan_only = set()
@@ -494,14 +501,15 @@ def run_auto(exe, count, cases, only=None):
     if nan_ok:
         print(f'  di cui {len(nan_ok)} identiche a meno di un NaN o dell\'esponente di un registro MMX: '
               + ' '.join(f'{a:#x}' for a in nan_ok[:8]))
-    ndone, verified, missing = instruction_report(os.path.join(ROOT, 'build', 'gen', 'difftest-auto.c'), same)
-    print(f'funzioni eseguite in casi identici, comprese quelle chiamate: {ndone}; '
-          f'{sum(verified.values())} istruzioni di {len(verified)} tipi')
-    if missing:
-        print('tipi tradotti ma assenti dalle funzioni verificate:', ' '.join(missing))
-    with open(os.path.join(ROOT, 'build', 'difftest-auto.txt'), 'a') as f:
-        f.write('\nistruzioni nelle funzioni verificate:\n')
-        f.write(''.join(f'{n:7} {m}\n' for m, n in verified.most_common()))
+    if gen:
+        ndone, verified, missing = instruction_report(gen, same)
+        print(f'funzioni eseguite in casi identici, comprese quelle chiamate: {ndone}; '
+              f'{sum(verified.values())} istruzioni di {len(verified)} tipi')
+        if missing:
+            print('tipi tradotti ma assenti dalle funzioni verificate:', ' '.join(missing))
+        with open(os.path.join(ROOT, 'build', 'difftest-auto.txt'), 'a') as f:
+            f.write('\nistruzioni nelle funzioni verificate:\n')
+            f.write(''.join(f'{n:7} {m}\n' for m, n in verified.most_common()))
     for line in [x for x in report if x.startswith('DIVERSO')][:25]:
         print(' ', line[:200])
     return 1 if differ else 0
@@ -513,7 +521,8 @@ if __name__ == '__main__':
     if '--auto' in sys.argv:
         n = int(sys.argv[sys.argv.index('--auto') + 1])
         k = int(sys.argv[sys.argv.index('--cases') + 1]) if '--cases' in sys.argv else 8
-        sys.exit(run_auto(sys.argv[1], n, k))
+        lib = os.path.abspath(sys.argv[sys.argv.index('--lib') + 1]) if '--lib' in sys.argv else None
+        sys.exit(run_auto(sys.argv[1], n, k, lib=lib))
     if '--funcs' in sys.argv:
         addrs = [int(x, 16) for x in sys.argv[sys.argv.index('--funcs') + 1].split(',')]
         k = int(sys.argv[sys.argv.index('--cases') + 1]) if '--cases' in sys.argv else 8

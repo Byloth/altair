@@ -31,6 +31,7 @@ $A candidates $E --max 500         # funzioni adatte al test differenziale
 | `runtime/altair.h`, `altair.c` | Supporto del codice generato: contesto, memoria guest, flag, registro delle funzioni, trap |
 | `runtime/altair_sse.h` | Operazioni SSE/SSE2 in C portabile |
 | `runtime/altair_x87.h` | x87 su `long double` a 80 bit |
+| `build/gen/full/` (generato) | L'immagine intera tradotta: vedi `immagine.md` |
 | `tests/compiler/` | Riproduzioni di bug del compilatore C trovati dal test |
 | `tools/difftest.py` | Test differenziale contro `tools/harness.py` |
 

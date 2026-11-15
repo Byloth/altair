@@ -21,6 +21,10 @@ uso: altair <comando> <AssassinsCreed_Dx9.exe> [opzioni]
 
   translate --out FILE.c [--roots FILE] ADDR...
                             traduce in C le funzioni indicate e quelle che chiamano
+  image --out DIR [--window KB] [--big N]
+                            traduce l'intera immagine in DIR: un file C per finestra di
+                            indirizzi (64 KB), table.c e un Makefile. Le funzioni con più di
+                            N istruzioni (5000) non vengono ottimizzate dal compilatore
   candidates [--max N]      funzioni adatte al test differenziale: tutta la chiusura è
                             traducibile, senza import né chiamate indirette
   coverage [--list]         quante funzioni si traducono oggi, e cosa blocca le altre;
@@ -68,6 +72,7 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         "discover" => discover_cmd(&img, flag(args, "--strict"), value(args, "--out"))?,
         "translate" => translate_cmd(&img, args)?,
         "coverage" => coverage_cmd(&img, flag(args, "--list")),
+        "image" => image_cmd(&img, args)?,
         "census" => census_cmd(&img),
         "candidates" => candidates_cmd(&img, value(args, "--max").and_then(|v| v.parse().ok()).unwrap_or(500)),
         _ => return Err(USAGE.into()),
@@ -421,4 +426,128 @@ fn census_cmd(img: &Image) {
     for (m, (n, miss)) in rows {
         println!("{n:>9} {miss:>9}  {m}");
     }
+}
+
+/// Scrive il file solo se il contenuto è cambiato, così `make` non ricompila ciò che è uguale.
+fn write_if_changed(path: &std::path::Path, content: &str) -> std::io::Result<bool> {
+    if std::fs::read(path).is_ok_and(|old| old == content.as_bytes()) {
+        return Ok(false);
+    }
+    std::fs::write(path, content)?;
+    Ok(true)
+}
+
+fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let t0 = std::time::Instant::now();
+    let out = std::path::PathBuf::from(value(args, "--out").ok_or("manca --out DIR")?);
+    let window = value(args, "--window").and_then(|v| v.parse::<u32>().ok()).unwrap_or(64) * 1024;
+    let big = value(args, "--big").and_then(|v| v.parse::<usize>().ok()).unwrap_or(5000);
+    std::fs::create_dir_all(&out)?;
+
+    let (d, _) = Discovery::run(img, false, false);
+    let hard = hard_starts(&d);
+    let is_hard = |a: u32| hard.contains(&a);
+    let mut funcs: BTreeMap<u32, translate::Func> = BTreeMap::new();
+    for &a in d.starts.keys() {
+        match translate::decode(img, a, &is_hard) {
+            Ok(f) => {
+                funcs.insert(a, f);
+            }
+            Err(e) => eprintln!("non decodificata {a:#010x}: {e}"),
+        }
+    }
+    let known = |a: u32| funcs.contains_key(&a);
+
+    // Un file per finestra di indirizzi: una funzione sta nel file della finestra in cui inizia.
+    let mut parts: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
+    for &a in funcs.keys() {
+        parts.entry(d.lo + (a - d.lo) / window * window).or_default().push(a);
+    }
+    let (mut written, mut bytes, mut insns, mut n_big, mut biggest) = (0usize, 0usize, 0usize, 0usize, (0usize, 0u32));
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    for (base, addrs) in &parts {
+        let mut body = String::new();
+        let mut protos: BTreeSet<u32> = BTreeSet::new();
+        for a in addrs {
+            let f = &funcs[a];
+            protos.insert(*a);
+            protos.extend(f.calls.iter().copied().filter(|&t| known(t)));
+            let n = f.insns.len();
+            insns += n;
+            if n > biggest.0 {
+                biggest = (n, *a);
+            }
+            let c = translate::emit(f, &known)?;
+            if n > big {
+                n_big += 1;
+                body.push_str("ALTAIR_BIG ");
+            }
+            body.push_str(&c);
+            body.push('\n');
+        }
+        let mut text = String::with_capacity(body.len() + 64 * protos.len());
+        text.push_str("/* Generato da `altair image`: non modificare e non pubblicare. */\n#include \"altair.h\"\n\n");
+        for p in &protos {
+            text.push_str(&format!("void {}(Ctx *c);\n", translate::fn_name(*p)));
+        }
+        text.push('\n');
+        text.push_str(&body);
+        let name = format!("part_{base:08x}.c");
+        bytes += text.len();
+        written += write_if_changed(&out.join(&name), &text)? as usize;
+        names.insert(name);
+    }
+
+    let mut table = String::from("/* Generato da `altair image`: tabella indirizzo -> funzione, ordinata. */\n#include \"altair.h\"\n\n");
+    for a in funcs.keys() {
+        table.push_str(&format!("void {}(Ctx *c);\n", translate::fn_name(*a)));
+    }
+    table.push_str("\nconst AltairEntry altair_functions[] = {\n");
+    for a in funcs.keys() {
+        table.push_str(&format!("    {{{a:#x}u, {}}},\n", translate::fn_name(*a)));
+    }
+    table.push_str(&format!("}};\nconst u32 altair_function_count = {};\n", funcs.len()));
+    bytes += table.len();
+    written += write_if_changed(&out.join("table.c"), &table)? as usize;
+    names.insert("table.c".into());
+
+    // Via i file di finestre che non esistono più.
+    let mut removed = 0;
+    for e in std::fs::read_dir(&out)? {
+        let e = e?;
+        let n = e.file_name().to_string_lossy().into_owned();
+        if n.ends_with(".c") && !names.contains(&n) {
+            std::fs::remove_file(e.path())?;
+            removed += 1;
+        }
+    }
+
+    let runtime = std::fs::canonicalize("runtime").map_err(|_| "lancia `altair image` dalla radice del progetto (serve runtime/)")?;
+    let makefile = format!(
+        "# Generato da `altair image`. Uso: make -j$(nproc)   oppure   make -j$(nproc) CC=gcc TAG=gcc\n\
+         CC = clang\n\
+         OPT = -O1\n\
+         TAG = $(CC)\n\
+         RUNTIME := {rt}\n\
+         CFLAGS := $(OPT) -fwrapv -fno-strict-aliasing -fno-math-errno -ffp-contract=off -fPIC -w -I$(RUNTIME)\n\
+         OBJ := ../../obj/full-$(TAG)\n\
+         LIB := ../../libaltair_ac1-$(TAG).so\n\
+         SRCS := $(wildcard *.c)\n\
+         OBJS := $(SRCS:%.c=$(OBJ)/%.o) $(OBJ)/altair_runtime.o\n\n\
+         $(LIB): $(OBJS)\n\t@echo \"link $@\"\n\t@$(CC) -shared $(OBJS) -lm -o $@\n\n\
+         $(OBJ)/%.o: %.c $(wildcard $(RUNTIME)/*.h) | $(OBJ)\n\t@$(CC) $(CFLAGS) -c $< -o $@\n\n\
+         $(OBJ)/altair_runtime.o: $(RUNTIME)/altair.c $(wildcard $(RUNTIME)/*.h) | $(OBJ)\n\t$(CC) $(CFLAGS) -c $< -o $@\n\n\
+         $(OBJ):\n\tmkdir -p $@\n",
+        rt = runtime.display()
+    );
+    write_if_changed(&out.join("Makefile"), &makefile)?;
+
+    println!("funzioni            {}", funcs.len());
+    println!("istruzioni          {insns} (contate per funzione)");
+    println!("file                {} da {} KB di indirizzi, più table.c", parts.len(), window / 1024);
+    println!("dimensione          {:.1} MB di C", bytes as f64 / 1e6);
+    println!("file riscritti      {written}, rimossi {removed}");
+    println!("funzioni non ottimizzate (più di {big} istruzioni): {n_big}; la più grande {:#x} con {} istruzioni", biggest.1, biggest.0);
+    println!("tempo               {:.1} s", t0.elapsed().as_secs_f64());
+    Ok(())
 }

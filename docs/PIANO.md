@@ -96,7 +96,7 @@ import, esecuzione in Unicorn, formato dei dati.
 
 ---
 
-## Fase 1 · Ricompilatore (in corso)
+## Fase 1 · Ricompilatore (gate raggiunto il 2026-11-15)
 
 **Gate:** tutto `.text` tradotto in C che compila; test differenziali verdi su un campione
 ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
@@ -138,9 +138,10 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 - [ ] Risolvere i limiti della scoperta (`analisi/funzioni.md`): funzioni che non ritornano,
   tabelle delle eccezioni C++
 - [ ] Flag passati nelle tail call tra funzioni spezzate
-- [ ] Emissione in più file C e compilazione parallela; tempo e dimensione misurati
-- [ ] Test differenziale ripetuto con il compilatore e le opzioni finali (vedi il bug di clang
-  in `analisi/traduttore.md`); valutare gcc come secondo compilatore di controllo
+- [x] Emissione in più file C e compilazione parallela (`altair image`): 357 MB di C in 242
+  file, 49 secondi con clang `-O1` → `analisi/immagine.md`
+- [x] Test differenziale sulla libreria dell'immagine intera, con clang e con gcc: 9.892
+  funzioni identiche su 19.043 candidate, 0 diverse
 - [ ] Lettore `.forge` in Rust (portato da `tools/forge.py`) e inventario completo delle classi
 
 ## Fase 2 · Runtime Win32
@@ -196,7 +197,10 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 ## Prossimi passi concreti
 
-1. **1.4**: immagine intera tradotta e compilata in più file; tempo e dimensione misurati.
-   È il gate della Fase 1.
-2. Scenari mirati per le istruzioni non ancora verificate.
-3. Poi Fase 2: runtime Win32, per far partire il CRT del gioco.
+Il gate della Fase 1 è raggiunto: tutto `.text` tradotto, compila, 9.892 funzioni verificate.
+Restano aperti, in 1.2–1.4, alcuni punti che non bloccano la Fase 2.
+
+1. **Fase 2**: runtime Win32 in Rust, per caricare l'immagine, avviare il CRT del gioco e
+   arrivare all'apertura dei `.forge`. Ogni import mancante si ferma dicendo quale serve.
+2. Lettore `.forge` in Rust.
+3. Scenari mirati per le istruzioni non ancora verificate; limiti della scoperta.
