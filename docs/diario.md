@@ -290,3 +290,5 @@ Richiesta dell'utente mentre prova `tools/gioca.sh`.
   riusati → `analisi/d3d9.md`.
 - Registrazione dei draw più leggera (folla: 17 → 11 ms sul thread del gioco) e costanti di
   vertex e pixel shader in gruppi separati (nessun effetto sull'invio). Folla a 23 fps.
+- Su indicazione dell'utente `avvia.sh` torna a chiudere tutte le istanze all'avvio, e lo fa
+  anche `gioca.sh`: una sola istanza alla volta.

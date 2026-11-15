@@ -156,8 +156,8 @@ tools/ctl.sh quit           # censimento ed uscita
 Comandi (le durate sono in fotogrammi, o in tempo reale con `ms`: `key 17 3000ms`): `key DIK [durata]`, `text TESTO`, `mouse DX DY`, `button N [fotogrammi]`,
 `move X Y`, `click X Y`, `shot FILE.png`, `stats`, `profile [reset]`, `quit`. `ctl.sh` aspetta
 che il gioco li abbia eseguiti e stampa fotogramma, ritmo e filmato in corso. Non lanciare `avvia.sh` sotto
-`timeout`: ucciderebbe anche il gioco. `avvia.sh` chiude solo l'istanza che ha avviato lui
-(pid in `run/ctl/pid`): un gioco aperto con `gioca.sh` resta dov'è.
+`timeout`: ucciderebbe anche il gioco. `avvia.sh` e `gioca.sh` chiudono all'avvio ogni
+istanza del gioco già in esecuzione: ne gira una sola alla volta.
 
 ## `gioca.sh`
 

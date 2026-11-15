@@ -9,9 +9,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 export GALLIUM_DRIVER="${GALLIUM_DRIVER:-d3d12}" LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-/usr/lib/wsl/lib}"
 mkdir -p run/ctl
-# Si chiude solo l'istanza avviata da questo script (il suo pid sta in run/ctl/pid): un gioco
-# aperto a mano con tools/gioca.sh non va toccato.
-if [ -f run/ctl/pid ] && kill -0 "$(cat run/ctl/pid)" 2>/dev/null; then ALTAIR_CTL_WAIT=100 tools/ctl.sh quit >/dev/null 2>&1 || kill "$(cat run/ctl/pid)" 2>/dev/null || true; sleep 1; fi
+# All'avvio si chiude ogni istanza del gioco in esecuzione, anche una aperta a mano con
+# tools/gioca.sh: due istanze insieme si contendono GPU, profili e salvataggi. Quella avviata
+# da qui si chiude con garbo (censimento nel registro), le altre con un segnale.
+if [ -f run/ctl/pid ] && kill -0 "$(cat run/ctl/pid)" 2>/dev/null; then ALTAIR_CTL_WAIT=100 tools/ctl.sh quit >/dev/null 2>&1 || true; fi
+pkill -f "^target/release/altair-ru[n]" 2>/dev/null || true
+sleep 1
 rm -f run/ctl/stato run/ctl/cmd
 ALTAIR_STATS=1 ALTAIR_CTL=run/ctl ALTAIR_AUDIO_DUMP="${ALTAIR_AUDIO_DUMP:-run/ctl/audio.raw}" setsid nohup tools/run.sh > run/ctl/log.txt 2>&1 < /dev/null &
 echo $! > run/ctl/pid

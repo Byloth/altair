@@ -8,4 +8,6 @@ cd "$(dirname "$0")/.."
 # In WSL la GPU vera si raggiunge con OpenGL sopra D3D12 (vedi docs/analisi/d3d9.md).
 export GALLIUM_DRIVER="${GALLIUM_DRIVER:-d3d12}" LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-/usr/lib/wsl/lib}"
 export ALTAIR_WINDOW=1
+# Una sola istanza alla volta: si chiudono quelle già in esecuzione.
+pkill -f "^target/release/altair-ru[n]" 2>/dev/null && sleep 1 || true
 exec tools/run.sh "$@"
