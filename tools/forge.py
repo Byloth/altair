@@ -4,6 +4,7 @@
 Uso:
     python3 -I tools/forge.py summary <cartella del gioco>      una riga per archivio
     python3 -I tools/forge.py list <archivio.forge>             voci: id, dimensione, nome
+    python3 -I tools/forge.py digest <archivio.forge>           per voce: id, sezioni, byte, CRC-32
     python3 -I tools/forge.py sections <archivio.forge> [N]     sezioni compresse delle prime N voci
     python3 -I tools/forge.py head <archivio.forge> <nome|id>   decomprime la prima sezione (hexdump)
     python3 -I tools/forge.py classes <archivio.forge> [rtti.json] [--objects]
@@ -193,6 +194,19 @@ def cmd_list(path):
         print(f'{fid:#010x} {size:>10} {fg.name(rec)}')
 
 
+def cmd_digest(path):
+    """Per voce: id, sezioni, byte decompressi, CRC-32. Termine di confronto di `altair-forge`."""
+    import zlib
+    fg = Forge(path)
+    for rec, fid, size in fg.entries:
+        secs = fg.sections(rec, size)
+        parts = [fg.decompress(s) for s in secs] if secs else [fg.read(rec + REC, size)]
+        crc = 0
+        for p in parts:
+            crc = zlib.crc32(p, crc)
+        print(f'{fid:#010x} {len(secs)} {sum(len(p) for p in parts)} {crc:08x}')
+
+
 def cmd_sections(path, limit):
     fg = Forge(path)
     codecs = Counter()
@@ -279,6 +293,8 @@ def main(argv):
         cmd_summary(argv[2])
     elif cmd == 'list':
         cmd_list(argv[2])
+    elif cmd == 'digest':
+        cmd_digest(argv[2])
     elif cmd == 'sections':
         cmd_sections(argv[2], int(argv[3]) if len(argv) > 3 else 20)
     elif cmd == 'classes':

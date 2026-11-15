@@ -48,3 +48,13 @@ sostituisci qui la voce con un rimando.
 - [ ] Quanto della logica di movimento è parametrizzata nei dati?
 - [ ] Come il sistema delle entità crea un personaggio con lo scheletro del giocatore?
 - [ ] Fisica e animazioni dipendono dal frame rate?
+
+## Trascendenti x87: con quale oracolo verificarle? (2026-11-15)
+
+`fsin`, `fcos`, `fptan`, `fpatan`, `fyl2x`, `f2xm1` non hanno scenari nel test differenziale.
+Unicorn (QEMU) non è un oracolo valido per queste: le calcola con la matematica dell'host in
+doppia precisione, quindi gli ultimi bit non sono quelli di un processore vero. L'oracolo
+giusto è l'hardware: un programmino nativo x86 che esegue l'istruzione reale e confronta con
+la nostra traduzione. Da fare quando servirà l'identità al bit (replay, confronto con
+l'originale); per giocare, differenze di un'unità sull'ultima cifra non contano. Il Passo 6
+del piano del 2026-11-15 si ferma qui: non c'erano altre istruzioni annotate come non verificate.

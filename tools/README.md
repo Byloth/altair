@@ -74,6 +74,7 @@ Lettore degli archivi `.forge` (contenitore versione 25), con decompressore LZO1
 
 ```sh
 python3 -I tools/forge.py summary "$AC1"                                  # una riga per archivio
+python3 -I tools/forge.py digest <archivio.forge>   # per voce: id, sezioni, byte, CRC-32 (confronto con altair-forge)
 python3 -I tools/forge.py list "$AC1/DataPC.forge"                        # id, dimensione, nome
 python3 -I tools/forge.py sections "$AC1/DataPC.forge" 20                 # sezioni compresse
 python3 -I tools/forge.py head "$AC1/DataPC_Map_Menu.forge" Map_Menu      # hexdump dell'indice

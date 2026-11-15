@@ -263,3 +263,7 @@ Fase 1, lettore `.forge`, e un **decodificatore Bink nostro** al posto di `ffmpe
   persona.
 - **Finestra e 60 fps**: la superficie offre solo `Fifo`. Limite di OpenGL su Wayland in WSLg;
   documentato, nessuna soluzione da parte nostra → `analisi/runtime.md`.
+- **Debiti della Fase 1**: l'unica voce annotata erano le trascendenti x87; Unicorn non è un
+  oracolo valido per quelle (serve l'hardware) → `domande-aperte.md`. Niente altro da fare ora.
+- **Lettore `.forge` in Rust** (`crates/forge`, `altair-forge`): contenitore v25 e LZO1X.
+  `list` e `digest` identici a `forge.py` su tre archivi, 429 voci → `analisi/forge.md`.

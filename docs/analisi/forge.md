@@ -132,3 +132,24 @@ Nota: i nomi delle classi suggeriscono il ruolo, ma il significato dei campi non
 - Campi senza nome nelle tabelle, tabella dei nomi e checksum dei blocchi: non decodificati.
 - La funzione del motore che calcola il CRC non è stata trovata (`harness.md`); sappiamo però
   che il risultato è il CRC-32 standard.
+
+## Lettore in Rust (`crates/forge`, 2026-11-15)
+
+`altair_forge` (libreria: `Forge::open`, `entries`, `name`, `sections`, `decompress`, `raw`,
+`lzo1x_decompress`, `crc32`) e il binario `altair-forge` (`list`, `digest`). È la riscrittura
+di `tools/forge.py`, che resta il termine di confronto.
+
+Verifica: `list` e `digest` (per voce: id, numero di sezioni, byte decompressi, CRC-32 dei
+dati decompressi) **identici byte per byte** tra Python e Rust su `DataPC_Map_Menu` (2 voci),
+`DataPC_LoadingRoom2` (23) e `DataPC_Extra` (404). `DataPC_Memory_Corridor`: 90 voci, 174 MB
+decompressi in 1,5 s.
+
+```sh
+cargo build --release -p altair-forge
+target/release/altair-forge digest "$AC1/DataPC_Extra.forge" > build/forge-check/rs.txt
+python3 -I tools/forge.py digest "$AC1/DataPC_Extra.forge" > build/forge-check/py.txt
+cmp build/forge-check/rs.txt build/forge-check/py.txt
+```
+
+Non ancora portati: l'indice degli oggetti dentro una voce e il riconoscimento delle classi
+(`forge.py classes`).

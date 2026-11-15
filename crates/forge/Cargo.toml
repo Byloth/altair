@@ -1,0 +1,13 @@
+[package]
+name = "altair-forge"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "altair_forge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "altair-forge"
+path = "src/main.rs"

@@ -142,7 +142,7 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
   file, 49 secondi con clang `-O1` → `analisi/immagine.md`
 - [x] Test differenziale sulla libreria dell'immagine intera, con clang e con gcc: 9.892
   funzioni identiche su 19.043 candidate, 0 diverse
-- [ ] Lettore `.forge` in Rust (portato da `tools/forge.py`) e inventario completo delle classi
+- [x] Lettore `.forge` in Rust (`crates/forge`): contenitore e LZO1X, identico a `forge.py` su tre archivi
 
 ## Fase 2 · Runtime Win32 (gate raggiunto il 2026-11-15)
 
@@ -243,6 +243,6 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 1. **Fase 3, con una persona alla tastiera**: `tools/gioca.sh`, provare tastiera, mouse e audio
    nella finestra, completare il tutorial dell'Animus e annotare cosa non va.
    Poi: uscita audio affidabile, costo dell'invio dei draw, confronto visivo con la DX10.
-2. Lettore `.forge` in Rust.
+2. Lettore `.forge` in Rust: fatto il contenitore; restano oggetti e classi.
 3. Punti aperti della Fase 1: scenari mirati per le istruzioni non verificate, limiti della
    scoperta.
