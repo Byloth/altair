@@ -1,0 +1,13 @@
+[package]
+name = "altair-bink"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "altair_bink"
+path = "src/lib.rs"
+
+[[bin]]
+name = "altair-bink"
+path = "src/main.rs"

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pe", "crates/recomp", "crates/runtime", "crates/gpu-probe", "crates/shader", "crates/forge"]
+members = ["crates/pe", "crates/recomp", "crates/runtime", "crates/gpu-probe", "crates/shader", "crates/forge", "crates/bink"]
 
 [workspace.package]
 edition = "2021"
