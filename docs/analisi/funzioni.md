@@ -122,5 +122,6 @@ tabelle di indici degli switch a due livelli, che si decodificavano come `push e
 vedi `traduttore.md`, "Le ultime 42 funzioni". Dal runtime è poi emersa una tabella di puntatori
 non allineata in `.data` (routine matematiche del CRT): con quelle le funzioni sono 116.142.
 Eseguendo il gioco sono emersi altri casi (serie non allineate, callback di solo `ret`, falsi
-inizi da immediati, `pushad`): oggi le funzioni sono **117.159**, di cui 93 aggiunte da
-`altair image` perché chiamate ma non scoperte (`runtime.md`).
+inizi da immediati, `pushad`): poi le funzioni erano 117.159.
+Con la scoperta in tre passate (confini certi, poi indirizzi allineati, poi tabelle) sono
+**117.106**, di cui 56 aggiunte da `altair image` perché chiamate ma non scoperte (`runtime.md`).

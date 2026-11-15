@@ -128,6 +128,15 @@ Con il copione qui sopra il gioco **crea un profilo**: scrive
 `.sav`, cioè `run/c/Users/Player/…` nel progetto, e alla corsa successiva lo ritrova. Cerca
 anche un `<numero>.opt` (le opzioni), che non esiste ancora.
 
+Le frecce servono anche come messaggi `WM_KEYDOWN` (gli elenchi dei menu le leggono da lì); il
+copione le manda in entrambi i modi. I tempi sono in fotogrammi, ma il gioco ragiona in tempo
+reale: un tasto premuto mentre un menu sta ancora comparendo viene ignorato. Il copione che
+porta al laboratorio Abstergo con il profilo "Claude" (secondo dell'elenco):
+
+```sh
+ALTAIR_KEYS="900:28,1500:208:6,1700:208:6,1900:28,3300:28,3900:28:30,4500:28:3"
+```
+
 ## Cosa ha insegnato
 
 - **Una funzione che la scoperta non vedeva.** La prima chiamata indiretta fallita è stata verso
@@ -166,10 +175,16 @@ anche un `<numero>.opt` (le opzioni), che non esiste ancora.
 - **Callback verso il gioco**: `EnumDisplayMonitors` chiama una funzione guest. `call_guest`
   lo permette agli shim che non tengono il lucchetto del runtime.
 
+- **Ancora un falso inizio.** Scelto `NEW`, il caricamento si fermava su `0x005830F0`: una
+  funzione vera, allineata e preceduta da riempimento, scartata perché un indirizzo "tondo"
+  (`0x00583420`, una parola nei dati) era stato accettato prima e cadeva in mezzo a una sua
+  istruzione. La scoperta ora lavora in tre passate, dalla più severa: prima le sole partenze
+  precedute da riempimento o da un `ret`, poi quelle soltanto allineate, infine le voci di
+  tabella. `ALTAIR_WHY=0xADDR altair discover …` spiega perché una partenza è accettata o no.
+
 ## Prossimi passi
 
-1. **Vedere qualcosa.** Verificare se wgpu trova la GPU da WSL; poi il renderer vero, partendo
-   da ciò che questa scena usa: shader model 3.0 → WGSL, DXT, render target A8R8G8B8 e R32F.
-2. Input simulato (un tasto premuto) per superare la schermata iniziale e censire i menu.
-3. Riciclo degli oggetti COM rilasciati: oggi non si libera nulla.
-4. Punti aperti: SEH, file INI veri, lingua, prima pagina protetta.
+1. Proseguire nel gioco: premere il tasto nel laboratorio, entrare nell'Animus, il tutorial.
+2. Una finestra vera con tastiera e mouse, per giocare invece di scrivere copioni.
+3. Renderer: stencil, scissor, depth bias, riciclo delle risorse; confronto con l'originale.
+4. Punti aperti: SEH, file INI veri, lingua, prima pagina protetta, audio vero, Bink.

@@ -873,6 +873,9 @@ impl Gfx {
 
         let pass = self.pass.as_mut().unwrap();
         pass.set_pipeline(&pipeline);
+        // D3DRS_BLENDFACTOR (193), in formato ARGB.
+        let bf = rs(193, 0xffff_ffff);
+        pass.set_blend_constant(wgpu::Color { r: ((bf >> 16) & 0xff) as f64 / 255.0, g: ((bf >> 8) & 0xff) as f64 / 255.0, b: (bf & 0xff) as f64 / 255.0, a: (bf >> 24) as f64 / 255.0 });
         pass.set_bind_group(0, &self.g0, &[vs_off, ps_off]);
         pass.set_bind_group(1, &ps_group, &[]);
         pass.set_bind_group(2, &vs_group, &[]);

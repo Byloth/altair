@@ -67,6 +67,10 @@ pub struct Discovery<'a> {
     pub n_insn: usize,
     pub rejected: BTreeMap<String, usize>,
     strict: bool,
+    /// `--why ADDR`: spiega perché questa partenza viene accettata o scartata.
+    pub debug: Option<u32>,
+    last: u32,
+    boundaries_only: bool,
 }
 
 struct Trial {
@@ -137,6 +141,9 @@ impl<'a> Discovery<'a> {
             n_insn: 0,
             rejected: BTreeMap::new(),
             strict,
+            debug: std::env::var("ALTAIR_WHY").ok().and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok()),
+            last: 0,
+            boundaries_only: false,
         }
     }
 
@@ -192,6 +199,7 @@ impl<'a> Discovery<'a> {
                     return Err("byte non decodificabili");
                 }
                 let addr = ins.ip() as u32;
+                self.last = addr;
                 let p = (addr - self.lo) as usize;
                 let len = ins.len();
                 if self.own[p] == INSN {
@@ -288,6 +296,9 @@ impl<'a> Discovery<'a> {
     fn try_function(&mut self, start: u32, tentative: bool) -> Option<Vec<u32>> {
         let mut t = Trial { journal: Vec::new(), calls: Vec::new(), imms: Vec::new(), slots: Vec::new(), tables: 0, bounded: 0 };
         if let Err(why) = self.explore(start, &mut t) {
+            if self.debug == Some(start) {
+                eprintln!("[perché] {start:#x} scartata: {why}, all'istruzione {:#x} (di prova: {tentative})", self.last);
+            }
             if tentative {
                 for &(p, n) in &t.journal {
                     self.own[p..p + n].fill(UNKNOWN);
@@ -338,7 +349,15 @@ impl<'a> Discovery<'a> {
             return true;
         }
         // Allineata a 16, oppure subito dopo padding, `ret`, `ret n`.
-        if a % 16 == 0 || matches!(t[o - 1], 0xCC | 0xC3) || t[o - 3] == 0xC2 {
+        if matches!(t[o - 1], 0xCC | 0xC3) || t[o - 3] == 0xC2 {
+            return true;
+        }
+        // Nel primo giro basta così: solo confini certi. Un indirizzo soltanto allineato può
+        // cadere in mezzo a una funzione vera e, accettato per primo, la farebbe scartare.
+        if self.boundaries_only {
+            return t[o - 1] == 0x90 && (matches!(t[o - 2], 0x90 | 0xC3) || t[o - 4] == 0xC2);
+        }
+        if a % 16 == 0 {
             return true;
         }
         // Dopo dei `nop` di riempimento: almeno due, o uno dopo un `ret`. Un solo 0x90 è spesso
@@ -355,6 +374,9 @@ impl<'a> Discovery<'a> {
             return;
         }
         let state = self.own[(addr - self.lo) as usize];
+        if self.debug == Some(addr) {
+            eprintln!("[perché] {addr:#x} proposta come {:?}: stato del primo byte {state}, sembra un inizio: {}", kind, self.looks_like_start(addr));
+        }
         if state == INSIDE || state == TABLE {
             self.reject("dentro un'istruzione o una tabella");
         } else if need_look && !self.looks_like_start(addr) {
@@ -404,7 +426,15 @@ impl<'a> Discovery<'a> {
         // funzione che non lo sembrano. L'ordine conta: un falso inizio accettato per primo
         // occupa i byte di una funzione vera e la fa scartare.
         let mut seen: HashSet<u32> = HashSet::new();
-        for relaxed in [false, true] {
+        // Tre passate, dalla più severa: (0) solo partenze precedute da riempimento o da un
+        // `ret`; (1) anche quelle soltanto allineate o dopo un `jmp`; (2) anche le voci di
+        // tabelle di puntatori che non sembrano inizi.
+        for tier in 0..3 {
+            let relaxed = tier == 2;
+            d.boundaries_only = tier == 0;
+            if tier == 1 {
+                seen.clear();
+            }
             for round in 1..=8 {
                 let before = d.starts.len();
                 for (i, &(a, v)) in data_words.iter().enumerate() {
@@ -423,7 +453,7 @@ impl<'a> Discovery<'a> {
                     seen.insert(v);
                     d.weak(v, Kind::Immediate, true);
                 }
-                say(&d, &format!("giro {round}{}: immediati e dati", if relaxed { " (tabelle)" } else { "" }));
+                say(&d, &format!("passata {tier}, giro {round}: immediati e dati"));
                 if d.starts.len() == before {
                     break;
                 }

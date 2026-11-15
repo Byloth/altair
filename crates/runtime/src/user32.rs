@@ -91,6 +91,21 @@ fn peek_message_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     let frame = rt.d3d.frames;
     if frame != rt.text_frame {
         rt.text_frame = frame;
+        // Le frecce del copione arrivano anche come messaggi: gli elenchi dei menu le leggono da lì.
+        for &(from, to, dik) in &rt.key_script {
+            let vk = match dik {
+                200 => 38,
+                208 => 40,
+                203 => 37,
+                205 => 39,
+                _ => continue,
+            };
+            if from == frame {
+                rt.messages.push_back((0x100, vk, 0x0100_0001));
+            } else if to == frame {
+                rt.messages.push_back((0x101, vk, 0xc100_0001));
+            }
+        }
         let due: Vec<char> = rt.text_script.iter().filter(|(f, _)| *f == frame).map(|(_, ch)| *ch).collect();
         for ch in due {
             let vk = ch.to_ascii_uppercase() as u32;

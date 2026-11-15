@@ -143,3 +143,11 @@
   dalla schermata iniziale all'elenco dei profili, **crea il profilo "Matteo"** scrivendo
   `.hdr` e `.sav` in `run/c/`, e arriva al **menu principale** (NEW, CONTINUE, OPTIONS).
   Alla corsa successiva ritrova il profilo → `analisi/runtime.md`, `analisi/d3d9.md`.
+- Profilo "Claude" creato accanto a "Matteo"; navigazione degli elenchi con le frecce (servono
+  anche come `WM_KEYDOWN`).
+- `NEW`: il caricamento si fermava su una funzione nascosta da un falso inizio (`0x5830F0`).
+  Scoperta in tre passate e diagnostica `ALTAIR_WHY`. 117.106 funzioni; test differenziale
+  2.081 identiche su 4.000, 0 diverse.
+- **Prima scena 3D: il laboratorio Abstergo**, con Vidic, Desmond e Lucy. 917 draw per
+  fotogramma, 4,7 milioni di draw senza errori dopo aver aggiunto la costante di fusione
+  → `analisi/d3d9.md`, `analisi/runtime.md`.
