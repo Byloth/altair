@@ -180,3 +180,15 @@ python3 -I tools/audio-probe.py sdl
 ```
 
 Se 4 secondi di suono richiedono molto più di 4 secondi, il problema è nel server audio.
+
+## `binktest.py`
+
+Confronta il decodificatore Bink del progetto (`altair-bink`, crate `crates/bink`) con
+`ffmpeg`, che fa da oracolo: ogni fotogramma video deve essere identico byte per byte; per
+l'audio si misura l'errore. Il confronto avviene in memoria, non scrive nulla.
+
+```sh
+cargo build --release -p altair-bink
+python3 -I tools/binktest.py "$AC1/videos"                       # tutti i filmati, video e audio
+python3 -I tools/binktest.py "$AC1/videos/UBI_LOGO.bik" --solo-video --fotogrammi 50
+```

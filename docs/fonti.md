@@ -29,3 +29,11 @@
 
 - [AC1 Recompiled - Altaïr: piano di progetto](https://claude.ai/artifact/SoPWUhJZPJ45oWk3t4r8bu):
   visione, architettura, rischi del web, nice to have, aspetti legali.
+
+## Bink (2026-11-15)
+
+- MultimediaWiki, "Bink Container", "Bink Video", "Bink Audio": https://wiki.multimedia.cx/index.php/Bink_Container
+- FFmpeg n6.1, `libavformat/bink.c`, `libavcodec/bink.c`, `binkdata.h`, `binkdsp.c`,
+  `binkaudio.c`, `wma_freqs.c` (LGPL 2.1+), scaricati in `ref/ffmpeg-bink/` (ignorata da
+  git). Letti come specifica; le tabelle di `binkdata.h` sono riportate in
+  `crates/bink/src/tables.rs` come dati del formato.

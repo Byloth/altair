@@ -302,12 +302,12 @@ texture bloccata) → `BinkShouldSkip` → `BinkNextFrame`. `BinkGetFrameBuffers
 volta sola per filmato. Della struttura `BINK` bastano i primi campi (larghezza, altezza,
 fotogrammi, fotogramma corrente, cadenza).
 
-Non c'è la libreria di RAD: l'intestazione del file dà dimensioni e cadenza, e i fotogrammi li
-decodifica **`ffmpeg`** (già installato in WSL), avviato come processo con uscita `rawvideo
-yuv420p` su una pipe; la conversione in BGRA è nostra (BT.601). L'audio lo decodifica un
-secondo `ffmpeg` (somma di fronte, centro e retro in stereo a 48 kHz) e finisce nel mixer.
-Senza `ffmpeg`, o con `ALTAIR_VIDEO=0`, `BinkOpen` fallisce e il gioco salta il filmato.
-Invio salta il filmato introduttivo.
+Non c'è la libreria di RAD. **Dal 2026-11-15 i filmati li decodifica un decodificatore
+nostro**, il crate `crates/bink` (vedi `analisi/bink.md`): video identico al riferimento,
+audio in stereo (fronte + centro + retro) passato al mixer man mano, con venti fotogrammi di
+anticipo sul video. Nessun programma esterno. `ALTAIR_BINK=ffmpeg` torna alla strada di prima
+(un processo `ffmpeg` letto da una pipe), che resta come confronto; `ALTAIR_VIDEO=0` fa
+fallire `BinkOpen` e il gioco salta il filmato. Invio salta il filmato introduttivo.
 
 ## Finestra vera
 

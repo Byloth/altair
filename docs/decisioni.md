@@ -2,6 +2,20 @@
 
 Voci più recenti in cima. Ogni voce: decisione, motivazione, cosa la farebbe rivedere.
 
+## 2026-11-15 · Decodificatore Bink nostro al posto di ffmpeg
+
+**Decisione:** i filmati li decodifica `crates/bink`, scritto da noi; `ffmpeg` resta solo come
+oracolo dei test (`tools/binktest.py`) e come ripiego (`ALTAIR_BINK=ffmpeg`).
+
+**Perché:** `ffmpeg` come processo esterno era una dipendenza di sistema e nel browser non
+esiste. Il formato Bink 1 è documentato pubblicamente e i file del gioco ne usano un
+sottoinsieme piccolo (revisione `i`, niente alfa, audio DCT).
+
+**Regola seguita:** come per scimitar-recomp, il codice di FFmpeg (LGPL) è stato letto come
+specifica e non copiato. Le tabelle del formato sono dati: riportate con la provenienza.
+
+**Verifica:** 3.381 fotogrammi identici byte per byte a ffmpeg; audio entro 4 × 10⁻⁷.
+
 ## 2026-11-15 · x87 su `long double` dell'host
 
 **Decisione.** I registri x87 sono `long double` e le operazioni sono aritmetica C; la parola di

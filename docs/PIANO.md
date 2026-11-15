@@ -198,7 +198,8 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 - [x] Stencil, scissor, depth bias, `ColorFill`, riciclo delle risorse
 - [ ] Rettangoli parziali in `StretchRect`/`Clear` (mai visti finora), `GetRenderTargetData`
 - [x] Prestazioni del renderer: da 2-25 a 27-190 fotogrammi al secondo secondo la scena
-- [x] Video Bink veri, decodificati da `ffmpeg` (loghi e filmato introduttivo)
+- [x] Video Bink veri (loghi e filmato introduttivo), con un **decodificatore nostro**
+  (`crates/bink`): 3.381 fotogrammi identici a ffmpeg, audio entro 4 × 10⁻⁷ → `analisi/bink.md`
 - [x] DirectSound su un mixer nostro: il gioco suona (verificato sul miscelato salvato)
 - [x] Uscita audio su PulseAudio in tempo reale (100 s, zero blocchi scartati); **da ascoltare**.
   Di notte il server di WSLg era andato in crisi → `analisi/runtime.md`, sezione Audio

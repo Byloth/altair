@@ -255,6 +255,11 @@ impl VideoDecoder {
         }
     }
 
+    /// L'ultimo fotogramma decodificato.
+    pub fn current(&self) -> Frame<'_> {
+        Frame { width: self.width, height: self.height, planes: &self.current }
+    }
+
     /// Decodifica il pacchetto video di un fotogramma.
     pub fn decode(&mut self, packet: &[u8]) -> Result<Frame<'_>> {
         std::mem::swap(&mut self.current, &mut self.previous);

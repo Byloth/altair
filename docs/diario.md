@@ -267,3 +267,9 @@ Fase 1, lettore `.forge`, e un **decodificatore Bink nostro** al posto di `ffmpe
   oracolo valido per quelle (serve l'hardware) → `domande-aperte.md`. Niente altro da fare ora.
 - **Lettore `.forge` in Rust** (`crates/forge`, `altair-forge`): contenitore v25 e LZO1X.
   `list` e `digest` identici a `forge.py` su tre archivi, 429 voci → `analisi/forge.md`.
+- **Decodificatore Bink nostro** (`crates/bink`, `altair-bink`, `tools/binktest.py`). Letti
+  come specifica contenitore, video, trasformata e audio di FFmpeg; scritto in Rust senza
+  dipendenze. Video: i primi due filmati identici al primo tentativo, poi tutti e 3.381 i
+  fotogrammi. Audio: mancava solo il fattore 2/N della DCT, trovato confrontando; poi errore
+  massimo 4 × 10⁻⁷ su otto tracce. Integrato nel runtime: il gioco mostra loghi e intro senza
+  `ffmpeg` (`ALTAIR_BINK=ffmpeg` per tornare indietro) → `analisi/bink.md`, `decisioni.md`.

@@ -1,10 +1,9 @@
-//! Video Bink (`binkw32.dll`) senza la libreria di RAD: i filmati li decodifica `ffmpeg`,
-//! avviato come processo e letto da una pipe, un fotogramma YUV 4:2:0 alla volta. L'audio
-//! (tracce 5.1 separate, miscelate in stereo da ffmpeg) viene decodificato tutto in memoria e
-//! passato al mixer di `dsound.rs`.
+//! Video Bink (`binkw32.dll`) senza la libreria di RAD: i filmati li decodifica il nostro
+//! `altair-bink` (video identico al riferimento, vedi `tools/binktest.py`), e il loro audio
+//! (tracce 5.1 separate, sommate in stereo) va al mixer di `dsound.rs`.
 //!
-//! Se `ffmpeg` non c'è, `BinkOpen` fallisce e il gioco salta il filmato, come prima.
-//! `ALTAIR_VIDEO=0` li salta comunque.
+//! `ALTAIR_BINK=ffmpeg` usa invece un processo `ffmpeg` letto da una pipe, com'era prima:
+//! resta come termine di confronto. `ALTAIR_VIDEO=0` salta i filmati.
 
 use crate::win32::{Call, Runtime, Shim, Shim::L};
 use std::collections::HashMap;
@@ -33,6 +32,68 @@ struct Video {
     paused: Option<Instant>,
     audio: Option<u32>,
     calls: HashMap<&'static str, u64>,
+    /// Il decodificatore nostro; `None` quando si usa ffmpeg.
+    ours: Option<Ours>,
+}
+
+/// Quanti fotogrammi di audio si decodificano in anticipo rispetto al video.
+const AUDIO_AHEAD: u32 = 20;
+
+/// Lo stato del decodificatore nostro per un filmato aperto.
+struct Ours {
+    bink: altair_bink::Bink<std::io::BufReader<std::fs::File>>,
+    video: altair_bink::VideoDecoder,
+    /// Un decodificatore per traccia (quelle che non sappiamo decodificare restano `None`).
+    tracks: Vec<Option<altair_bink::AudioDecoder>>,
+    /// Fotogrammi il cui audio è già stato passato al mixer.
+    audio_done: u32,
+    /// Dove il mixer legge l'audio (stereo, 48 kHz, 16 bit).
+    sink: Option<std::sync::Arc<Mutex<Vec<i16>>>>,
+}
+
+impl Ours {
+    fn open(path: &std::path::Path) -> Option<Ours> {
+        let bink = altair_bink::Bink::open(std::io::BufReader::new(std::fs::File::open(path).ok()?)).ok()?;
+        let video = altair_bink::VideoDecoder::new(bink.width, bink.height, bink.revision);
+        // Il mixer lavora a 48 kHz: le tracce ad altra frequenza (i bassi, a 2 kHz) restano fuori.
+        let tracks = bink.tracks.iter().map(|t| if t.sample_rate == 48_000 { altair_bink::AudioDecoder::new(t).ok() } else { None }).collect();
+        Some(Ours { bink, video, tracks, audio_done: 0, sink: None })
+    }
+
+    /// Decodifica l'audio fino al fotogramma `upto` (escluso) e lo accoda per il mixer.
+    /// Con quattro tracce (5.1 separato) somma fronte, centro e retro; altrimenti la prima.
+    fn pump_audio(&mut self, upto: u32) {
+        let Some(sink) = self.sink.clone() else { return };
+        let surround = self.tracks.len() >= 4;
+        while self.audio_done < upto.min(self.bink.frames()) {
+            let Ok(packet) = self.bink.packet(self.audio_done) else { break };
+            self.audio_done += 1;
+            let mut mix: Vec<f32> = Vec::new();
+            for (i, dec) in self.tracks.iter_mut().enumerate() {
+                let Some(dec) = dec else { continue };
+                if !(i == 0 || (surround && (i == 1 || i == 3))) {
+                    continue;
+                }
+                let mut samples = Vec::new();
+                if dec.decode(&packet.audio[i], &mut samples).is_err() {
+                    continue;
+                }
+                let channels = dec.channels();
+                let frames = samples.len() / channels;
+                if mix.len() < 2 * frames {
+                    mix.resize(2 * frames, 0.0);
+                }
+                for f in 0..frames {
+                    // Una traccia mono (il centro) va a tutti e due i lati, attenuata.
+                    let (l, r) = if channels >= 2 { (samples[f * channels], samples[f * channels + 1]) } else { (samples[f] * 0.707, samples[f] * 0.707) };
+                    mix[2 * f] += l;
+                    mix[2 * f + 1] += r;
+                }
+            }
+            let mut out = sink.lock().unwrap_or_else(|e| e.into_inner());
+            out.extend(mix.iter().map(|v| (v.clamp(-1.0, 1.0) * 32767.0) as i16));
+        }
+    }
 }
 
 static VIDEOS: LazyLock<Mutex<HashMap<u32, Video>>> = LazyLock::new(Default::default);
@@ -68,8 +129,43 @@ impl Video {
             let _ = c.wait();
         }
     }
+    /// Porta nei piani guest il fotogramma corrente con il decodificatore nostro.
+    fn decode_ours(&mut self, mem: crate::machine::Mem) {
+        let Some(o) = self.ours.as_mut() else { return };
+        if self.frame < self.decoded {
+            // Il filmato ricomincia: il primo fotogramma è sempre un fotogramma chiave.
+            o.video = altair_bink::VideoDecoder::new(self.w, self.h, o.bink.revision);
+            self.decoded = 0;
+        }
+        o.pump_audio(self.frame + AUDIO_AHEAD);
+        let mut fresh = false;
+        while self.decoded < self.frame {
+            let Ok(packet) = o.bink.packet(self.decoded) else { return };
+            self.decoded += 1;
+            if let Err(e) = o.video.decode(&packet.video) {
+                eprintln!("[video] {}: fotogramma {} non decodificabile ({e})", self.name, self.decoded);
+                return;
+            }
+            fresh = true;
+        }
+        if !fresh {
+            return; // già nei piani
+        }
+        // I piani del gioco sono Y, Cr, Cb; quelli del decodificatore Y, Cb, Cr.
+        let frame = o.video.current();
+        for (guest, plane) in [(self.planes[0], 0), (self.planes[1], 2), (self.planes[2], 1)] {
+            let (w, h) = frame.plane_size(plane);
+            for y in 0..h {
+                mem.write(guest + (y * w) as u32, frame.row(plane, y));
+            }
+        }
+    }
+
     /// Porta nei piani guest il fotogramma corrente, leggendo dalla pipe quelli che mancano.
     fn decode(&mut self, mem: crate::machine::Mem) {
+        if self.ours.is_some() {
+            return self.decode_ours(mem);
+        }
         if self.frame <= self.decoded && self.frame != 1 {
             return; // già decodificato
         }
@@ -142,8 +238,16 @@ fn bink_open(rt: &mut Runtime, c: &mut Call) -> u32 {
         paused: None,
         audio: None,
         calls: HashMap::new(),
+        ours: None,
     };
-    if !v.spawn() {
+    let use_ffmpeg = std::env::var("ALTAIR_BINK").is_ok_and(|v| v == "ffmpeg");
+    if !use_ffmpeg {
+        v.ours = Ours::open(&path);
+        if v.ours.is_none() {
+            eprintln!("[video] {name}: il decodificatore nostro non lo apre, provo ffmpeg");
+        }
+    }
+    if v.ours.is_none() && !v.spawn() {
         for p in planes.into_iter().chain([handle]) {
             rt.hfree(p);
         }
@@ -153,10 +257,17 @@ fn bink_open(rt: &mut Runtime, c: &mut Call) -> u32 {
     for (i, val) in [w, h, frames, 1, 0, fps_num, fps_den, 0, c.arg(1)].iter().enumerate() {
         rt.mem.w32(handle + 4 * i as u32, *val);
     }
-    if head[40] > 0 {
+    if let Some(o) = v.ours.as_mut() {
+        if head[40] > 0 {
+            let (id, sink) = crate::dsound::play_stream();
+            v.audio = Some(id);
+            o.sink = Some(sink);
+            o.pump_audio(AUDIO_AHEAD);
+        }
+    } else if head[40] > 0 {
         v.audio = crate::dsound::play_file(&path, head[40] as u32);
     }
-    eprintln!("[video] {name}: {w}x{h}, {frames} fotogrammi a {:.2} al secondo, {} tracce audio", fps_num as f64 / fps_den as f64, head[40]);
+    eprintln!("[video] {name}: {w}x{h}, {frames} fotogrammi a {:.2} al secondo, {} tracce audio ({})", fps_num as f64 / fps_den as f64, head[40], if v.ours.is_some() { "decodificatore nostro" } else { "ffmpeg" });
     videos().insert(handle, v);
     handle
 }

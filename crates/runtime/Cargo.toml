@@ -12,6 +12,7 @@ path = "src/main.rs"
 altair-pe = { path = "../pe" }
 libc = "0.2"
 altair-shader = { path = "../shader" }
+altair-bink = { path = "../bink" }
 wgpu = "24"
 pollster = "0.4"
 png = "0.17"

@@ -170,6 +170,7 @@ struct FileSound {
     volume: f32,
 }
 
+static NEXT_FILE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 static FILES: std::sync::LazyLock<Mutex<HashMap<u32, FileSound>>> = std::sync::LazyLock::new(Default::default);
 fn files() -> MutexGuard<'static, HashMap<u32, FileSound>> {
     FILES.lock().unwrap_or_else(|e| e.into_inner())
@@ -209,10 +210,17 @@ pub fn play_file(path: &std::path::Path, tracks: u32) -> Option<u32> {
         let _ = child.kill();
         let _ = child.wait();
     });
-    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
-    let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let id = NEXT_FILE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     files().insert(id, FileSound { samples, pos: 0, paused: false, volume: 1.0 });
     Some(id)
+}
+/// Un suono alimentato da chi chiama: ritorna l'identificativo e la coda in cui mettere i
+/// campioni (stereo intercalato, 48 kHz, 16 bit). Il mixer li suona man mano che arrivano.
+pub fn play_stream() -> (u32, std::sync::Arc<Mutex<Vec<i16>>>) {
+    let samples = std::sync::Arc::new(Mutex::new(Vec::new()));
+    let id = NEXT_FILE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    files().insert(id, FileSound { samples: samples.clone(), pos: 0, paused: false, volume: 1.0 });
+    (id, samples)
 }
 pub fn stop_file(id: u32) {
     files().remove(&id);
