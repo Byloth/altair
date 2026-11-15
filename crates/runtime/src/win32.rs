@@ -12,7 +12,7 @@ use crate::{HEAP_END, HEAP_START, HOST_BASE, TEB, VIRTUAL_END, VIRTUAL_START};
 use altair_pe::Image;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
 use std::time::Instant;
 
 const TLS_SLOTS: u32 = 0xe10; // TEB.TlsSlots
@@ -36,6 +36,8 @@ pub struct Runtime {
     pub fs: fs::FsState,
     /// Procedura della finestra registrata dal gioco.
     pub wndproc: u32,
+    pub com_vtables: HashMap<&'static str, u32>,
+    pub ds_buffers: HashMap<u32, crate::dsound::Buffer>,
     start: Instant,
     cmdline: u32,
     env_a: u32,
@@ -82,6 +84,30 @@ static TABLE: OnceLock<Vec<(String, Option<(u32, Shim)>)>> = OnceLock::new();
 static RUN: OnceLock<RunFn> = OnceLock::new();
 static TRACE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Funzioni host registrate a runtime (i metodi degli oggetti COM), dopo i trampolini degli import.
+const DYN_BASE: u32 = HOST_BASE + 0x10_0000;
+static DYN: RwLock<Vec<(String, u32, Option<Shim>)>> = RwLock::new(Vec::new());
+
+/// Registra una funzione host e ne ritorna l'indirizzo guest. `shim` None = non implementata.
+pub fn register_host_fn(name: String, nargs: u32, shim: Option<Shim>) -> u32 {
+    let mut d = DYN.write().unwrap();
+    d.push((name, nargs, shim));
+    DYN_BASE + 16 * (d.len() as u32 - 1)
+}
+
+/// (nome, argomenti e shim se implementata) per un indirizzo host.
+fn lookup(addr: u32) -> Option<(String, Option<(u32, Shim)>)> {
+    if addr % 16 != 0 || addr < HOST_BASE {
+        return None;
+    }
+    if addr >= DYN_BASE {
+        let d = DYN.read().unwrap();
+        let (name, nargs, shim) = d.get(((addr - DYN_BASE) / 16) as usize)?;
+        return Some((name.clone(), shim.map(|s| (*nargs, s))));
+    }
+    TABLE.get()?.get(((addr - HOST_BASE) / 16) as usize).cloned()
+}
+
 fn rt() -> MutexGuard<'static, Runtime> {
     RT.get().expect("runtime non installato").lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -92,7 +118,7 @@ pub fn install(rt: Runtime, img: &Image, run: RunFn) {
         .iter()
         .map(|imp| {
             let key = if imp.name.starts_with('#') { format!("{}!{}", imp.dll, imp.name) } else { imp.name.clone() };
-            let shim = SHIMS.iter().chain(crate::system::SHIMS).chain(crate::user32::SHIMS).find(|s| s.0 == key).map(|s| (s.1, s.2));
+            let shim = SHIMS.iter().chain(crate::system::SHIMS).chain(crate::user32::SHIMS).chain(EXTRA).find(|s| s.0 == key).map(|s| (s.1, s.2));
             (format!("{}!{}", imp.dll, imp.name), shim)
         })
         .collect();
@@ -122,6 +148,8 @@ impl Runtime {
             next_tid: 0x1004,
             static_tls: None,
             wndproc: 0,
+            com_vtables: HashMap::new(),
+            ds_buffers: HashMap::new(),
             fs: fs::FsState::new(
                 std::path::Path::new(exe).parent().map(Into::into).unwrap_or_default(),
                 std::env::current_dir().unwrap_or_default().join("run").join("c"),
@@ -148,7 +176,7 @@ impl Runtime {
         a
     }
 
-    fn halloc(&mut self, size: u32, zero: bool) -> u32 {
+    pub fn halloc(&mut self, size: u32, zero: bool) -> u32 {
         match self.heap.alloc(size) {
             Some((a, reused)) => {
                 if zero && reused {
@@ -180,6 +208,9 @@ impl Runtime {
 }
 
 
+/// Import implementati in altri moduli.
+static EXTRA: &[(&str, u32, Shim)] = &[("dsound.dll!#11", 3, L(crate::dsound::direct_sound_create8))];
+
 thread_local! {
     /// Impostato da `ExitThread`: la trap che segue è un'uscita normale del thread.
     static EXITING: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
@@ -189,16 +220,15 @@ thread_local! {
 pub unsafe extern "C" fn host_call(ctx: *mut Ctx, addr: u32) -> i32 {
     let ctx = unsafe { &mut *ctx };
     let mem = Mem(ctx.mem);
-    let idx = (addr.wrapping_sub(HOST_BASE) / 16) as usize;
-    let entry = TABLE.get().and_then(|t| t.get(idx)).filter(|_| addr >= HOST_BASE && addr % 16 == 0);
-    let Some((name, shim)) = entry else {
+    let Some((name, shim)) = lookup(addr) else {
         eprintln!("\nchiamata a {addr:#010x}: non è una funzione tradotta né un import");
         return 1;
     };
-    let Some((nargs, shim)) = *shim else {
+    let Some((nargs, shim)) = shim else {
         let ret = mem.r32(ctx.esp);
         let args: Vec<String> = (0..6).map(|i| format!("{:#x}", mem.r32(ctx.esp + 4 + 4 * i))).collect();
-        eprintln!("\nIMPORT MANCANTE: {name}  (chiamato da {ret:#010x})\n  prime parole sullo stack: {}", args.join(" "));
+        let what = if addr >= DYN_BASE { "METODO COM MANCANTE" } else { "IMPORT MANCANTE" };
+        eprintln!("\n{what}: {name}  (chiamato da {ret:#010x})\n  prime parole sullo stack: {}", args.join(" "));
         return 1;
     };
     let trace = TRACE.load(Ordering::Relaxed);

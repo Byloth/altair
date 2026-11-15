@@ -11,18 +11,8 @@ fn one(_: &mut Runtime, _: &mut Call) -> u32 {
 }
 
 // --- COM ------------------------------------------------------------------------------------
-fn guid(rt: &Runtime, p: u32) -> String {
-    let b = rt.mem.bytes(p, 16);
-    format!(
-        "{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{}",
-        rt.mem.r32(p),
-        rt.mem.r16(p + 4),
-        rt.mem.r16(p + 6),
-        b[8],
-        b[9],
-        b[10..].iter().map(|x| format!("{x:02X}")).collect::<String>()
-    )
-}
+use crate::com::guid;
+
 /// Nessuna classe COM è registrata: il chiamante riceve REGDB_E_CLASSNOTREG.
 fn co_create_instance(rt: &mut Runtime, c: &mut Call) -> u32 {
     eprintln!("CoCreateInstance: classe {} interfaccia {} → non registrata (da {:#010x})", guid(rt, c.arg(0)), guid(rt, c.arg(3)), c.ret_addr());
@@ -188,7 +178,6 @@ pub static SHIMS: &[(&str, u32, Shim)] = &[
     ("InternetGetCookieW", 4, L(zero)),
     ("InternetSetCookieW", 3, L(zero)),
     ("dsound.dll!#2", 2, L(zero)),
-    ("dsound.dll!#11", 3, L(ds_no_driver)),
     ("eax.dll!#6", 3, L(ds_no_driver)),
     ("waveOutGetDevCapsA", 3, L(bad_device)),
 ];

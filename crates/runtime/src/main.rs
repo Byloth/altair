@@ -1,5 +1,7 @@
 //! `altair-run`: carica l'immagine del gioco, la collega alla libreria tradotta e la esegue.
 
+mod com;
+mod dsound;
 mod fs;
 mod machine;
 mod sync;
