@@ -460,9 +460,17 @@ finestra; `gfx.rs` lo disegna sulla superficie dopo aver copiato il back buffer,
 pipeline a parte (alfa, nessuna texture) e un buffer di vertici nuovo per fotogramma. Il gioco
 non lo vede: il suo back buffer resta intatto. Contenuto: un'elica di rombi che ruota,
 "ANIMUS / SINCRONIA", i fotogrammi al secondo in grande, millisecondi per fotogramma, draw per
-fotogramma, e una barretta per ognuno degli ultimi 56 fotogrammi (rossa quando uno dura più
-di 1,6 volte la media). Sotto i 30 fotogrammi al secondo numeri e accenti passano al rosso
-della desincronizzazione. I valori si aggiornano due volte al secondo.
+fotogramma, e uno storico a barrette. Sotto i 30 fotogrammi al secondo numeri e accenti
+passano al rosso della desincronizzazione. I valori si aggiornano due volte al secondo.
+
+Lo storico: 56 barrette, **una ogni quarto di secondo** (14 secondi in tutto), le più vecchie a
+sinistra e più tenui. L'altezza è il ritmo medio di quell'intervallo, su una scala a gradini
+fissi (30, 60, 120, 240, 480…) scelta sul massimo visibile: cambia solo quando il ritmo cambia
+davvero. Una barretta è rossa se l'intervallo è stato sotto i 30 fotogrammi al secondo o ha
+contenuto un fotogramma più lungo di 50 ms; le soglie sono assolute, quindi non cambia colore
+dopo. La prima versione aveva una barretta per fotogramma, con altezza e rosso relativi alla
+media del momento: scorreva via in mezzo secondo, si ridimensionava a ogni ricalcolo e le
+barrette cambiavano colore (segnalato dall'utente, illeggibile).
 
 **Niente asset del gioco:** caratteri 5×7, elica e cornice sono descritti in codice. Il logo
 Abstergo non c'è, apposta: è un marchio di Ubisoft e la regola 1 lo tiene fuori dal repository.

@@ -14,13 +14,29 @@ use std::time::Instant;
 
 static ON: AtomicBool = AtomicBool::new(false);
 
-/// Quanti fotogrammi tiene il grafico.
+/// Il grafico è uno storico: una barretta per intervallo di tempo, non per fotogramma, o
+/// scorrerebbe via prima di poterla guardare. 56 barrette da un quarto di secondo: 14 secondi.
 const HISTORY: usize = 56;
+const BUCKET: f32 = 0.25;
+/// Soglie fisse del rosso: una barretta, una volta disegnata, non cambia più colore.
+const SLOW_FPS: f32 = 30.0;
+const STUTTER_MS: f32 = 50.0;
+
+/// Un intervallo dello storico.
+#[derive(Clone, Copy, Default)]
+struct Bucket {
+    /// Fotogrammi al secondo medi dell'intervallo; 0 = ancora vuoto.
+    fps: f32,
+    /// Il fotogramma più lungo dell'intervallo, in millisecondi.
+    worst: f32,
+}
 
 struct Stats {
     last: Option<Instant>,
-    /// Millisecondi degli ultimi fotogrammi, dal più vecchio al più recente.
-    times: [f32; HISTORY],
+    /// Lo storico, dal più vecchio al più recente.
+    history: [Bucket; HISTORY],
+    /// L'intervallo in corso: inizio, fotogrammi, fotogramma più lungo.
+    bucket: (Instant, u32, f32),
     /// Valori mostrati, aggiornati due volte al secondo perché restino leggibili.
     fps: f32,
     ms: f32,
@@ -50,10 +66,17 @@ pub fn init() {
 pub fn frame(draws: u64) {
     let now = Instant::now();
     let mut guard = STATS.lock().unwrap_or_else(|e| e.into_inner());
-    let s = guard.get_or_insert_with(|| Stats { last: None, times: [0.0; HISTORY], fps: 0.0, ms: 0.0, draws: 0, acc: (now, 0, 0), started: now });
+    let s = guard.get_or_insert_with(|| Stats { last: None, history: [Bucket::default(); HISTORY], bucket: (now, 0, 0.0), fps: 0.0, ms: 0.0, draws: 0, acc: (now, 0, 0), started: now });
     if let Some(last) = s.last {
-        s.times.rotate_left(1);
-        s.times[HISTORY - 1] = (now - last).as_secs_f32() * 1000.0;
+        s.bucket.1 += 1;
+        s.bucket.2 = s.bucket.2.max((now - last).as_secs_f32() * 1000.0);
+    }
+    let span = (now - s.bucket.0).as_secs_f32();
+    if span >= BUCKET {
+        s.history.rotate_left(1);
+        // Dopo una pausa lunga (un caricamento) resta una sola barretta, bassa e rossa.
+        s.history[HISTORY - 1] = Bucket { fps: (s.bucket.1 as f32 / span).max(0.5), worst: s.bucket.2 };
+        s.bucket = (now, 0, 0.0);
     }
     s.last = Some(now);
     s.acc.1 += 1;
@@ -245,21 +268,24 @@ pub fn build(w: u32, h: u32, srgb: bool) -> Vec<Vertex> {
     d.text(cx, py + 39.0 * u, u, "DRAW", dim);
     d.text(cx + 34.0 * u, py + 37.5 * u, small, &format!("{}", s.draws.min(99999)), ink);
 
-    // Il grafico: una barretta per fotogramma, alta quanto è durato. La scala è il doppio
-    // della media mostrata, così a ritmo costante le barre stanno a metà e gli scatti sporgono.
+    // Lo storico: una barretta ogni quarto di secondo, alta quanto i fotogrammi al secondo di
+    // quell'intervallo; le più vecchie a sinistra, più tenui. La scala è un gradino fisso
+    // (30, 60, 120…) scelto sul massimo visibile: cambia solo quando il ritmo cambia davvero.
+    // Rossa se l'intervallo è stato lento (sotto 30) o ha avuto uno scatto (un fotogramma oltre
+    // 50 ms): soglie assolute, quindi una barretta non cambia colore dopo.
     let (gx, gy, gh) = (tx, py + 58.0 * u, 12.0 * u);
-    let scale = (s.ms * 2.0).max(1.0);
+    let top = s.history.iter().map(|b| b.fps).fold(0.0f32, f32::max);
+    let scale = [30.0, 60.0, 120.0, 240.0, 480.0, 960.0].into_iter().find(|&v| top <= v).unwrap_or(1920.0);
     let step = (px + pw - 12.0 * u - gx) / HISTORY as f32;
     d.rect(gx, gy + gh, step * HISTORY as f32 - u, t * 0.75, [dim[0], dim[1], dim[2], 0.35]);
-    for (i, &ms) in s.times.iter().enumerate() {
-        if ms <= 0.0 {
+    for (i, b) in s.history.iter().enumerate() {
+        if b.fps <= 0.0 {
             continue;
         }
-        let f = (ms / scale).min(1.0);
-        let spike = ms > s.ms * 1.6 && s.ms > 0.0;
+        let bad = b.fps < SLOW_FPS || b.worst > STUTTER_MS;
         let age = 0.35 + 0.65 * (i as f32 / HISTORY as f32);
-        let c = if spike { [0.95, 0.30, 0.26, 0.95] } else { [ink[0], ink[1], ink[2], 0.85 * age] };
-        let bh = (f * gh).max(t);
+        let c = if bad { [0.95, 0.30, 0.26, 0.55 + 0.4 * age] } else { [0.93, 0.97, 1.0, 0.85 * age] };
+        let bh = ((b.fps / scale).min(1.0) * gh).max(t);
         d.rect(gx + i as f32 * step, gy + gh - bh, (step - u).max(t), bh, c);
     }
 

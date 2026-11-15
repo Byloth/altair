@@ -347,3 +347,6 @@ Richiesta dell'utente mentre prova `tools/gioca.sh`.
   accelerava): trovata la tabella dello `StartupVideoManager` (`0x18C2C08`) con il byte "si può
   saltare"; il runtime lo mette a 1 per logo, "presenta" e avvertenze e il gioco li salta da
   sé con la sua dissolvenza. Tolto l'avanzamento veloce di `BinkWait` → `analisi/runtime.md`.
+- Pannello F8: lo storico era una barretta per fotogramma con scala e rosso relativi alla
+  media, illeggibile (utente). Ora una barretta ogni quarto di secondo, scala a gradini fissi,
+  soglie assolute per il rosso → `analisi/runtime.md`.
