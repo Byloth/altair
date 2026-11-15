@@ -1,9 +1,9 @@
-//! Le funzioni di Windows importate dal gioco, implementate sull'host.
+//! The Windows functions imported by the game, implemented on the host.
 //!
-//! Ogni cella della IAT punta a un trampolino in `HOST_BASE`. Quando il codice tradotto chiama
-//! un indirizzo che non è una funzione tradotta, la libreria chiama `host_call`, che trova lo
-//! shim con quel nome. Le API sono `stdcall`: lo shim legge gli argomenti dallo stack guest e
-//! al ritorno il runtime toglie indirizzo di ritorno e argomenti.
+//! Every IAT cell points to a trampoline in `HOST_BASE`. When the translated code calls
+//! an address that is not a translated function, the library calls `host_call`, which finds the
+//! shim with that name. The APIs are `stdcall`: the shim reads the arguments from the guest stack
+//! and on return the runtime pops the return address and the arguments.
 
 use crate::fs;
 use crate::machine::{Ctx, Heap, Mem};
@@ -23,12 +23,12 @@ const GUEST_EXE: &[u8] = b"C:\\AC1\\AssassinsCreed_Dx9.exe";
 pub struct Runtime {
     pub mem: Mem,
     pub trace: bool,
-    /// indirizzo del trampolino -> (dll, nome)
+    /// trampoline address -> (dll, name)
     #[allow(dead_code)]
     imports: HashMap<u32, (String, String)>,
     heap: Heap,
     virtual_next: u32,
-    /// Zone ottenute con VirtualAlloc: base -> dimensione.
+    /// Regions obtained with VirtualAlloc: base -> size.
     regions: std::collections::BTreeMap<u32, u32>,
     tls_next: u32,
     next_handle: u32,
@@ -36,30 +36,30 @@ pub struct Runtime {
     next_tid: u32,
     static_tls: Option<(u32, u32, u32, u32)>,
     pub fs: fs::FsState,
-    /// Procedura della finestra registrata dal gioco.
+    /// Window procedure registered by the game.
     pub wndproc: u32,
     pub com_vtables: HashMap<&'static str, u32>,
     pub d3d: crate::d3d9::D3d,
     pub gfx: Option<crate::gfx::Gfx>,
-    /// Oggetto DirectInput della tastiera e copione dei tasti simulati: (da, a, codice DIK).
+    /// DirectInput keyboard object and script of the simulated keys: (from, to, DIK code).
     pub keyboard: u32,
-    /// Cartella del canale di comando (`ALTAIR_CTL`).
+    /// Control channel directory (`ALTAIR_CTL`).
     pub ctl_dir: Option<std::path::PathBuf>,
     pub key_script: Vec<(u64, u64, u8)>,
-    /// Coda dei messaggi della finestra: (messaggio, wParam, lParam).
+    /// Window message queue: (message, wParam, lParam).
     pub messages: std::collections::VecDeque<(u32, u32, u32)>,
     pub window_thread: u32,
     pub text_script: Vec<(u64, char)>,
     pub text_frame: u64,
-    /// Caratteri battuti dal copione, in attesa che il gioco li chieda con ToUnicode.
+    /// Characters typed by the script, waiting for the game to ask for them with ToUnicode.
     pub typed: std::collections::VecDeque<(u32, char)>,
-    /// Il mouse di DirectInput.
+    /// The DirectInput mouse.
     pub mouse: u32,
-    /// Ultimo stato stampato da `ALTAIR_INPUT_LOG`: tasti premuti; pulsanti e se il mouse si muove.
+    /// Last state printed by `ALTAIR_INPUT_LOG`: keys held; buttons and whether the mouse is moving.
     pub input_seen: (Vec<u32>, ([bool; 8], bool)),
-    /// Pulsanti del mouse premuti dal canale di comando: (fotogramma del rilascio, pulsante).
+    /// Mouse buttons pressed by the control channel: (release frame, button).
     pub button_script: Vec<(u64, usize)>,
-    /// Tasti e pulsanti premuti dal canale di comando per un tempo reale: (rilascio, codice).
+    /// Keys and buttons pressed by the control channel for a real-time duration: (release, code).
     pub key_timed: Vec<(std::time::Instant, u8)>,
     pub button_timed: Vec<(std::time::Instant, usize)>,
     start: Instant,
@@ -68,7 +68,7 @@ pub struct Runtime {
     env_w: u32,
 }
 
-/// Una chiamata in corso: argomenti sullo stack guest sopra l'indirizzo di ritorno.
+/// A call in progress: arguments on the guest stack above the return address.
 pub struct Call<'a> {
     pub ctx: &'a mut Ctx,
     pub mem: Mem,
@@ -89,8 +89,8 @@ impl Call<'_> {
     }
 }
 
-/// Uno shim. `L` riceve il runtime già bloccato; `F` non lo tocca (percorsi caldi) oppure lo
-/// blocca da sé per poco, perché può restare in attesa o richiamare codice guest.
+/// A shim. `L` receives the runtime already locked; `F` does not touch it (hot paths) or
+/// locks it itself for a short time, because it may block waiting or call back into guest code.
 #[derive(Clone, Copy)]
 pub enum Shim {
     L(fn(&mut Runtime, &mut Call) -> u32),
@@ -101,10 +101,10 @@ use Shim::{F, L};
 type RunFn = unsafe extern "C" fn(*mut Ctx, u32) -> i32;
 
 static RT: OnceLock<Mutex<Runtime>> = OnceLock::new();
-/// Per indice di trampolino: (nome, numero di argomenti, shim), o None se manca.
-/// Una funzione host raggiungibile dal codice tradotto: un import o un metodo COM.
-/// Le voci vivono per tutto il processo: così `host_call`, che gira centinaia di migliaia di
-/// volte per fotogramma, le trova senza copiare stringhe né prendere lock per contarle.
+/// By trampoline index: (name, argument count, shim), or None if missing.
+/// A host function reachable from the translated code: an import or a COM method.
+/// The entries live for the whole process: this way `host_call`, which runs hundreds of thousands
+/// of times per frame, finds them without copying strings or taking locks to count them.
 pub struct Entry {
     pub name: String,
     shim: Option<(u32, Shim)>,
@@ -115,7 +115,7 @@ fn entry(name: String, shim: Option<(u32, Shim)>) -> &'static Entry {
 }
 static TABLE: OnceLock<Vec<&'static Entry>> = OnceLock::new();
 
-/// Quante volte è stata chiamata ogni funzione host (solo quelle chiamate almeno una volta).
+/// How many times each host function has been called (only those called at least once).
 pub fn call_counts() -> Vec<(String, u64)> {
     let dynamic = DYN.read().unwrap();
     TABLE.get().into_iter().flatten().chain(dynamic.iter()).map(|e| (e.name.clone(), e.count.load(Ordering::Relaxed))).filter(|(_, n)| *n > 0).collect()
@@ -127,18 +127,18 @@ pub type CallFn = unsafe extern "C" fn(*mut Ctx, u32);
 static CALL: OnceLock<CallFn> = OnceLock::new();
 static TRACE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Funzioni host registrate a runtime (i metodi degli oggetti COM), dopo i trampolini degli import.
+/// Host functions registered at runtime (the methods of COM objects), after the import trampolines.
 const DYN_BASE: u32 = HOST_BASE + 0x10_0000;
 static DYN: RwLock<Vec<&'static Entry>> = RwLock::new(Vec::new());
 
-/// Registra una funzione host e ne ritorna l'indirizzo guest. `shim` None = non implementata.
+/// Registers a host function and returns its guest address. `shim` None = not implemented.
 pub fn register_host_fn(name: String, nargs: u32, shim: Option<Shim>) -> u32 {
     let mut d = DYN.write().unwrap();
     d.push(entry(name, shim.map(|s| (nargs, s))));
     DYN_BASE + 16 * (d.len() as u32 - 1)
 }
 
-/// (nome, argomenti e shim se implementata) per un indirizzo host.
+/// (name, arguments and shim if implemented) for a host address.
 fn lookup(addr: u32) -> Option<&'static Entry> {
     if addr % 16 != 0 || addr < HOST_BASE {
         return None;
@@ -149,13 +149,13 @@ fn lookup(addr: u32) -> Option<&'static Entry> {
     TABLE.get()?.get(((addr - HOST_BASE) / 16) as usize).copied()
 }
 
-/// Accesso breve al runtime per gli shim di tipo `F`.
+/// Short access to the runtime for `F`-type shims.
 pub fn with_runtime<T>(f: impl FnOnce(&mut Runtime) -> T) -> T {
     f(&mut rt())
 }
 
 fn rt() -> MutexGuard<'static, Runtime> {
-    RT.get().expect("runtime non installato").lock().unwrap_or_else(|e| e.into_inner())
+    RT.get().expect("runtime not installed").lock().unwrap_or_else(|e| e.into_inner())
 }
 
 pub fn install(rt: Runtime, img: &Image, run: RunFn, trail: TrailFn, call: CallFn) {
@@ -231,7 +231,7 @@ impl Runtime {
         rt
     }
 
-    /// Copia `data` nello heap guest, seguito da `zeros` byte a zero.
+    /// Copies `data` into the guest heap, followed by `zeros` zero bytes.
     fn alloc_bytes(&mut self, data: &[u8], zeros: u32) -> u32 {
         let a = self.halloc(data.len() as u32 + zeros, true);
         self.mem.write(a, data);
@@ -254,7 +254,7 @@ impl Runtime {
         }
     }
 
-    /// TLS statica (`__declspec(thread)`): un blocco per thread, raggiunto da fs:[0x2C].
+    /// Static TLS (`__declspec(thread)`): one block per thread, reached through fs:[0x2C].
     pub fn setup_static_tls(&mut self, img: &Image, teb: u32) {
         self.static_tls = img.tls_directory();
         if let Some((_, _, index_addr, _)) = self.static_tls {
@@ -274,32 +274,32 @@ impl Runtime {
 }
 
 
-/// Import implementati in altri moduli.
+/// Imports implemented in other modules.
 static EXTRA: &[(&str, u32, Shim)] = &[
     ("EnumDisplayMonitors", 4, F(crate::user32::enum_display_monitors)),
     ("DispatchMessageA", 1, F(crate::user32::dispatch_message_a)),
    ("dsound.dll!#11", 3, L(crate::dsound::direct_sound_create8))];
 
-/// Chiama una funzione guest `stdcall` da uno shim e ne ritorna `eax`. Lo shim deve essere di
-/// tipo `F`: il lucchetto del runtime non va tenuto mentre gira codice guest.
+/// Calls a `stdcall` guest function from a shim and returns its `eax`. The shim must be of
+/// type `F`: the runtime lock must not be held while guest code is running.
 pub fn call_guest(c: &mut Call, addr: u32, args: &[u32]) -> u32 {
     let saved = c.ctx.esp;
-    // Sotto la cima dello stack, lasciando spazio a ciò che lo shim può averci messo.
+    // Below the top of the stack, leaving room for whatever the shim may have put there.
     let mut sp = saved - 0x100;
     for a in args.iter().rev() {
         sp -= 4;
         c.mem.w32(sp, *a);
     }
     sp -= 4;
-    c.mem.w32(sp, 0); // indirizzo di ritorno: la funzione C tradotta torna qui da sola
+    c.mem.w32(sp, 0); // return address: the translated C function returns here by itself
     c.ctx.esp = sp;
-    // SAFETY: `addr` è una funzione guest; il contesto è quello del thread corrente.
+    // SAFETY: `addr` is a guest function; the context is the current thread's.
     unsafe { (CALL.get().unwrap())(c.ctx, addr) };
     c.ctx.esp = saved;
     c.ctx.eax
 }
 
-/// Contatore di tempo economico (il TSC): `host_call` lo legge due volte per chiamata.
+/// Cheap time counter (the TSC): `host_call` reads it twice per call.
 #[inline]
 fn ticks() -> u64 {
     #[cfg(target_arch = "x86_64")]
@@ -310,8 +310,8 @@ fn ticks() -> u64 {
     0
 }
 
-/// Tempo passato negli shim dal thread corrente dall'ultima lettura, in millisecondi.
-/// Serve a separare, in un fotogramma, il costo del runtime da quello del codice del gioco.
+/// Time spent in shims by the current thread since the last read, in milliseconds.
+/// Used to separate, within a frame, the cost of the runtime from that of the game code.
 pub fn take_shim_ms() -> f64 {
     static PER_MS: OnceLock<f64> = OnceLock::new();
     let per_ms = *PER_MS.get_or_init(|| {
@@ -324,24 +324,24 @@ pub fn take_shim_ms() -> f64 {
 
 thread_local! {
     static SHIM_TICKS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-    /// Impostato da `ExitThread`: la trap che segue è un'uscita normale del thread.
+    /// Set by `ExitThread`: the trap that follows is a normal thread exit.
     static EXITING: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
 }
 
-/// Chiamata dal codice tradotto per un indirizzo che non è una funzione tradotta.
+/// Called by the translated code for an address that is not a translated function.
 pub unsafe extern "C" fn host_call(ctx: *mut Ctx, addr: u32) -> i32 {
     let ctx = unsafe { &mut *ctx };
     let mem = Mem(ctx.mem);
     let Some(found) = lookup(addr) else {
-        eprintln!("\nchiamata a {addr:#010x}: non è una funzione tradotta né un import");
+        eprintln!("\ncall to {addr:#010x}: neither a translated function nor an import");
         return 1;
     };
     let name = &found.name;
     let Some((nargs, shim)) = found.shim else {
         let ret = mem.r32(ctx.esp);
         let args: Vec<String> = (0..6).map(|i| format!("{:#x}", mem.r32(ctx.esp + 4 + 4 * i))).collect();
-        let what = if addr >= DYN_BASE { "METODO COM MANCANTE" } else { "IMPORT MANCANTE" };
-        eprintln!("\n{what}: {name}  (chiamato da {ret:#010x})\n  prime parole sullo stack: {}", args.join(" "));
+        let what = if addr >= DYN_BASE { "MISSING COM METHOD" } else { "MISSING IMPORT" };
+        eprintln!("\n{what}: {name}  (called from {ret:#010x})\n  first words on the stack: {}", args.join(" "));
         return 1;
     };
     let trace = TRACE.load(Ordering::Relaxed);
@@ -368,8 +368,8 @@ pub unsafe extern "C" fn host_call(ctx: *mut Ctx, addr: u32) -> i32 {
     0
 }
 
-/// Stampa lo stato al momento dell'arresto: registri e una traccia dello stack guest.
-/// Le ultime destinazioni di chiamate indirette del thread corrente, dalla più recente.
+/// Prints the state at the moment of the stop: registers and a trace of the guest stack.
+/// The last indirect call targets of the current thread, most recent first.
 pub fn trail_text() -> String {
     let mut trail = [0u32; 32];
     let n = TRAIL.get().map_or(0, |f| unsafe { f(trail.as_mut_ptr(), 32) });
@@ -390,7 +390,7 @@ pub fn report_stop(ctx: &Ctx) {
         "  eax={:08x} ecx={:08x} edx={:08x} ebx={:08x} esp={:08x} ebp={:08x} esi={:08x} edi={:08x}",
         ctx.eax, ctx.ecx, ctx.edx, ctx.ebx, ctx.esp, ctx.ebp, ctx.esi, ctx.edi
     );
-    // Indirizzi di ritorno plausibili nelle prime parole dello stack.
+    // Plausible return addresses in the first words of the stack.
     let mut frames = Vec::new();
     let mut p = ctx.esp;
     let end = ctx.esp.saturating_add(0x400);
@@ -401,9 +401,9 @@ pub fn report_stop(ctx: &Ctx) {
         }
         p += 4;
     }
-    eprintln!("  possibili indirizzi di ritorno sullo stack: {}", frames.join(" "));
+    eprintln!("  possible return addresses on the stack: {}", frames.join(" "));
     crate::d3d9::report(&rt);
-    // Va chiamata dal thread che si è fermato: la traccia è per thread.
+    // Must be called from the thread that stopped: the trail is per thread.
     let mut trail = [0u32; 32];
     let n = TRAIL.get().map_or(0, |f| unsafe { f(trail.as_mut_ptr(), 32) });
     let names: Vec<String> = trail[..n as usize]
@@ -413,15 +413,15 @@ pub fn report_stop(ctx: &Ctx) {
             None => format!("{a:#010x}"),
         })
         .collect();
-    eprintln!("  ultime destinazioni indirette (dalla più recente): {}", names.join(" "));
+    eprintln!("  last indirect targets (most recent first): {}", names.join(" "));
     let mut calls = call_counts();
     calls.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
     let total: u64 = calls.iter().map(|(_, n)| *n).sum();
-    eprintln!("  import chiamati: {} distinti, {total} chiamate; heap vivo {:.1} MB", calls.len(), rt.heap.bytes_live as f64 / 1e6);
+    eprintln!("  imports called: {} distinct, {total} calls; live heap {:.1} MB", calls.len(), rt.heap.bytes_live as f64 / 1e6);
 }
 
 fn atomic(mem: Mem, a: u32) -> &'static AtomicU32 {
-    // SAFETY: le API Interlocked richiedono un indirizzo allineato a 4, come AtomicU32.
+    // SAFETY: the Interlocked APIs require an address aligned to 4, like AtomicU32.
     unsafe { &*(mem.ptr(a) as *const AtomicU32) }
 }
 
@@ -455,7 +455,7 @@ fn map_case(ch: u32, flags: u32) -> u32 {
     m as u32
 }
 
-// --- kernel32: processo e ambiente ---------------------------------------------------------
+// --- kernel32: process and environment -----------------------------------------------------
 
 fn get_version(_: &mut Runtime, _: &mut Call) -> u32 {
     0x0a28_0105 // Windows XP: 5.1, build 2600
@@ -513,7 +513,7 @@ fn get_module_handle_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     }
     let name = rt.mem.cstr(c.arg(0)).to_ascii_lowercase();
     let name = name.trim_end_matches(".dll");
-    // Un handle finto per le DLL di sistema: GetProcAddress su di esse non trova nulla.
+    // A fake handle for system DLLs: GetProcAddress on them finds nothing.
     match name {
         "kernel32" => 0x7e00_0000,
         "user32" => 0x7e01_0000,
@@ -533,15 +533,15 @@ fn get_proc_address(rt: &mut Runtime, c: &mut Call) -> u32 {
     0
 }
 fn load_library_a(rt: &mut Runtime, c: &mut Call) -> u32 {
-    eprintln!("LoadLibraryA(\"{}\"): non disponibile", rt.mem.cstr(c.arg(0)));
+    eprintln!("LoadLibraryA(\"{}\"): not available", rt.mem.cstr(c.arg(0)));
     0
 }
 fn exit_process(rt: &mut Runtime, c: &mut Call) -> u32 {
-    eprintln!("\nExitProcess({}) chiamato da {:#010x}", c.arg(0), c.ret_addr());
+    eprintln!("\nExitProcess({}) called from {:#010x}", c.arg(0), c.ret_addr());
     let _ = rt;
     let mut calls = call_counts();
     calls.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
-    eprintln!("import chiamati: {}", calls.iter().take(40).map(|(k, n)| format!("{k}×{n}")).collect::<Vec<_>>().join(" "));
+    eprintln!("imports called: {}", calls.iter().take(40).map(|(k, n)| format!("{k}×{n}")).collect::<Vec<_>>().join(" "));
     std::process::exit(c.arg(0) as i32 & 0xff);
 }
 fn get_current_process(_: &mut Runtime, _: &mut Call) -> u32 {
@@ -574,7 +574,7 @@ fn get_system_info(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.mem.w32(p + 8, 0x0001_0000);
     rt.mem.w32(p + 12, 0x7ffe_ffff);
     rt.mem.w32(p + 16, 1); // dwActiveProcessorMask
-    rt.mem.w32(p + 20, 1); // dwNumberOfProcessors: uno, finché non ci sono i thread
+    rt.mem.w32(p + 20, 1); // dwNumberOfProcessors: one, until there are threads
     rt.mem.w32(p + 24, 586);
     rt.mem.w32(p + 28, 0x0001_0000); // dwAllocationGranularity
     rt.mem.w16(p + 32, 6);
@@ -590,14 +590,14 @@ fn sleep(c: &mut Call) -> u32 {
     0
 }
 
-// --- kernel32: tempo ------------------------------------------------------------------------
+// --- kernel32: time -------------------------------------------------------------------------
 
-/// L'istante di avvio, da cui si contano i tempi dati al gioco.
+/// The startup instant, from which the times given to the game are counted.
 pub static START: OnceLock<Instant> = OnceLock::new();
 
-// Senza lock del runtime: il thread audio del gioco legge l'orologio di continuo.
+// Without the runtime lock: the game's audio thread reads the clock continuously.
 fn query_performance_counter(c: &mut Call) -> u32 {
-    // 10 MHz dall'avvio del processo: valori grandi mandano in overflow i conti del gioco.
+    // 10 MHz since process start: large values overflow the game's arithmetic.
     c.mem.w64(c.arg(0), (START.get_or_init(Instant::now).elapsed().as_nanos() / 100) as u64);
     1
 }
@@ -614,7 +614,7 @@ fn get_system_time_as_file_time(rt: &mut Runtime, c: &mut Call) -> u32 {
     0
 }
 
-// --- kernel32: memoria ----------------------------------------------------------------------
+// --- kernel32: memory -----------------------------------------------------------------------
 
 fn heap_create(_: &mut Runtime, _: &mut Call) -> u32 {
     PROCESS_HEAP
@@ -624,7 +624,7 @@ fn heap_alloc(rt: &mut Runtime, c: &mut Call) -> u32 {
 }
 fn heap_free(rt: &mut Runtime, c: &mut Call) -> u32 {
     if c.arg(2) != 0 && !rt.heap.free(c.arg(2)) {
-        eprintln!("HeapFree di un blocco sconosciuto {:#x} (da {:#010x})", c.arg(2), c.ret_addr());
+        eprintln!("HeapFree of an unknown block {:#x} (from {:#010x})", c.arg(2), c.ret_addr());
     }
     1
 }
@@ -649,13 +649,13 @@ fn heap_size(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.heap.size(c.arg(2)).unwrap_or(0xffff_ffff)
 }
 impl Runtime {
-    /// Cerca un testo UTF-16 nelle zone di `VirtualAlloc` (heap del gioco compresi) e ritorna
-    /// gli indirizzi. Strumento di indagine: comando `find` del canale di comando.
+    /// Searches for a UTF-16 text in the `VirtualAlloc` regions (the game's heaps included) and
+    /// returns the addresses. Investigation tool: `find` command of the control channel.
     pub fn find_utf16(&self, text: &str) -> Vec<u32> {
         self.find_bytes(&text.encode_utf16().flat_map(|u| u.to_le_bytes()).collect::<Vec<u8>>())
     }
 
-    /// Cerca una sequenza di byte nelle stesse zone (comando `findhex`), anche nell'immagine.
+    /// Searches for a byte sequence in the same regions (`findhex` command), also in the image.
     pub fn find_bytes(&self, needle: &[u8]) -> Vec<u32> {
         let mut out = Vec::new();
         if needle.is_empty() {
@@ -676,7 +676,7 @@ impl Runtime {
 fn virtual_alloc(rt: &mut Runtime, c: &mut Call) -> u32 {
     let (addr, size) = (c.arg(0), c.arg(1));
     if addr != 0 {
-        return addr & !0xfff; // commit di una zona già riservata: la memoria c'è già
+        return addr & !0xfff; // commit of an already reserved region: the memory is already there
     }
     let size = (size + 0xffff) & !0xffff;
     if VIRTUAL_END - rt.virtual_next < size {
@@ -687,7 +687,7 @@ fn virtual_alloc(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.regions.insert(a, size);
     a
 }
-/// `MEM_RELEASE` (0x8000) dimentica la zona e la riazzera; gli indirizzi non vengono riusati.
+/// `MEM_RELEASE` (0x8000) forgets the region and zeroes it again; addresses are not reused.
 fn virtual_free(rt: &mut Runtime, c: &mut Call) -> u32 {
     if c.arg(2) & 0x8000 != 0 {
         if let Some(size) = rt.regions.remove(&c.arg(0)) {
@@ -696,8 +696,8 @@ fn virtual_free(rt: &mut Runtime, c: &mut Call) -> u32 {
     }
     1
 }
-/// Il motore usa `VirtualQuery` per sapere quanto è grande una zona prima di liberarla:
-/// `RegionSize` deve arrivare fino alla fine dell'allocazione.
+/// The engine uses `VirtualQuery` to find out how large a region is before freeing it:
+/// `RegionSize` must reach the end of the allocation.
 fn virtual_query(rt: &mut Runtime, c: &mut Call) -> u32 {
     let (addr, p) = (c.arg(0) & !0xfff, c.arg(1));
     let inside = rt.regions.range(..=addr).next_back().filter(|(&b, &sz)| addr < b + sz).map(|(&b, &sz)| (b, sz));
@@ -705,7 +705,7 @@ fn virtual_query(rt: &mut Runtime, c: &mut Call) -> u32 {
         Some((b, sz)) => (b, b + sz - addr, 0x1000), // MEM_COMMIT
         None => {
             let next = rt.regions.range(addr..).next().map_or(VIRTUAL_END, |(&b, _)| b);
-            let known = (0x0010_0000..VIRTUAL_START).contains(&addr); // stack, immagine, heap
+            let known = (0x0010_0000..VIRTUAL_START).contains(&addr); // stack, image, heap
             if known { (addr & !0xffff, 0x1000, 0x1000) } else { (0, next.saturating_sub(addr).max(0x1000), 0x10000) }
         }
     };
@@ -719,7 +719,7 @@ fn virtual_query(rt: &mut Runtime, c: &mut Call) -> u32 {
     28
 }
 
-// --- kernel32: TLS, sezioni critiche, Interlocked -------------------------------------------
+// --- kernel32: TLS, critical sections, Interlocked ------------------------------------------
 
 fn tls_alloc(rt: &mut Runtime, _: &mut Call) -> u32 {
     if rt.tls_next >= 64 {
@@ -737,9 +737,9 @@ fn tls_set_value(c: &mut Call) -> u32 {
     1
 }
 // CRITICAL_SECTION: { DebugInfo, LockCount, RecursionCount, OwningThread, LockSemaphore, SpinCount }.
-// Il lucchetto è il campo OwningThread, preso con un compare-and-swap; RecursionCount conta i
-// rientri del proprietario. Niente stato sul lato host: funziona anche per le sezioni che il
-// gioco inizializza a mano o copia.
+// The lock is the OwningThread field, taken with a compare-and-swap; RecursionCount counts the
+// owner's re-entries. No state on the host side: it also works for the sections that the
+// game initialises by hand or copies.
 fn init_critical_section(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.mem.fill(c.arg(0), 24, 0);
     rt.mem.w32(c.arg(0) + 4, 0xffff_ffff);
@@ -781,7 +781,7 @@ fn leave_critical_section(c: &mut Call) -> u32 {
     0
 }
 
-// --- kernel32: eventi, semafori, attese, thread ---------------------------------------------
+// --- kernel32: events, semaphores, waits, threads -------------------------------------------
 
 impl Runtime {
     pub fn object(&self, h: u32) -> Option<Arc<Object>> {
@@ -835,7 +835,7 @@ fn wait_for_single_object(c: &mut Call) -> u32 {
             if o.wait(timeout(c.arg(1))) { 0 } else { WAIT_TIMEOUT }
         }
         None => {
-            eprintln!("WaitForSingleObject su un handle sconosciuto {:#x} (da {:#010x})", c.arg(0), c.ret_addr());
+            eprintln!("WaitForSingleObject on an unknown handle {:#x} (from {:#010x})", c.arg(0), c.ret_addr());
             0xffff_ffff
         }
     }
@@ -844,10 +844,10 @@ fn wait_for_multiple_objects(c: &mut Call) -> u32 {
     let (n, handles, all, ms) = (c.arg(0), c.arg(1), c.arg(2) != 0, c.arg(3));
     let objs: Vec<Arc<Object>> = (0..n).filter_map(|i| object(c.mem.r32(handles + 4 * i))).collect();
     if objs.len() != n as usize || all {
-        eprintln!("WaitForMultipleObjects non gestita: {n} handle, waitAll={all} (da {:#010x})", c.ret_addr());
+        eprintln!("WaitForMultipleObjects not handled: {n} handles, waitAll={all} (from {:#010x})", c.ret_addr());
         return 0xffff_ffff;
     }
-    // Attesa di uno qualsiasi, a sondaggio: basta per le poche chiamate del gioco.
+    // Wait for any one of them, by polling: enough for the game's few calls.
     let start = Instant::now();
     loop {
         if let Some(i) = objs.iter().position(|o| o.try_wait()) {
@@ -861,7 +861,7 @@ fn wait_for_multiple_objects(c: &mut Call) -> u32 {
 }
 
 struct SendCtx(Box<Ctx>);
-// SAFETY: il contesto è usato solo dal thread guest a cui viene consegnato.
+// SAFETY: the context is used only by the guest thread it is handed to.
 unsafe impl Send for SendCtx {}
 
 fn create_thread(c: &mut Call) -> u32 {
@@ -870,7 +870,7 @@ fn create_thread(c: &mut Call) -> u32 {
     let (handle, obj, mut ctx, tid) = {
         let mut rt = rt();
         let size = if stack_size == 0 { 0x10_0000 } else { (stack_size + 0xffff) & !0xffff };
-        // Stack e TEB dalla zona di VirtualAlloc.
+        // Stack and TEB from the VirtualAlloc region.
         let stack = rt.virtual_next;
         let teb = stack + size;
         rt.virtual_next = teb + 0x1_0000;
@@ -910,12 +910,12 @@ fn create_thread(c: &mut Call) -> u32 {
                 go = obj.gate_cv.wait(go).unwrap();
             }
         }
-        // SAFETY: il contesto appartiene a questo thread; `start` è una funzione guest.
+        // SAFETY: the context belongs to this thread; `start` is a guest function.
         let trapped = unsafe { run(&mut *boxed.0, start) };
         let code = match EXITING.with(|e| e.get()) {
             Some(code) => code,
             None if trapped != 0 => {
-                eprintln!("\nTRAP nel thread {tid:#x}: {}", crate::trap_text(&boxed.0));
+                eprintln!("\nTRAP in thread {tid:#x}: {}", crate::trap_text(&boxed.0));
                 report_stop(&boxed.0);
                 std::process::exit(2);
             }
@@ -960,7 +960,7 @@ fn interlocked_exchange_add(c: &mut Call) -> u32 {
     atomic(c.mem, c.arg(0)).fetch_add(c.arg(1), Ordering::SeqCst)
 }
 
-// --- kernel32: locale e stringhe ------------------------------------------------------------
+// --- kernel32: locale and strings -----------------------------------------------------------
 
 fn get_acp(_: &mut Runtime, _: &mut Call) -> u32 {
     1252
@@ -1053,22 +1053,22 @@ fn lc_map_string_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     n
 }
 
-/// Senza un vero SEH gestiamo solo l'eccezione con cui MSVC comunica al debugger il nome di un
-/// thread (0x406D1388): il gioco la racchiude in un `__try` che la ignora, quindi ritornare
-/// equivale. Ogni altra eccezione ferma tutto con un messaggio.
+/// Without real SEH we only handle the exception MSVC uses to tell the debugger the name of a
+/// thread (0x406D1388): the game wraps it in a `__try` that ignores it, so returning is
+/// equivalent. Any other exception stops everything with a message.
 fn raise_exception(rt: &mut Runtime, c: &mut Call) -> u32 {
     let code = c.arg(0);
     if code == 0x406d_1388 {
         let info = c.arg(3);
-        eprintln!("[thread] {:#x} si chiama \"{}\"", rt.mem.r32(info + 8), rt.mem.cstr(rt.mem.r32(info + 4)));
+        eprintln!("[thread] {:#x} is named \"{}\"", rt.mem.r32(info + 8), rt.mem.cstr(rt.mem.r32(info + 4)));
         return 0;
     }
-    let what = if code == 0xe06d_7363 { " (throw C++)" } else { "" };
-    eprintln!("\nRaiseException({code:#x}){what} da {:#010x}: le eccezioni non sono ancora gestite", c.ret_addr());
+    let what = if code == 0xe06d_7363 { " (C++ throw)" } else { "" };
+    eprintln!("\nRaiseException({code:#x}){what} from {:#010x}: exceptions are not handled yet", c.ret_addr());
     std::process::exit(3);
 }
 
-/// (nome dell'import, numero di argomenti, implementazione)
+/// (import name, argument count, implementation)
 static SHIMS: &[(&str, u32, Shim)] = &[
     ("GetVersion", 0, L(get_version)),
     ("GetVersionExA", 1, L(get_version_ex_a)),

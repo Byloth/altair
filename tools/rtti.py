@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""RTTI di MSVC (32 bit) e vtable di un eseguibile PE32.
+"""MSVC RTTI (32-bit) and vtables of a PE32 executable.
 
-Uso:
-    python3 -I tools/rtti.py <exe>                  statistiche
-    python3 -I tools/rtti.py <exe> --out FILE.json  anche il dettaglio completo
+Usage:
+    python3 -I tools/rtti.py <exe>                  statistics
+    python3 -I tools/rtti.py <exe> --out FILE.json  the full detail as well
 
-Il JSON contiene nomi di classi del gioco: va salvato in private/.
+The JSON contains names of the game's classes: it must be saved in private/.
 
-Strutture lette (tutti i puntatori sono indirizzi assoluti a 32 bit):
+Structures read (all pointers are absolute 32-bit addresses):
     TypeDescriptor            { pVFTable(type_info), spare, name[] ".?AV...@@" }
     CompleteObjectLocator     { signature=0, offset, cdOffset, pTypeDescriptor, pClassHierarchy }
     ClassHierarchyDescriptor  { signature, attributes, numBaseClasses, pBaseClassArray }
     BaseClassDescriptor       { pTypeDescriptor, numContainedBases, mdisp, pdisp, vdisp, attributes }
-    vtable                    [-1] = puntatore al CompleteObjectLocator, poi gli slot
+    vtable                    [-1] = pointer to the CompleteObjectLocator, then the slots
 """
 import json
 import os
@@ -25,7 +25,7 @@ from pe import PE  # noqa: E402
 
 
 def undecorate(name):
-    """'.?AVFoo@bar@@' -> 'bar::Foo'. I template restano decorati."""
+    """'.?AVFoo@bar@@' -> 'bar::Foo'. Templates stay decorated."""
     if len(name) < 6 or not name.startswith('.?A') or not name.endswith('@@'):
         return name
     body = name[4:-2]
@@ -58,7 +58,7 @@ class Image:
         return None if o is None else struct.unpack_from('<I', self.pe.data, o)[0]
 
     def words(self, sec):
-        """(indirizzo, valore) per ogni dword allineata della sezione."""
+        """(address, value) for each aligned dword of the section."""
         lo, _, raw, rs = self.secs[sec]
         vals = struct.unpack_from(f'<{rs // 4}I', self.pe.data, raw)
         return lo, vals
@@ -70,7 +70,7 @@ def analyze(path):
     text_lo, text_hi = img.secs['.text'][:2]
     data_secs = [n for n in img.secs if n not in ('.text', '.rsrc', '.idata')]
 
-    # 1. TypeDescriptor: stringhe ".?A" precedute da {puntatore a type_info::vftable, 0}
+    # 1. TypeDescriptor: ".?A" strings preceded by {pointer to type_info::vftable, 0}
     cands = []
     for sec in data_secs:
         lo, _, raw, rs = img.secs[sec]
@@ -85,7 +85,7 @@ def analyze(path):
     type_info_vft = Counter(c[1] for c in cands).most_common(1)[0][0]
     tds = {addr: name for addr, vft, spare, name in cands if vft == type_info_vft}
 
-    # 2. CompleteObjectLocator: signature 0 e puntatore a un TypeDescriptor noto
+    # 2. CompleteObjectLocator: signature 0 and a pointer to a known TypeDescriptor
     cols = {}
     hierarchies = {}
     for sec in data_secs:
@@ -114,7 +114,7 @@ def analyze(path):
                                         'td': vals[i + 3], 'chd': chd}
                     hierarchies[chd] = {'attributes': attrs, 'bases': bases}
 
-    # 3. vtable: una dword che punta a un COL, seguita da puntatori a codice
+    # 3. vtable: a dword that points to a COL, followed by pointers to code
     vtables = []
     for sec in data_secs:
         lo, vals = img.words(sec)
@@ -137,10 +137,10 @@ def analyze(path):
 def namespace_of(name):
     u = undecorate(name)
     if u.startswith('.?A'):
-        # template: l'ultimo componente prima di '@@' finale è il namespace più esterno
+        # template: the last component before the final '@@' is the outermost namespace
         parts = [p for p in name[4:-2].split('@') if p and '?' not in p and '$' not in p]
-        return parts[-1] if len(parts) > 1 else '(globale)'
-    return u.split('::')[0] if '::' in u else '(globale)'
+        return parts[-1] if len(parts) > 1 else '(global)'
+    return u.split('::')[0] if '::' in u else '(global)'
 
 
 def main(argv):
@@ -151,22 +151,22 @@ def main(argv):
     slots = [s for v in vts for s in v['slots']]
     kinds = Counter(n[3] for n in tds.values())
     print(f'type_info::vftable       {r["type_info_vftable"]:#x}')
-    print(f'TypeDescriptor           {len(tds)}  (nomi distinti: {len(set(tds.values()))})')
-    print(f'  per tipo               ' + ', '.join(f'{k}={v}' for k, v in sorted(kinds.items()))
+    print(f'TypeDescriptor           {len(tds)}  (distinct names: {len(set(tds.values()))})')
+    print(f'  by kind                ' + ', '.join(f'{k}={v}' for k, v in sorted(kinds.items()))
           + '   (V=class U=struct W=enum T=union)')
-    print(f'  template               {sum("?$" in n for n in tds.values())}')
+    print(f'  templates              {sum("?$" in n for n in tds.values())}')
     print(f'CompleteObjectLocator    {len(cols)}')
     print(f'ClassHierarchyDescriptor {len(r["hierarchies"])}')
-    print(f'vtable                   {len(vts)}')
-    print(f'  slot totali            {len(slots)}')
-    print(f'  funzioni distinte      {len(set(slots))}')
-    print(f'  classi con vtable      {len(set(v["type"] for v in vts))}')
-    print(f'  vtable secondarie      {sum(v["offset"] != 0 for v in vts)}  (offset != 0: ereditarietà multipla)')
+    print(f'vtables                  {len(vts)}')
+    print(f'  total slots            {len(slots)}')
+    print(f'  distinct functions     {len(set(slots))}')
+    print(f'  classes with a vtable  {len(set(v["type"] for v in vts))}')
+    print(f'  secondary vtables      {sum(v["offset"] != 0 for v in vts)}  (offset != 0: multiple inheritance)')
     sizes = sorted(len(v['slots']) for v in vts)
-    print(f'  slot per vtable        min {sizes[0]}, mediana {sizes[len(sizes) // 2]}, max {sizes[-1]}')
+    print(f'  slots per vtable       min {sizes[0]}, median {sizes[len(sizes) // 2]}, max {sizes[-1]}')
     multi = sum(len(h['bases']) > 1 for h in r['hierarchies'].values())
-    print(f'classi con almeno una base: {multi}')
-    print('namespace principali (per TypeDescriptor):')
+    print(f'classes with at least one base: {multi}')
+    print('main namespaces (by TypeDescriptor):')
     for ns, n in Counter(namespace_of(n) for n in tds.values()).most_common(12):
         print(f'  {n:5}  {ns}')
 
@@ -180,7 +180,7 @@ def main(argv):
         }
         with open(out, 'w') as f:
             json.dump(doc, f, indent=1)
-        print(f'\ndettaglio scritto in {out}')
+        print(f'\ndetail written to {out}')
 
 
 if __name__ == '__main__':

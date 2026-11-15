@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Scoperta delle funzioni di un PE32 senza simboli né rilocazioni (prototipo).
+"""Discovery of the functions of a PE32 without symbols or relocations (prototype).
 
-Uso (serve capstone: usare il Python del venv):
+Usage (capstone is needed: use the venv's Python):
     .venv/bin/python tools/functions.py <exe> [--strict] [--out private/functions.json]
 
-Metodo, in ordine di affidabilità delle partenze:
-  1. forti: entry point, export, callback TLS e ogni destinazione di `call` diretta nel
-     codice raggiunto da queste;
-  2. slot delle vtable trovate dall'RTTI;
-  3. indirizzi di codice usati come immediati (`push offset f`, `mov [x], offset f`);
-  4. parole nelle sezioni dati che puntano nel codice.
-Le partenze 2-4 sono "deboli": si accettano solo se la decodifica di prova non incontra
-byte non validi, istruzioni che un gioco non esegue mai, o il mezzo di un'istruzione già
-nota. Le 3 e 4 devono anche "sembrare un inizio" (allineate a 16 o dopo padding/ret).
+Method, in order of reliability of the starting points:
+  1. strong: entry point, exports, TLS callbacks and every direct `call` target in the
+     code reached from these;
+  2. slots of the vtables found by the RTTI;
+  3. code addresses used as immediates (`push offset f`, `mov [x], offset f`);
+  4. words in the data sections that point into the code.
+Starting points 2-4 are "weak": they are accepted only if the trial decoding does not run into
+invalid bytes, instructions a game never executes, or the middle of an instruction already
+known. 3 and 4 must also "look like a start" (aligned to 16 or after padding/ret).
 
-Il ricompilatore vero (Fase 1, Rust) rifarà questo lavoro: qui servono i numeri e l'elenco.
+The real recompiler (Phase 1, Rust) will redo this work: what is needed here are the numbers and the list.
 """
 import json
 import os
@@ -37,7 +37,7 @@ NEVER = {'in', 'out', 'insb', 'insd', 'insw', 'outsb', 'outsd', 'outsw', 'les', 
 HEX = re.compile(r'0x[0-9a-f]{6,7}\b')
 TABLE = re.compile(r'^dword ptr \[(?:\w+ \+ )?\w+\*4 \+ (0x[0-9a-f]+)\]$')
 CHUNK = 2048
-STRICT = False   # --strict: solo inizi allineati o dopo padding/ret
+STRICT = False   # --strict: only starts that are aligned or after padding/ret
 
 
 class Discovery:
@@ -47,13 +47,13 @@ class Discovery:
         self.lo, hi_v, self.raw, self.rs = img.secs['.text']
         self.hi = self.lo + self.rs
         self.text = pe.data[self.raw:self.raw + self.rs]
-        # 0 ignoto, 1 inizio di istruzione, 2 interno di istruzione, 3 dati (jump table)
+        # 0 unknown, 1 start of instruction, 2 inside an instruction, 3 data (jump table)
         self.own = bytearray(self.rs)
         self.md = Cs(CS_ARCH_X86, CS_MODE_32)
-        self.starts = {}            # indirizzo -> origine
-        self.call_targets = []      # da esplorare
-        self.imms = set()           # immediati che cadono in .text
-        self.table_slots = set()    # indirizzi delle voci di jump table (ovunque)
+        self.starts = {}            # address -> origin
+        self.call_targets = []      # to be explored
+        self.imms = set()           # immediates that fall in .text
+        self.table_slots = set()    # addresses of the jump table entries (anywhere)
         self.tables = 0
         self.n_insn = 0
         self.rejected = Counter()
@@ -62,7 +62,7 @@ class Discovery:
         return self.lo <= a < self.hi
 
     def read_table(self, t):
-        """Voci di una jump table a `t`: puntatori consecutivi in .text."""
+        """Entries of a jump table at `t`: consecutive pointers into .text."""
         out = []
         while len(out) < 1024:
             a = t + 4 * len(out)
@@ -75,9 +75,9 @@ class Discovery:
         return out
 
     def explore(self, start, tentative):
-        """Decodifica il codice raggiungibile da `start`. Ritorna None se va scartato."""
+        """Decodes the code reachable from `start`. Returns None if it must be discarded."""
         own, lo, text = self.own, self.lo, self.text
-        journal = []                # (offset, lunghezza) scritti in own, per annullare
+        journal = []                # (offset, length) written into own, to undo
         calls, imms, slots = [], [], []
         ntab = 0
         work = [start]
@@ -85,13 +85,13 @@ class Discovery:
         while work and not fail:
             a = work.pop()
             if not self.in_text(a):
-                fail = 'salto fuori da .text'
+                fail = 'jump outside .text'
                 break
             o = a - lo
             if own[o] == 1:
                 continue
             if own[o]:
-                fail = 'dentro un\'istruzione o una tabella'
+                fail = 'inside an instruction or a table'
                 break
             ended = False
             nxt = a
@@ -101,10 +101,10 @@ class Discovery:
                     ended = True
                     break
                 if own[p] or any(own[p + 1:p + size]):
-                    fail = 'sovrapposizione'
+                    fail = 'overlap'
                     break
                 if mn in NEVER or (mn == 'int3' and addr == start):
-                    fail = f'istruzione improbabile ({mn})'
+                    fail = f'unlikely instruction ({mn})'
                     break
                 own[p] = 1
                 for k in range(1, size):
@@ -131,20 +131,20 @@ class Discovery:
                                     q = t - lo
                                     n = 4 * len(entries)
                                     if any(own[q:q + n]):
-                                        fail = 'tabella sopra codice'
+                                        fail = 'table over code'
                                         break
                                     own[q:q + n] = b'\x03' * n
                                     journal.append((q, n))
                         ended = True
                         break
                     else:
-                        fail = f'salto strano ({mn} {ops})'
+                        fail = f'odd jump ({mn} {ops})'
                         break
                 elif mn == 'call':
                     if ops.startswith('0x'):
                         t = int(ops, 16)
                         if not self.in_text(t):
-                            fail = 'call fuori da .text'
+                            fail = 'call outside .text'
                             break
                         calls.append(t)
                 elif mn == 'ret' or mn == 'int3':
@@ -161,7 +161,7 @@ class Discovery:
                 break
             if not ended:
                 if nxt - a < CHUNK - 16:
-                    fail = 'byte non decodificabili'
+                    fail = 'undecodable bytes'
                 else:
                     work.append(nxt)
         if fail and tentative:
@@ -170,7 +170,7 @@ class Discovery:
             self.rejected[fail.split(' (')[0]] += 1
             return None
         if fail:
-            self.rejected['[forte] ' + fail.split(' (')[0]] += 1
+            self.rejected['[strong] ' + fail.split(' (')[0]] += 1
         self.n_insn += sum(1 for p, n in journal if own[p] == 1)
         self.tables += ntab
         self.table_slots.update(slots)
@@ -178,7 +178,7 @@ class Discovery:
         return calls
 
     def add(self, addr, origin, tentative):
-        """Prova ad aggiungere una funzione e, a catena, quelle che chiama."""
+        """Tries to add a function and, in a chain, the ones it calls."""
         if addr in self.starts:
             return True
         calls = self.explore(addr, tentative)
@@ -204,7 +204,7 @@ class Discovery:
         t = self.text
         if STRICT:
             return a % 16 == 0 or t[o - 1] in (0xCC, 0xC3, 0x90) or t[o - 3] == 0xC2
-        # allineata, oppure subito dopo padding, `ret`, `ret n`, `jmp rel32`, `jmp rel8`
+        # aligned, or right after padding, `ret`, `ret n`, `jmp rel32`, `jmp rel8`
         return (a % 16 == 0 or t[o - 1] in (0xCC, 0xC3, 0x90) or t[o - 3] == 0xC2
                 or t[o - 5] == 0xE9 or t[o - 2] == 0xEB)
 
@@ -213,13 +213,13 @@ class Discovery:
             return
         st = self.own[addr - self.lo]
         if st in (2, 3):
-            self.rejected['dentro un\'istruzione o una tabella'] += 1
+            self.rejected['inside an instruction or a table'] += 1
             return
         if need_look and not self.looks_like_start(addr):
-            self.rejected['non sembra un inizio'] += 1
+            self.rejected['does not look like a start'] += 1
             return
         if st == 1:
-            # codice già raggiunto (tail call, fall-through): è comunque un punto d'ingresso
+            # code already reached (tail call, fall-through): it is an entry point all the same
             self.starts[addr] = origin
             return
         self.add(addr, origin, tentative=True)
@@ -231,10 +231,10 @@ def run(path):
     pe, img = d.pe, d.img
 
     def log(msg):
-        print(f'[{time.time() - t0:6.1f}s] {msg}  funzioni={len(d.starts)} istruzioni={d.n_insn}',
+        print(f'[{time.time() - t0:6.1f}s] {msg}  functions={len(d.starts)} instructions={d.n_insn}',
               file=sys.stderr)
 
-    # 1. forti
+    # 1. strong
     d.add(pe.image_base + pe.entry, 'entry', False)
     exp_rva = pe.data_dirs[0][0]
     if exp_rva:
@@ -248,9 +248,9 @@ def run(path):
     if tls_rva:
         cb = struct.unpack_from('<I', pe.data, pe.rva_to_off(tls_rva) + 12)[0]
         while cb and (f := img.u32(cb)):
-            d.add(f, 'callback TLS', False)
+            d.add(f, 'TLS callback', False)
             cb += 4
-    log('partenze forti')
+    log('strong starting points')
 
     # 2. vtable
     r = rtti.analyze(path)
@@ -259,9 +259,9 @@ def run(path):
         for s in v['slots']:
             vt_slots.add(s)
             d.weak(s, 'vtable', need_look=False)
-    log('slot delle vtable')
+    log('vtable slots')
 
-    # 3-4. immediati e parole nei dati, fino a stabilità
+    # 3-4. immediates and words in the data, until stable
     data_words = []
     for sec in img.secs:
         if sec in ('.text', '.rsrc', '.idata'):
@@ -273,28 +273,28 @@ def run(path):
         before = len(d.starts)
         for v in sorted(d.imms - seen_imm):
             seen_imm.add(v)
-            d.weak(v, 'immediato', need_look=True)
+            d.weak(v, 'immediate', need_look=True)
         for a, v in data_words:
             if a not in d.table_slots:
-                d.weak(v, 'parola nei dati', need_look=True)
-        log(f'giro {rnd}: immediati e dati')
+                d.weak(v, 'data word', need_look=True)
+        log(f'round {rnd}: immediates and data')
         if len(d.starts) == before:
             break
 
     own = d.own
     stats = {
-        'funzioni': len(d.starts),
-        'istruzioni': d.n_insn,
-        'per origine': dict(Counter(o for o in d.starts.values()).most_common()),
-        'jump table': d.tables,
-        'byte .text': d.rs,
-        'byte di codice': sum(1 for b in own if b in (1, 2)),
-        'byte di jump table in .text': own.count(3),
-        'byte int3 non raggiunti': sum(1 for i, b in enumerate(own) if b == 0 and d.text[i] == 0xCC),
-        'byte ignoti (non int3)': sum(1 for i, b in enumerate(own) if b == 0 and d.text[i] != 0xCC),
-        'scarti': dict(d.rejected.most_common()),
-        'slot di vtable non accettati': len([s for s in vt_slots if s not in d.starts]),
-        'secondi': round(time.time() - t0, 1),
+        'functions': len(d.starts),
+        'instructions': d.n_insn,
+        'by origin': dict(Counter(o for o in d.starts.values()).most_common()),
+        'jump tables': d.tables,
+        '.text bytes': d.rs,
+        'code bytes': sum(1 for b in own if b in (1, 2)),
+        'jump table bytes in .text': own.count(3),
+        'unreached int3 bytes': sum(1 for i, b in enumerate(own) if b == 0 and d.text[i] == 0xCC),
+        'unknown bytes (not int3)': sum(1 for i, b in enumerate(own) if b == 0 and d.text[i] != 0xCC),
+        'rejected': dict(d.rejected.most_common()),
+        'vtable slots not accepted': len([s for s in vt_slots if s not in d.starts]),
+        'seconds': round(time.time() - t0, 1),
     }
     return d, stats
 
@@ -311,7 +311,7 @@ def main(argv):
         with open(out, 'w') as f:
             json.dump({'stats': stats,
                        'functions': [[a, o] for a, o in sorted(d.starts.items())]}, f)
-        print(f'elenco scritto in {out}', file=sys.stderr)
+        print(f'list written to {out}', file=sys.stderr)
 
 
 if __name__ == '__main__':

@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
-"""Lettura degli archivi .forge di Assassin's Creed (2007), contenitore versione 25.
+"""Reading the .forge archives of Assassin's Creed (2007), container version 25.
 
-Uso:
-    python3 -I tools/forge.py summary <cartella del gioco>      una riga per archivio
-    python3 -I tools/forge.py list <archivio.forge>             voci: id, dimensione, nome
-    python3 -I tools/forge.py digest <archivio.forge>           per voce: id, sezioni, byte, CRC-32
-    python3 -I tools/forge.py sections <archivio.forge> [N]     sezioni compresse delle prime N voci
-    python3 -I tools/forge.py head <archivio.forge> <nome|id>   decomprime la prima sezione (hexdump)
-    python3 -I tools/forge.py classes <archivio.forge> [rtti.json] [--objects]
-                                                                 classi degli oggetti contenuti
+Usage:
+    python3 -I tools/forge.py summary <game folder>             one line per archive
+    python3 -I tools/forge.py list <archive.forge>              entries: id, size, name
+    python3 -I tools/forge.py digest <archive.forge>            per entry: id, sections, bytes, CRC-32
+    python3 -I tools/forge.py sections <archive.forge> [N]      compressed sections of the first N entries
+    python3 -I tools/forge.py head <archive.forge> <name|id>    decompresses the first section (hexdump)
+    python3 -I tools/forge.py classes <archive.forge> [rtti.json] [--objects]
+                                                                 classes of the objects contained
 
-I nomi dei file e i dati estratti sono contenuti del gioco: gli output completi vanno in
-private/, mai nel repository.
+File names and extracted data are game content: complete outputs go in
+private/, never in the repository.
 
-Formato (verificato sugli archivi; i campi senza nome non sono ancora capiti):
-    Header        char[9] "scimitar\\0", u32 versione (25), u64 offset di HeaderFat, u32, u8
-    HeaderFat     u32 numero di file, u32, u64, u64 (-1), u32 max file per tabella,
-                  u32 numero di tabelle, u64 offset della prima tabella
-    Tabella       u32 voci, u32, u64 offset delle voci, u64 offset della tabella successiva
-                  (-1 = fine), u32, u32, u64 offset della tabella dei nomi, u64
-    Voce (16)     u64 offset del record, u32 id, u32 dimensione dei dati
-    Record        "FILEDATA", char[128] nome, ... per 0x1B8 byte in tutto; poi i dati
-    Dati          grezzi, oppure una o più sezioni compresse
-    Sezione       u64 marcatore 33 AA FB 57 99 FA 04 10, u16 versione, u8 codec
-                  (1 = LZO1X_999), u16, u16, u16 numero di blocchi,
-                  blocchi × (u16 decompressi, u16 su disco), poi per blocco u32 checksum + dati
-    Voce compressa   due sezioni: indice e dati
-    Indice        u16 numero di oggetti, poi per oggetto u32 id, u32 dimensione
-    Oggetto       u32 CRC-32 del nome della classe, u32 dimensione del corpo, u32 lunghezza
-                  del nome, nome, u32 id, u32 CRC-32 della classe (di nuovo), campi...
+Format (verified on the archives; the unnamed fields are not understood yet):
+    Header        char[9] "scimitar\\0", u32 version (25), u64 offset of HeaderFat, u32, u8
+    HeaderFat     u32 number of files, u32, u64, u64 (-1), u32 max files per table,
+                  u32 number of tables, u64 offset of the first table
+    Table         u32 entries, u32, u64 offset of the entries, u64 offset of the next table
+                  (-1 = end), u32, u32, u64 offset of the name table, u64
+    Entry (16)    u64 offset of the record, u32 id, u32 size of the data
+    Record        "FILEDATA", char[128] name, ... for 0x1B8 bytes in all; then the data
+    Data          raw, or one or more compressed sections
+    Section       u64 marker 33 AA FB 57 99 FA 04 10, u16 version, u8 codec
+                  (1 = LZO1X_999), u16, u16, u16 number of chunks,
+                  chunks × (u16 decompressed, u16 on disk), then per chunk u32 checksum + data
+    Compressed entry   two sections: index and data
+    Index         u16 number of objects, then per object u32 id, u32 size
+    Object        u32 CRC-32 of the class name, u32 size of the body, u32 length
+                  of the name, name, u32 id, u32 CRC-32 of the class (again), fields...
 """
 import os
 import struct
@@ -40,14 +40,14 @@ REC = 0x1B8
 
 
 def lzo1x_decompress(src, expect):
-    """Decompressore LZO1X (formato pubblico, come minilzo)."""
+    """LZO1X decompressor (public format, like minilzo)."""
     out = bytearray()
     ip = 0
 
     def copy(dist, n):
         p = len(out) - dist
         if p < 0:
-            raise ValueError('LZO: distanza fuori dal buffer')
+            raise ValueError('LZO: distance outside the buffer')
         for _ in range(n):
             out.append(out[p])
             p += 1
@@ -98,7 +98,7 @@ def lzo1x_decompress(src, expect):
                     t += 7 + src[ip]; ip += 1
                 d += (src[ip] >> 2) + (src[ip + 1] << 6); ip += 2
                 if d == 0:
-                    break                                  # fine del flusso
+                    break                                  # end of stream
                 copy(d + 0x4000, t + 2)
             else:
                 copy(1 + (t >> 2) + (src[ip] << 2), 2); ip += 1
@@ -111,7 +111,7 @@ def lzo1x_decompress(src, expect):
             t = src[ip]; ip += 1
             state = 'match'
     if len(out) != expect:
-        raise ValueError(f'LZO: {len(out)} byte invece di {expect}')
+        raise ValueError(f'LZO: {len(out)} bytes instead of {expect}')
     return bytes(out)
 
 
@@ -122,11 +122,11 @@ class Forge:
         self.size = os.path.getsize(path)
         h = self.read(0, 0x1A)
         if h[:9] != b'scimitar\0':
-            raise ValueError(f'{path}: non è un archivio forge')
+            raise ValueError(f'{path}: not a forge archive')
         self.version, fat = struct.unpack_from('<IQ', h, 9)
         hf = struct.unpack('<IIQQIIQ', self.read(fat, 0x28))
         self.file_count, self.tables = hf[0], hf[5]
-        self.entries = []                      # (offset record, id, dimensione)
+        self.entries = []                      # (record offset, id, size)
         desc = hf[6]
         while desc not in (0, 0xFFFFFFFFFFFFFFFF):
             n, _, eoff, nxt = struct.unpack('<IIQQ', self.read(desc, 0x18))
@@ -145,7 +145,7 @@ class Forge:
         return r[8:].split(b'\0')[0].decode('latin-1')
 
     def sections(self, rec, size):
-        """Sezioni compresse dei dati di una voce: [(codec, [(decompressi, su disco, offset)])]."""
+        """Compressed sections of an entry's data: [(codec, [(decompressed, on disk, offset)])]."""
         pos, end = rec + REC, rec + REC + size
         out = []
         while pos + 15 <= end and self.read(pos, 8) == MARK:
@@ -172,7 +172,7 @@ class Forge:
 
 def cmd_summary(folder):
     tot_n = tot_b = 0
-    print('| Archivio | Dimensione | Voci | Dati compressi | Esempi di nomi |')
+    print('| Archive | Size | Entries | Compressed data | Example names |')
     print('|---|---|---|---|---|')
     for fn in sorted(os.listdir(folder)):
         if not fn.endswith('.forge'):
@@ -185,7 +185,7 @@ def cmd_summary(folder):
         print(f'| `{fn}` | {fg.size / 2**20:.0f} MB | {len(fg.entries)} | {comp}/{sample} | {ex} |')
         tot_n += len(fg.entries)
         tot_b += fg.size
-    print(f'\nTotale: {tot_n} voci, {tot_b / 2**30:.2f} GB, versione del contenitore 25.')
+    print(f'\nTotal: {tot_n} entries, {tot_b / 2**30:.2f} GB, container version 25.')
 
 
 def cmd_list(path):
@@ -195,7 +195,7 @@ def cmd_list(path):
 
 
 def cmd_digest(path):
-    """Per voce: id, sezioni, byte decompressi, CRC-32. Termine di confronto di `altair-forge`."""
+    """Per entry: id, sections, decompressed bytes, CRC-32. What `altair-forge` is compared against."""
     import zlib
     fg = Forge(path)
     for rec, fid, size in fg.entries:
@@ -212,12 +212,12 @@ def cmd_sections(path, limit):
     codecs = Counter()
     for rec, fid, size in fg.entries[:limit]:
         secs = fg.sections(rec, size)
-        desc = '; '.join(f'codec {c}: {len(ch)} blocchi, {sum(x[0] for x in ch)} byte'
-                         for c, ch in secs) or 'non compresso'
+        desc = '; '.join(f'codec {c}: {len(ch)} chunks, {sum(x[0] for x in ch)} bytes'
+                         for c, ch in secs) or 'not compressed'
         for c, _ in secs:
             codecs[c] += 1
         print(f'{fid:#010x} {size:>10} {fg.name(rec)}: {desc}')
-    print('codec visti:', dict(codecs))
+    print('codecs seen:', dict(codecs))
 
 
 def cmd_head(path, key):
@@ -226,17 +226,17 @@ def cmd_head(path, key):
         if fg.name(rec) == key or f'{fid:#x}' == key.lower():
             secs = fg.sections(rec, size)
             data = fg.decompress(secs[0]) if secs else fg.read(rec + REC, min(size, 512))
-            print(f'{fg.name(rec)}: id {fid:#x}, {size} byte su disco, {len(secs)} sezioni; '
-                  f'prima sezione {len(data)} byte')
+            print(f'{fg.name(rec)}: id {fid:#x}, {size} bytes on disk, {len(secs)} sections; '
+                  f'first section {len(data)} bytes')
             for i in range(0, min(len(data), 256), 16):
                 row = data[i:i + 16]
                 print(f'{i:04x}  {row.hex(" ")}  {"".join(chr(b) if 32 <= b < 127 else "." for b in row)}')
             return
-    sys.exit('voce non trovata')
+    sys.exit('entry not found')
 
 
 def class_names(rtti_json):
-    """CRC-32 del nome breve -> nome completo, dai nomi RTTI dell'eseguibile."""
+    """CRC-32 of the short name -> full name, from the executable's RTTI names."""
     import json
     import zlib
     out = {}
@@ -248,7 +248,7 @@ def class_names(rtti_json):
 
 
 def objects(fg):
-    """(voce, id, classe CRC, dimensione, nome) per ogni oggetto di primo livello."""
+    """(entry, id, class CRC, size, name) for each top-level object."""
     for rec, fid, size in fg.entries:
         secs = fg.sections(rec, size)
         if len(secs) != 2:
@@ -279,8 +279,8 @@ def cmd_classes(path, rtti_json, show_objects):
             print(f'{entry}\t{oid:#010x}\t{cls}\t{sz}\t{name}')
     if not show_objects:
         known = sum(n for c, n in count.items() if not c.startswith('?'))
-        print(f'{sum(count.values())} oggetti, {len(count)} classi, '
-              f'{known} con classe riconosciuta dall\'RTTI')
+        print(f'{sum(count.values())} objects, {len(count)} classes, '
+              f'{known} with a class recognised from the RTTI')
         for cls, n in count.most_common():
             print(f'{n:7} {size[cls]:>11}  {cls}')
 

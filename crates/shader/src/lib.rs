@@ -1,19 +1,19 @@
-//! Traduzione degli shader Direct3D 9 (bytecode shader model 3.0) in WGSL.
+//! Translation of Direct3D 9 shaders (shader model 3.0 bytecode) into WGSL.
 //!
-//! Convenzioni del WGSL prodotto, che il renderer deve rispettare:
-//!  - costanti: `@group(0) @binding(0)` per il vertex shader, `@group(3) @binding(0)` per il
-//!    pixel shader (gruppi separati: ciascuno si riaggancia solo quando cambiano le sue),
-//!    entrambe `Consts { misc: vec4f, b: vec4u, i: array<vec4i, 16>, c: array<vec4f, 256> }`:
-//!    le costanti float stanno in fondo, così il renderer può caricarne solo il tratto che
-//!    lo shader usa (`Shader::float_consts`);
-//!    `b.x` ha un bit per registro booleano; `misc.xy` è la correzione di mezzo pixel, in unità
-//!    di clip, che il vertex shader somma alla posizione;
-//!  - texture: `@group(1) @binding(2n)` la texture del campionatore `sN`, `@binding(2n+1)` il
-//!    suo sampler; i campionatori del vertex shader stanno nel gruppo 2;
-//!  - attributi dei vertici e variabili tra i due stadi: una `@location` fissa per ogni
-//!    semantica (`attribute_location`, `varying_location`);
-//!  - ogni registro è un `vec4f`; le maschere di scrittura diventano assegnazioni per
-//!    componente, perché WGSL non permette `r0.xy = …`.
+//! Conventions of the WGSL produced, which the renderer must honour:
+//!  - constants: `@group(0) @binding(0)` for the vertex shader, `@group(3) @binding(0)` for the
+//!    pixel shader (separate groups: each one is rebound only when its own constants change),
+//!    both `Consts { misc: vec4f, b: vec4u, i: array<vec4i, 16>, c: array<vec4f, 256> }`:
+//!    the float constants come last, so the renderer can upload only the stretch of them that
+//!    the shader uses (`Shader::float_consts`);
+//!    `b.x` has one bit per boolean register; `misc.xy` is the half-pixel correction, in clip
+//!    units, that the vertex shader adds to the position;
+//!  - textures: `@group(1) @binding(2n)` the texture of sampler `sN`, `@binding(2n+1)` its
+//!    WGSL sampler; the vertex shader's samplers live in group 2;
+//!  - vertex attributes and variables between the two stages: a fixed `@location` for every
+//!    semantic (`attribute_location`, `varying_location`);
+//!  - every register is a `vec4f`; write masks become per-component assignments,
+//!    because WGSL does not allow `r0.xy = …`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -24,11 +24,11 @@ pub enum Stage {
     Pixel,
 }
 
-/// Semantiche di D3DDECLUSAGE.
+/// D3DDECLUSAGE semantics.
 pub const USAGE_NAMES: [&str; 14] =
     ["position", "blendweight", "blendindices", "normal", "psize", "texcoord", "tangent", "binormal", "tessfactor", "positiont", "color", "fog", "depth", "sample"];
 
-/// `@location` di un attributo di vertice, per (usage, indice). wgpu ne offre 16.
+/// `@location` of a vertex attribute, by (usage, index). wgpu offers 16 of them.
 pub fn attribute_location(usage: u32, index: u32) -> Option<u32> {
     Some(match (usage, index) {
         (0, 0) => 0,
@@ -43,7 +43,7 @@ pub fn attribute_location(usage: u32, index: u32) -> Option<u32> {
     })
 }
 
-/// `@location` di una variabile passata dal vertex al pixel shader, per (usage, indice).
+/// `@location` of a variable passed from the vertex to the pixel shader, by (usage, index).
 pub fn varying_location(usage: u32, index: u32) -> Option<u32> {
     Some(match (usage, index) {
         (5, i) if i < 10 => i,
@@ -62,7 +62,7 @@ enum Reg {
     Temp,
     Input,
     Const,
-    Addr, // a0 nel vertex shader
+    Addr, // a0 in the vertex shader
     RastOut,
     AttrOut,
     Output, // o# (vs_3_0)
@@ -102,7 +102,7 @@ struct Src {
     num: u32,
     swizzle: [u8; 4],
     modifier: u32,
-    /// Indirizzamento relativo: (registro, componente) dell'indice.
+    /// Relative addressing: (register, component) of the index.
     rel: Option<(Reg, u8)>,
 }
 
@@ -136,13 +136,13 @@ pub struct Shader {
     ins: Vec<Ins>,
     pub inputs: Vec<Decl>,
     pub outputs: Vec<Decl>,
-    /// numero del campionatore -> tipo (2 = 2D, 3 = cubo, 4 = volume)
+    /// sampler number -> type (2 = 2D, 3 = cube, 4 = volume)
     pub samplers: BTreeMap<u32, u32>,
     defs: BTreeMap<u32, [f32; 4]>,
     defi: BTreeMap<u32, [i32; 4]>,
     defb: BTreeMap<u32, bool>,
     pub opcodes: BTreeMap<u32, usize>,
-    /// Numero di registri costanti float che lo shader può leggere, da c0 (al più 256).
+    /// Number of float constant registers the shader can read, from c0 (at most 256).
     pub float_consts: u32,
 }
 
@@ -165,15 +165,15 @@ pub fn op_name(op: u32) -> String {
 
 pub fn parse(code: &[u8]) -> R<Shader> {
     let toks: Vec<u32> = code.chunks_exact(4).map(|b| u32::from_le_bytes(b.try_into().unwrap())).collect();
-    let v = *toks.first().ok_or("shader vuoto")?;
+    let v = *toks.first().ok_or("empty shader")?;
     let stage = match v >> 16 {
         0xfffe => Stage::Vertex,
         0xffff => Stage::Pixel,
-        _ => return Err(format!("intestazione sconosciuta {v:#x}")),
+        _ => return Err(format!("unknown header {v:#x}")),
     };
     let version = ((v >> 8) & 0xff, v & 0xff);
     if version.0 != 3 {
-        return Err(format!("shader model {}.{} non gestito", version.0, version.1));
+        return Err(format!("shader model {}.{} not handled", version.0, version.1));
     }
     let mut sh = Shader {
         stage,
@@ -200,7 +200,7 @@ pub fn parse(code: &[u8]) -> R<Shader> {
             continue;
         }
         let len = ((t >> 24) & 0xf) as usize;
-        let args = toks.get(p + 1..p + 1 + len).ok_or("istruzione troncata")?;
+        let args = toks.get(p + 1..p + 1 + len).ok_or("truncated instruction")?;
         p += 1 + len;
         *sh.opcodes.entry(op).or_default() += 1;
         match op {
@@ -215,7 +215,7 @@ pub fn parse(code: &[u8]) -> R<Shader> {
                     Reg::Input => sh.inputs.push(decl),
                     Reg::Output => sh.outputs.push(decl),
                     Reg::Misc => {}
-                    other => return Err(format!("dcl su registro {other:?}")),
+                    other => return Err(format!("dcl on register {other:?}")),
                 }
             }
             81 => {
@@ -229,15 +229,15 @@ pub fn parse(code: &[u8]) -> R<Shader> {
             }
             _ => {
                 if t & (1 << 28) != 0 {
-                    return Err(format!("{} con predicato", op_name(op)));
+                    return Err(format!("{} with predicate", op_name(op)));
                 }
                 let has_dst = !matches!(op, 0 | 25..=30 | 38..=45 | 65 | 96);
                 let mut i = 0;
                 let mut dst = None;
                 if has_dst {
-                    let d = *args.first().ok_or("manca la destinazione")?;
+                    let d = *args.first().ok_or("missing destination")?;
                     if d & (1 << 13) != 0 {
-                        return Err("destinazione con indirizzamento relativo".into());
+                        return Err("destination with relative addressing".into());
                     }
                     dst = Some(Dst { reg: reg_type(d), num: d & 0x7ff, mask: (d >> 16) & 0xf, saturate: (d >> 20) & 1 != 0 });
                     i = 1;
@@ -248,7 +248,7 @@ pub fn parse(code: &[u8]) -> R<Shader> {
                     i += 1;
                     let mut rel = None;
                     if s & (1 << 13) != 0 {
-                        let r = *args.get(i).ok_or("manca il registro di indirizzamento")?;
+                        let r = *args.get(i).ok_or("missing addressing register")?;
                         i += 1;
                         rel = Some((reg_type(r), ((r >> 16) & 3) as u8));
                     }
@@ -264,8 +264,8 @@ pub fn parse(code: &[u8]) -> R<Shader> {
             }
         }
     }
-    // Quanti registri float legge: con l'indirizzamento relativo, tutti. Le istruzioni a
-    // matrice leggono fino a tre registri oltre quello nominato.
+    // How many float registers it reads: with relative addressing, all of them. Matrix
+    // instructions read up to three registers beyond the one named.
     sh.float_consts = sh.ins.iter().flat_map(|i| &i.src).filter(|s| s.reg == Reg::Const).map(|s| if s.rel.is_some() { 256 } else { (s.num + 4).min(256) }).max().unwrap_or(0);
     Ok(sh)
 }
@@ -289,7 +289,7 @@ impl Emit<'_> {
         if self.sh.stage == Stage::Vertex { "vc" } else { "pc" }
     }
 
-    /// Nome WGSL di un registro, senza swizzle.
+    /// WGSL name of a register, without swizzle.
     fn reg(&mut self, reg: Reg, num: u32, rel: Option<(Reg, u8)>) -> R<String> {
         Ok(match reg {
             Reg::Temp => {
@@ -305,7 +305,7 @@ impl Emit<'_> {
                             format!("a0.{}", XYZW[comp as usize])
                         }
                         Reg::Loop => "aL".to_string(),
-                        other => return Err(format!("indirizzamento relativo con {other:?}")),
+                        other => return Err(format!("relative addressing with {other:?}")),
                     };
                     format!("{}.c[u32(clamp({idx} + {num}, 0, 255))]", self.u())
                 }
@@ -341,19 +341,19 @@ impl Emit<'_> {
                 }
             }
             Reg::Loop => "vec4f(f32(aL))".into(),
-            other => return Err(format!("registro {other:?}")),
+            other => return Err(format!("register {other:?}")),
         })
     }
 
-    /// Un operando sorgente come espressione `vec4f`, con swizzle e modificatore applicati.
+    /// A source operand as a `vec4f` expression, with swizzle and modifier applied.
     fn src(&mut self, s: &Src) -> R<String> {
         self.src_off(s, 0)
     }
 
-    /// Come `src`, ma sul registro `num + offset` (righe di una matrice).
+    /// Like `src`, but on register `num + offset` (rows of a matrix).
     fn src_off(&mut self, s: &Src, offset: u32) -> R<String> {
         if s.reg == Reg::Const && s.rel.is_none() && offset > 0 && self.sh.defs.contains_key(&(s.num + offset)) {
-            // riga definita con `def`: si usa la costante locale
+            // row defined with `def`: the local constant is used
         }
         let base = self.reg(s.reg, s.num + offset, s.rel)?;
         let sw: String = s.swizzle.iter().map(|&c| XYZW[c as usize]).collect();
@@ -363,7 +363,7 @@ impl Emit<'_> {
             1 => format!("(-{e})"),
             11 => format!("abs({e})"),
             12 => format!("(-abs({e}))"),
-            m => return Err(format!("modificatore di sorgente {m}")),
+            m => return Err(format!("source modifier {m}")),
         })
     }
 
@@ -371,7 +371,7 @@ impl Emit<'_> {
         let _ = writeln!(self.body, "{}{text}", "    ".repeat(self.indent));
     }
 
-    /// Scrive `value` (un `vec4f`) nella destinazione, rispettando maschera e saturazione.
+    /// Writes `value` (a `vec4f`) to the destination, honouring mask and saturation.
     fn store(&mut self, d: &Dst, value: &str) -> R<()> {
         if d.reg == Reg::Addr && self.sh.stage == Stage::Vertex {
             self.uses_a0 = true;
@@ -400,11 +400,11 @@ impl Emit<'_> {
     fn sample(&mut self, ins: &Ins) -> R<String> {
         let coord = self.src(&ins.src[0])?;
         let n = ins.src[1].num;
-        let kind = *self.sh.samplers.get(&n).ok_or(format!("campionatore s{n} non dichiarato"))?;
+        let kind = *self.sh.samplers.get(&n).ok_or(format!("sampler s{n} not declared"))?;
         let (uv, bias_w) = match kind {
             2 => ("xy", "w"),
             3 | 4 => ("xyz", "w"),
-            k => return Err(format!("tipo di campionatore {k}")),
+            k => return Err(format!("sampler type {k}")),
         };
         let (t, s) = (format!("t{n}"), format!("s{n}"));
         Ok(match (ins.op, self.sh.stage) {
@@ -427,12 +427,12 @@ impl Emit<'_> {
             4 => "<",
             5 => "!=",
             6 => "<=",
-            c => return Err(format!("confronto {c}")),
+            c => return Err(format!("comparison {c}")),
         })
     }
 
     fn ins(&mut self, ins: &Ins) -> R<()> {
-        let s = |e: &mut Self, i: usize| -> R<String> { e.src(ins.src.get(i).ok_or("operando mancante")?) };
+        let s = |e: &mut Self, i: usize| -> R<String> { e.src(ins.src.get(i).ok_or("missing operand")?) };
         let value = match ins.op {
             0 => return Ok(()),
             1 | 46 => s(self, 0)?,
@@ -453,7 +453,7 @@ impl Emit<'_> {
             18 => format!("mix({}, {}, {})", s(self, 2)?, s(self, 1)?, s(self, 0)?),
             19 => format!("fract({})", s(self, 0)?),
             20..=24 => {
-                // Prodotto vettore × matrice: una riga della matrice per componente.
+                // Vector × matrix product: one row of the matrix per component.
                 let (rows, three) = match ins.op {
                     20 => (4, false),
                     21 => (3, false),
@@ -490,14 +490,14 @@ impl Emit<'_> {
             91 => format!("dpdx({})", s(self, 0)?),
             92 => format!("dpdy({})", s(self, 0)?),
             66 | 93 | 95 => {
-                // Lo swizzle del campionatore si applica al risultato.
+                // The sampler's swizzle applies to the result.
                 let call = self.sample(ins)?;
                 let sw: String = ins.src[1].swizzle.iter().map(|&c| XYZW[c as usize]).collect();
                 if sw == "xyzw" { call } else { format!("{call}.{sw}") }
             }
             65 => {
-                // texkill: l'operando è nella posizione della destinazione.
-                let d = ins.src.first().ok_or("texkill senza operando")?;
+                // texkill: the operand is in the destination's position.
+                let d = ins.src.first().ok_or("texkill without operand")?;
                 let r = self.reg(d.reg, d.num, None)?;
                 self.line(&format!("if (any(({r}).xyz < vec3f(0.0))) {{ discard; }}"));
                 return Ok(());
@@ -505,7 +505,7 @@ impl Emit<'_> {
             40 => {
                 let b = &ins.src[0];
                 if b.reg != Reg::ConstBool {
-                    return Err("if su un registro non booleano".into());
+                    return Err("if on a non-boolean register".into());
                 }
                 let cond = match self.sh.defb.get(&b.num) {
                     Some(v) => v.to_string(),
@@ -547,9 +547,9 @@ impl Emit<'_> {
                 let k = self.loops;
                 self.line(&format!("aL = ({n}).y; for (var k{k} = 0; k{k} < ({n}).x; k{k}++) {{"));
                 self.indent += 1;
-                // L'incremento di aL va alla fine del corpo: lo si mette qui come `continuing`.
+                // The aL increment goes at the end of the body: it is placed here as `continuing`.
                 self.line(&format!("continuing {{ aL = aL + ({n}).z; }}"));
-                return Err("loop con aL (da verificare prima di abilitarlo)".into());
+                return Err("loop with aL (to be verified before enabling it)".into());
             }
             44 => {
                 self.line("break;");
@@ -562,7 +562,7 @@ impl Emit<'_> {
             }
             op => return Err(op_name(op)),
         };
-        let d = ins.dst.as_ref().ok_or("manca la destinazione")?;
+        let d = ins.dst.as_ref().ok_or("missing destination")?;
         self.store(d, &value)
     }
 }
@@ -579,19 +579,19 @@ fn float(v: f32) -> String {
 
 const CONSTS: &str = "struct Consts { misc: vec4f, b: vec4u, i: array<vec4i, 16>, c: array<vec4f, 256> }\n";
 
-/// Varianti di uno stesso shader, decise dallo stato del device al momento del draw.
+/// Variants of the same shader, decided by the device state at draw time.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
 pub struct Options {
-    /// Maschera di `@location` degli attributi `UBYTE4`: arrivano normalizzati, vanno × 255.
+    /// `@location` mask of the `UBYTE4` attributes: they arrive normalized and must be × 255.
     pub scale255: u32,
-    /// Maschera di `@location` degli attributi `SHORT2`/`SHORT4`: vanno × 32767.
+    /// `@location` mask of the `SHORT2`/`SHORT4` attributes: they must be × 32767.
     pub scale32767: u32,
-    /// Test alfa (D3DCMPFUNC, 0 = spento): confronta `oC0.a` con `pc.misc.z` e scarta il pixel.
+    /// Alpha test (D3DCMPFUNC, 0 = off): compares `oC0.a` with `pc.misc.z` and discards the pixel.
     pub alpha_func: u32,
 }
 
 impl Shader {
-    /// Indici dei render target su cui il pixel shader scrive.
+    /// Indices of the render targets the pixel shader writes to.
     pub fn color_outputs(&self) -> Vec<u32> {
         let set: BTreeSet<u32> = self.ins.iter().filter_map(|i| i.dst).filter(|d| d.reg == Reg::ColorOut).map(|d| d.num).collect();
         set.into_iter().collect()
@@ -601,7 +601,7 @@ impl Shader {
     }
 }
 
-/// Traduce uno shader in un modulo WGSL con un solo punto d'ingresso, `main`.
+/// Translates a shader into a WGSL module with a single entry point, `main`.
 pub fn translate(sh: &Shader) -> R<String> {
     translate_with(sh, &Options::default())
 }
@@ -609,10 +609,10 @@ pub fn translate(sh: &Shader) -> R<String> {
 pub fn translate_with(sh: &Shader, opt: &Options) -> R<String> {
     let mut e = Emit { sh, temps: BTreeSet::new(), out_regs: BTreeSet::new(), uses_a0: false, uses_vpos: false, uses_vface: false, body: String::new(), indent: 1, loops: 0 };
     for ins in &sh.ins {
-        e.ins(ins).map_err(|m| format!("{m} (istruzione {})", op_name(ins.op)))?;
+        e.ins(ins).map_err(|m| format!("{m} (instruction {})", op_name(ins.op)))?;
     }
     if e.indent != 1 {
-        return Err("blocchi di controllo non bilanciati".into());
+        return Err("unbalanced control blocks".into());
     }
     let vertex = sh.stage == Stage::Vertex;
     let mut w = String::new();
@@ -624,16 +624,16 @@ pub fn translate_with(sh: &Shader, opt: &Options) -> R<String> {
             2 => "texture_2d<f32>",
             3 => "texture_cube<f32>",
             4 => "texture_3d<f32>",
-            k => return Err(format!("tipo di campionatore {k}")),
+            k => return Err(format!("sampler type {k}")),
         };
         let _ = writeln!(w, "@group({group}) @binding({}) var t{n}: {ty};\n@group({group}) @binding({}) var s{n}: sampler;", 2 * n, 2 * n + 1);
     }
 
-    // Ingressi: un campo per dichiarazione; più dichiarazioni possono condividere un registro.
+    // Inputs: one field per declaration; several declarations can share a register.
     let loc = |d: &Decl, input: bool| -> R<u32> {
         let f = if vertex && input { attribute_location } else { varying_location };
         f(d.usage, d.index).ok_or(format!(
-            "semantica {}{} senza posizione assegnata",
+            "semantic {}{} with no assigned location",
             USAGE_NAMES.get(d.usage as usize).unwrap_or(&"?"),
             d.index
         ))
@@ -656,7 +656,7 @@ pub fn translate_with(sh: &Shader, opt: &Options) -> R<String> {
         w.push_str("    @builtin(position) position: vec4f,\n");
         for (k, d) in sh.outputs.iter().enumerate() {
             if d.usage == 0 && d.index == 0 || d.usage == 4 {
-                continue; // posizione e dimensione del punto
+                continue; // position and point size
             }
             let _ = writeln!(w, "    @location({}) o{k}: vec4f,", loc(d, false)?);
         }
@@ -676,7 +676,7 @@ pub fn translate_with(sh: &Shader, opt: &Options) -> R<String> {
     }
     w.push_str("}\n");
     if !vertex && sh.inputs.is_empty() && !e.uses_vpos && !e.uses_vface {
-        // Un pixel shader senza ingressi non può avere `vertex_index`: si toglie il segnaposto.
+        // A pixel shader without inputs cannot have `vertex_index`: the placeholder is removed.
         w = w.replace("    @builtin(vertex_index) unused: u32,\n", "    @builtin(position) unused: vec4f,\n");
     }
 
@@ -693,7 +693,7 @@ pub fn translate_with(sh: &Shader, opt: &Options) -> R<String> {
     if e.uses_a0 {
         w.push_str("    var a0 = vec4i(0);\n");
     }
-    // Registri di ingresso, ricostruiti dalle dichiarazioni.
+    // Input registers, rebuilt from the declarations.
     let input_regs: BTreeSet<u32> = sh.inputs.iter().map(|d| d.num).collect();
     for n in &input_regs {
         let _ = writeln!(w, "    var v{n} = vec4f(0.0, 0.0, 0.0, 1.0);");
@@ -736,7 +736,7 @@ pub fn translate_with(sh: &Shader, opt: &Options) -> R<String> {
     w.push_str(&e.body);
     w.push_str("    var output: Out;\n");
     if vertex {
-        let pos = sh.outputs.iter().find(|d| d.usage == 0 && d.index == 0).ok_or("il vertex shader non dichiara la posizione")?;
+        let pos = sh.outputs.iter().find(|d| d.usage == 0 && d.index == 0).ok_or("the vertex shader does not declare the position")?;
         let _ = writeln!(w, "    output.position = o{};", pos.num);
         w.push_str("    output.position = vec4f(output.position.xy + vc.misc.xy * output.position.w, output.position.zw);\n");
         for (k, d) in sh.outputs.iter().enumerate() {
@@ -773,11 +773,11 @@ pub fn translate_with(sh: &Shader, opt: &Options) -> R<String> {
     Ok(w)
 }
 
-/// Controlla il WGSL con naga, lo stesso validatore che usa wgpu.
+/// Checks the WGSL with naga, the same validator wgpu uses.
 pub fn validate(wgsl: &str) -> R<()> {
-    let module = naga::front::wgsl::parse_str(wgsl).map_err(|e| format!("analisi WGSL: {}", e.emit_to_string(wgsl)))?;
+    let module = naga::front::wgsl::parse_str(wgsl).map_err(|e| format!("WGSL parsing: {}", e.emit_to_string(wgsl)))?;
     naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
         .validate(&module)
-        .map_err(|e| format!("validazione WGSL: {}", e.emit_to_string(wgsl)))?;
+        .map_err(|e| format!("WGSL validation: {}", e.emit_to_string(wgsl)))?;
     Ok(())
 }

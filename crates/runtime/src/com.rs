@@ -1,8 +1,8 @@
-//! Oggetti COM: una vtable in memoria guest i cui slot sono trampolini verso funzioni host.
+//! COM objects: a vtable in guest memory whose slots are trampolines to host functions.
 //!
-//! Un oggetto è `[puntatore alla vtable][conteggio dei riferimenti][dati…]`. Ogni interfaccia
-//! dichiara tutti i suoi metodi, nell'ordine della vtable, con il numero di argomenti (`this`
-//! compreso): quelli senza implementazione fermano il gioco dicendo quale metodo serve.
+//! An object is `[vtable pointer][reference count][data…]`. Every interface
+//! declares all its methods, in vtable order, with the number of arguments (`this`
+//! included): those without an implementation stop the game, saying which method is needed.
 
 use crate::win32::{register_host_fn, Call, Runtime, Shim};
 
@@ -10,7 +10,7 @@ pub type Method = (&'static str, u32, Option<Shim>);
 
 pub const E_NOINTERFACE: u32 = 0x8000_4002;
 
-/// Crea un oggetto dell'interfaccia `iface` con `extra` byte di dati dopo l'intestazione.
+/// Creates an object of interface `iface` with `extra` bytes of data after the header.
 pub fn create(rt: &mut Runtime, iface: &'static str, methods: &[Method], extra: u32) -> u32 {
     let vtable = match rt.com_vtables.get(iface) {
         Some(&v) => v,
@@ -48,16 +48,16 @@ pub fn add_ref(rt: &mut Runtime, c: &mut Call) -> u32 {
     n
 }
 
-/// Gli oggetti non vengono mai liberati: il conteggio serve solo a rispondere al chiamante.
+/// Objects are never freed: the count only serves to answer the caller.
 pub fn release(rt: &mut Runtime, c: &mut Call) -> u32 {
     let n = rt.mem.r32(c.arg(0) + 4).saturating_sub(1);
     rt.mem.w32(c.arg(0) + 4, n);
     n
 }
 
-/// `QueryInterface` di un oggetto che non offre altre interfacce.
+/// `QueryInterface` of an object that offers no other interfaces.
 pub fn no_interface(rt: &mut Runtime, c: &mut Call) -> u32 {
-    eprintln!("[com] QueryInterface {} non offerta (da {:#010x})", guid(rt, c.arg(1)), c.ret_addr());
+    eprintln!("[com] QueryInterface {} not offered (from {:#010x})", guid(rt, c.arg(1)), c.ret_addr());
     rt.mem.w32(c.arg(2), 0);
     E_NOINTERFACE
 }

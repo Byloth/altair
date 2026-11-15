@@ -1,9 +1,9 @@
-//! Lettore di bit: in Bink i bit si leggono dal meno significativo di ogni byte, e un valore
-//! di più bit ha come bit basso il primo letto.
+//! Bit reader: in Bink, bits are read starting from the least significant of each byte, and a
+//! multi-bit value has the first bit read as its low bit.
 
 pub struct Bits<'a> {
     data: &'a [u8],
-    /// Posizione in bit dall'inizio.
+    /// Position in bits from the start.
     pos: usize,
 }
 
@@ -16,17 +16,17 @@ impl<'a> Bits<'a> {
         self.pos
     }
 
-    /// Bit ancora da leggere (negativo se si è letto oltre la fine: i bit mancanti valgono zero).
+    /// Bits still to be read (negative if we have read past the end: the missing bits are zero).
     pub fn left(&self) -> isize {
         (self.data.len() * 8) as isize - self.pos as isize
     }
 
-    /// I prossimi `n` bit (fino a 32) senza consumarli.
+    /// The next `n` bits (up to 32) without consuming them.
     #[inline]
     pub fn peek(&self, n: u32) -> u32 {
         let byte = self.pos >> 3;
         let mut window = 0u64;
-        // Otto byte bastano per 32 bit più lo scarto dentro il primo byte.
+        // Eight bytes are enough for 32 bits plus the offset inside the first byte.
         if byte + 8 <= self.data.len() {
             window = u64::from_le_bytes(self.data[byte..byte + 8].try_into().unwrap());
         } else {
@@ -54,7 +54,7 @@ impl<'a> Bits<'a> {
         self.get(1) != 0
     }
 
-    /// Avanza fino al prossimo multiplo di 32 bit.
+    /// Advances to the next multiple of 32 bits.
     pub fn align32(&mut self) {
         self.pos = (self.pos + 31) & !31;
     }
@@ -73,7 +73,7 @@ mod tests {
         assert_eq!(b.get(4), 0b1111);
         assert_eq!(b.get(16), 0x8000);
         assert_eq!(b.left(), 0);
-        assert_eq!(b.get(5), 0); // oltre la fine: zeri
+        assert_eq!(b.get(5), 0); // past the end: zeros
     }
 
     #[test]

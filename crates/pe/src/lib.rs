@@ -1,12 +1,12 @@
-//! Lettura di eseguibili PE32 senza rilocazioni: sezioni, import, export, TLS.
+//! Reading of PE32 executables without relocations: sections, imports, exports, TLS.
 //!
-//! Tutti gli indirizzi esposti sono assoluti (image base già sommata).
+//! All exposed addresses are absolute (image base already added).
 
 use sha1::{Digest, Sha1};
 use std::fmt;
 use std::path::Path;
 
-/// SHA-1 dell'unico eseguibile supportato: `AssassinsCreed_Dx9.exe`, build Steam e GOG.
+/// SHA-1 of the only supported executable: `AssassinsCreed_Dx9.exe`, Steam and GOG builds.
 pub const AC1_DX9_STEAM_SHA1: &str = "a9ea476e70f076709cca59a802e26ec894432120";
 
 #[derive(Debug)]
@@ -36,7 +36,7 @@ pub struct Section {
 }
 
 impl Section {
-    /// Fine della parte presente nel file.
+    /// End of the part present in the file.
     pub fn file_end(&self) -> u32 {
         self.va + self.rsize
     }
@@ -53,10 +53,10 @@ impl Section {
 #[derive(Debug, Clone)]
 pub struct Import {
     pub dll: String,
-    /// Nome della funzione, oppure `#N` per gli import solo per ordinale.
+    /// Name of the function, or `#N` for ordinal-only imports.
     pub name: String,
     pub ordinal: Option<u16>,
-    /// Indirizzo della cella della IAT.
+    /// Address of the IAT cell.
     pub iat: u32,
 }
 
@@ -75,21 +75,21 @@ pub struct Image {
     pub imports: Vec<Import>,
     pub exports: Vec<Export>,
     pub tls_callbacks: Vec<u32>,
-    /// (inizio e fine del modello, indirizzo dell'indice, byte a zero in coda)
+    /// (start and end of the template, address of the index, trailing zero bytes)
     tls: Option<(u32, u32, u32, u32)>,
 }
 
 fn rd16(d: &[u8], o: usize) -> Result<u16> {
     match d.get(o..o + 2) {
         Some(b) => Ok(u16::from_le_bytes([b[0], b[1]])),
-        None => err(format!("lettura oltre la fine del file a {o:#x}")),
+        None => err(format!("read past the end of the file at {o:#x}")),
     }
 }
 
 fn rd32(d: &[u8], o: usize) -> Result<u32> {
     match d.get(o..o + 4) {
         Some(b) => Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]])),
-        None => err(format!("lettura oltre la fine del file a {o:#x}")),
+        None => err(format!("read past the end of the file at {o:#x}")),
     }
 }
 
@@ -104,14 +104,14 @@ impl Image {
         let d = &data[..];
         let pe = rd32(d, 0x3c)? as usize;
         if d.get(pe..pe + 4) != Some(b"PE\0\0") {
-            return err("non è un PE");
+            return err("not a PE");
         }
         let nsec = rd16(d, pe + 6)? as usize;
         let timestamp = rd32(d, pe + 8)?;
         let opt_size = rd16(d, pe + 20)? as usize;
         let opt = pe + 24;
         if rd16(d, opt)? != 0x10b {
-            return err("solo PE32 è supportato");
+            return err("only PE32 is supported");
         }
         let entry_rva = rd32(d, opt + 16)?;
         let base = rd32(d, opt + 28)?;
@@ -119,13 +119,13 @@ impl Image {
             Ok((rd32(d, opt + 96 + 8 * i)?, rd32(d, opt + 100 + 8 * i)?))
         };
         if dir(5)? != (0, 0) {
-            return err("l'immagine ha rilocazioni: caso non previsto");
+            return err("the image has relocations: unexpected case");
         }
 
         let mut sections = Vec::with_capacity(nsec);
         for i in 0..nsec {
             let s = opt + opt_size + 40 * i;
-            let raw_name = d.get(s..s + 8).ok_or_else(|| Error("tabella delle sezioni troncata".into()))?;
+            let raw_name = d.get(s..s + 8).ok_or_else(|| Error("section table truncated".into()))?;
             let name = String::from_utf8_lossy(raw_name).trim_end_matches('\0').to_string();
             sections.push(Section {
                 name,
@@ -174,7 +174,7 @@ impl Image {
     }
 
     fn parse_imports(&self, mut desc: u32) -> Result<Vec<Import>> {
-        let need = |a: u32| self.u32(a).ok_or_else(|| Error(format!("tabella degli import: {a:#x} non leggibile")));
+        let need = |a: u32| self.u32(a).ok_or_else(|| Error(format!("import table: {a:#x} not readable")));
         let mut out = Vec::new();
         loop {
             let oft = need(desc)?;
@@ -205,7 +205,7 @@ impl Image {
     }
 
     fn parse_exports(&self, dir: u32) -> Result<Vec<Export>> {
-        let need = |a: u32| self.u32(a).ok_or_else(|| Error(format!("tabella degli export: {a:#x} non leggibile")));
+        let need = |a: u32| self.u32(a).ok_or_else(|| Error(format!("export table: {a:#x} not readable")));
         let nfunc = need(dir + 20)?;
         let nnames = need(dir + 24)?;
         let funcs = self.base + need(dir + 28)?;
@@ -232,7 +232,7 @@ impl Image {
         Ok(out)
     }
 
-    /// La directory TLS: (inizio e fine del modello, indirizzo dell'indice, byte a zero in coda).
+    /// The TLS directory: (start and end of the template, address of the index, trailing zero bytes).
     pub fn tls_directory(&self) -> Option<(u32, u32, u32, u32)> {
         self.tls
     }
@@ -249,7 +249,7 @@ impl Image {
         self.sections.iter().find(|s| s.contains(addr))
     }
 
-    /// Offset nel file dell'indirizzo, se cade nella parte di sezione presente su disco.
+    /// File offset of the address, if it falls in the part of the section present on disk.
     pub fn off(&self, addr: u32) -> Option<usize> {
         self.sections
             .iter()
@@ -262,7 +262,7 @@ impl Image {
         self.data.get(o..o + len)
     }
 
-    /// I byte su disco di una sezione.
+    /// The on-disk bytes of a section.
     pub fn section_bytes(&self, s: &Section) -> &[u8] {
         let end = ((s.raw + s.rsize) as usize).min(self.data.len());
         &self.data[s.raw as usize..end]
@@ -282,12 +282,12 @@ impl Image {
         Some(String::from_utf8_lossy(&self.data[o..o + end]).into_owned())
     }
 
-    /// Sezioni che possono contenere puntatori a codice: tutte tranne codice, risorse e import.
+    /// Sections that may contain code pointers: all except code, resources and imports.
     pub fn data_sections(&self) -> impl Iterator<Item = &Section> {
         self.sections.iter().filter(|s| !matches!(s.name.as_str(), ".text" | ".rsrc" | ".idata"))
     }
 
-    /// Le parole a 32 bit allineate di una sezione, con il loro indirizzo.
+    /// The aligned 32-bit words of a section, with their address.
     pub fn words<'a>(&'a self, s: &'a Section) -> impl Iterator<Item = (u32, u32)> + 'a {
         self.section_bytes(s)
             .chunks_exact(4)

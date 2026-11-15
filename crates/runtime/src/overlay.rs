@@ -1,12 +1,12 @@
-//! Il pannello di diagnostica (F8): fotogrammi al secondo, tempo per fotogramma, draw.
+//! The diagnostics panel (F8): frames per second, time per frame, draws.
 //!
-//! È disegnato dal renderer sopra l'immagine finita, non nel titolo della finestra, e vuole
-//! sembrare un pezzo dell'Animus: tutto il gioco è il ricordo riprodotto da una macchina, e una
-//! macchina può avere un suo pannello di servizio. Niente asset del gioco: forme, caratteri e
-//! l'elica animata sono descritti qui sotto in codice, e i colori sono quelli chiari e freddi
-//! dell'interfaccia dell'Animus, con il rosso della desincronizzazione quando il ritmo crolla.
+//! It is drawn by the renderer on top of the finished image, not in the window title, and it
+//! wants to look like a piece of the Animus: the whole game is a memory replayed by a machine,
+//! and a machine can have its own service panel. No game assets: shapes, glyphs and the
+//! animated helix are described below in code, and the colours are the light, cold ones of
+//! the Animus interface, with the red of desynchronization when the pace collapses.
 //!
-//! Tutto è fatto di triangoli colorati (nessuna texture), in pixel della finestra.
+//! Everything is made of coloured triangles (no textures), in window pixels.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -14,30 +14,30 @@ use std::time::Instant;
 
 static ON: AtomicBool = AtomicBool::new(false);
 
-/// Il grafico è uno storico: una barretta per intervallo di tempo, non per fotogramma, o
-/// scorrerebbe via prima di poterla guardare. 56 barrette da un quarto di secondo: 14 secondi.
+/// The graph is a history: one bar per time interval, not per frame, or it would
+/// scroll away before one could look at it. 56 bars of a quarter of a second: 14 seconds.
 const HISTORY: usize = 56;
 const BUCKET: f32 = 0.25;
-/// Soglie fisse del rosso: una barretta, una volta disegnata, non cambia più colore.
+/// Fixed thresholds for red: a bar, once drawn, no longer changes colour.
 const SLOW_FPS: f32 = 30.0;
 const STUTTER_MS: f32 = 50.0;
 
-/// Un intervallo dello storico.
+/// One interval of the history.
 #[derive(Clone, Copy, Default)]
 struct Bucket {
-    /// Fotogrammi al secondo medi dell'intervallo; 0 = ancora vuoto.
+    /// Average frames per second of the interval; 0 = still empty.
     fps: f32,
-    /// Il fotogramma più lungo dell'intervallo, in millisecondi.
+    /// The longest frame of the interval, in milliseconds.
     worst: f32,
 }
 
 struct Stats {
     last: Option<Instant>,
-    /// Lo storico, dal più vecchio al più recente.
+    /// The history, from oldest to most recent.
     history: [Bucket; HISTORY],
-    /// L'intervallo in corso: inizio, fotogrammi, fotogramma più lungo.
+    /// The interval in progress: start, frames, longest frame.
     bucket: (Instant, u32, f32),
-    /// Valori mostrati, aggiornati due volte al secondo perché restino leggibili.
+    /// Displayed values, updated twice a second so that they stay readable.
     fps: f32,
     ms: f32,
     draws: u64,
@@ -51,7 +51,7 @@ pub fn enabled() -> bool {
     ON.load(Ordering::Relaxed)
 }
 
-/// F8, il comando `fps` del canale di comando, o `ALTAIR_FPS=1` all'avvio.
+/// F8, the `fps` command of the control channel, or `ALTAIR_FPS=1` at startup.
 pub fn toggle() -> bool {
     !ON.fetch_xor(true, Ordering::Relaxed)
 }
@@ -62,7 +62,7 @@ pub fn init() {
     }
 }
 
-/// Un fotogramma è finito: lo chiama `Present`, con i draw che conteneva.
+/// A frame has finished: `Present` calls it, with the draws it contained.
 pub fn frame(draws: u64) {
     let now = Instant::now();
     let mut guard = STATS.lock().unwrap_or_else(|e| e.into_inner());
@@ -74,7 +74,7 @@ pub fn frame(draws: u64) {
     let span = (now - s.bucket.0).as_secs_f32();
     if span >= BUCKET {
         s.history.rotate_left(1);
-        // Dopo una pausa lunga (un caricamento) resta una sola barretta, bassa e rossa.
+        // After a long pause (a loading screen) a single bar remains, low and red.
         s.history[HISTORY - 1] = Bucket { fps: (s.bucket.1 as f32 / span).max(0.5), worst: s.bucket.2 };
         s.bucket = (now, 0, 0.0);
     }
@@ -94,12 +94,12 @@ pub fn frame(draws: u64) {
 #[derive(Clone, Copy)]
 pub struct Vertex {
     pub pos: [f32; 2],
-    /// Nell'atlante dei caratteri; negativo per le forme piene.
+    /// In the glyph atlas; negative for solid shapes.
     pub uv: [f32; 2],
     pub color: [f32; 4],
 }
 
-/// Caratteri 5×7, una riga per stringa, dall'alto. Solo quelli che servono.
+/// 5×7 glyphs, one row per string, from the top. Only the ones that are needed.
 fn glyph(ch: char) -> [u8; 7] {
     match ch {
         '0' => [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110],
@@ -135,11 +135,11 @@ fn glyph(ch: char) -> [u8; 7] {
     }
 }
 
-/// Raccoglie i triangoli, in pixel con l'origine in alto a sinistra.
+/// Collects the triangles, in pixels with the origin at the top left.
 struct Draw {
     v: Vec<Vertex>,
     srgb: bool,
-    /// I caratteri dell'Animus letti dai dati del gioco; senza, quelli 5×7 qui sopra.
+    /// The Animus fonts read from the game's data; without them, the 5×7 ones above.
     fonts: Option<&'static crate::animus_font::Fonts>,
 }
 
@@ -147,7 +147,7 @@ type Color = [f32; 4];
 
 impl Draw {
     fn color(&self, c: Color) -> Color {
-        // Su una superficie sRGB i colori dei vertici sono letti come lineari.
+        // On an sRGB surface the vertex colours are read as linear.
         if self.srgb {
             [c[0].powf(2.2), c[1].powf(2.2), c[2].powf(2.2), c[3]]
         } else {
@@ -169,21 +169,21 @@ impl Draw {
         self.quad([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], c);
     }
 
-    /// Rombo centrato: il "pixel" dell'elica.
+    /// Centred diamond: the "pixel" of the helix.
     fn diamond(&mut self, cx: f32, cy: f32, r: f32, c: Color) {
         self.quad([[cx, cy - r], [cx + r, cy], [cx, cy + r], [cx - r, cy]], c);
     }
 
-    /// Il carattere dell'Animus adatto a un'altezza delle maiuscole: quello dei titoli per i
-    /// numeri grandi, quello del testo per il resto. Ritorna anche il fattore di scala.
+    /// The Animus font suited to a given capital height: the title one for the
+    /// large numbers, the text one for the rest. Also returns the scale factor.
     fn face(&self, cap: f32) -> Option<(&'static crate::animus_font::Face, f32)> {
         let fonts = self.fonts?;
         let face = if cap >= fonts.text.cap * 1.3 { &fonts.title } else { &fonts.text };
         Some((face, cap / face.cap))
     }
 
-    /// Testo con le maiuscole alte `cap` pixel e il bordo alto in `y`; ritorna la x dopo
-    /// l'ultimo carattere. `track` è spazio in più tra i caratteri, in pixel.
+    /// Text with capitals `cap` pixels tall and the top edge at `y`; returns the x after
+    /// the last character. `track` is extra space between characters, in pixels.
     fn text(&mut self, mut x: f32, y: f32, cap: f32, track: f32, s: &str, c: Color) -> f32 {
         if let Some((face, k)) = self.face(cap) {
             let color = self.color(c);
@@ -201,7 +201,7 @@ impl Draw {
             }
             return x - track;
         }
-        // Ripiego: caratteri 5×7, un rettangolo per ogni fila di punti accesi.
+        // Fallback: 5×7 glyphs, one rectangle for each run of lit dots.
         let k = cap / 7.0;
         for ch in s.chars() {
             for (row, bits) in glyph(ch.to_ascii_uppercase()).iter().enumerate() {
@@ -232,29 +232,29 @@ impl Draw {
     }
 }
 
-/// I triangoli del pannello per una finestra di `w`×`h` pixel, già in coordinate di clip.
+/// The panel's triangles for a window of `w`×`h` pixels, already in clip coordinates.
 pub fn build(w: u32, h: u32, srgb: bool, fonts: Option<&'static crate::animus_font::Fonts>) -> Vec<Vertex> {
     let guard = STATS.lock().unwrap_or_else(|e| e.into_inner());
     let Some(s) = guard.as_ref() else { return Vec::new() };
     let mut d = Draw { v: Vec::with_capacity(4096), srgb, fonts };
-    // Unità: un pixel a 720 righe, mai meno di uno, arrotondata al mezzo pixel perché i
-    // caratteri restino netti.
+    // Unit: one pixel at 720 lines, never less than one, rounded to half a pixel so that the
+    // glyphs stay sharp.
     let u = ((h as f32 / 720.0) * 2.0).round().max(2.0) / 2.0;
     let (pw, ph) = (268.0 * u, 78.0 * u);
     let (px, py) = (w as f32 - pw - 22.0 * u, 20.0 * u);
 
-    // Colori dell'Animus: bianco freddo, azzurro, e il rosso della desincronizzazione.
+    // Animus colours: cold white, light blue, and the red of desynchronization.
     let slow = s.fps > 0.0 && s.fps < 30.0;
     let ink: Color = if slow { [1.0, 0.56, 0.50, 0.96] } else { [0.93, 0.97, 1.0, 0.96] };
     let dim: Color = [0.62, 0.78, 0.92, 0.80];
     let accent: Color = if slow { [0.95, 0.30, 0.26, 0.95] } else { [0.35, 0.80, 1.0, 0.95] };
     let glass: Color = [0.03, 0.06, 0.10, 0.62];
 
-    // Il vetro: un rettangolo con l'angolo in basso a sinistra tagliato.
+    // The glass: a rectangle with the bottom-left corner cut off.
     let cut = 14.0 * u;
     d.quad([[px, py], [px + pw, py], [px + pw, py + ph], [px + cut, py + ph]], glass);
     d.tri([[px, py], [px + cut, py + ph], [px, py + ph - cut]], glass);
-    // Bordi sottili: sopra pieno, a destra corto, il taglio in azzurro.
+    // Thin borders: full on top, short on the right, the cut in light blue.
     let t = u.max(1.0);
     d.rect(px, py, pw, t, dim);
     d.rect(px, py, 46.0 * u, 2.0 * t, accent);
@@ -262,7 +262,7 @@ pub fn build(w: u32, h: u32, srgb: bool, fonts: Option<&'static crate::animus_fo
     d.rect(px + cut, py + ph - t, pw - cut - 40.0 * u, t, [dim[0], dim[1], dim[2], 0.35]);
     d.quad([[px, py + ph - cut], [px + t * 1.5, py + ph - cut], [px + cut + t * 1.5, py + ph], [px + cut, py + ph]], accent);
 
-    // L'elica: due filamenti di rombi che ruotano piano, con i pioli tra l'uno e l'altro.
+    // The helix: two strands of diamonds rotating slowly, with the rungs between them.
     let phase = s.started.elapsed().as_secs_f32() * 1.6;
     let (hx, hy, hh, hr) = (px + 24.0 * u, py + 12.0 * u, 54.0 * u, 9.0 * u);
     const RUNGS: usize = 9;
@@ -271,7 +271,7 @@ pub fn build(w: u32, h: u32, srgb: bool, fonts: Option<&'static crate::animus_fo
         let a = phase + f * 4.4;
         let y = hy + f * hh;
         let (xa, xb) = (hx + a.sin() * hr, hx - a.sin() * hr);
-        let depth = a.cos(); // > 0: il primo filamento è davanti
+        let depth = a.cos(); // > 0: the first strand is in front
         if i % 2 == 0 {
             d.rect(xa.min(xb), y - t * 0.5, (xa - xb).abs(), t, [dim[0], dim[1], dim[2], 0.30]);
         }
@@ -281,15 +281,15 @@ pub fn build(w: u32, h: u32, srgb: bool, fonts: Option<&'static crate::animus_fo
         d.diamond(near, y, (2.2 + 1.0 * k) * u, if i % 3 == 0 { accent } else { ink });
     }
 
-    // Intestazione. Con i caratteri veri le scritte sono un po' più grandi di quelle a punti,
-    // e spaziate come nell'interfaccia dell'Animus.
+    // Header. With the real fonts the labels are a little larger than the dot-matrix ones,
+    // and spaced as in the Animus interface.
     let real = d.fonts.is_some();
     let (label, track) = if real { (8.0 * u, 1.2 * u) } else { (7.0 * u, 0.0) };
     let tx = px + 46.0 * u;
     let end = d.text(tx, py + 8.0 * u, label, track, "ANIMUS", dim);
-    d.text(end + 6.0 * u, py + 8.0 * u, label, track, "/ SINCRONIA", [dim[0], dim[1], dim[2], 0.5]);
+    d.text(end + 6.0 * u, py + 8.0 * u, label, track, "/ SYNC", [dim[0], dim[1], dim[2], 0.5]);
 
-    // Il numero grande, allineato a destra su quattro cifre, e la sua unità.
+    // The large number, right-aligned over four digits, and its unit.
     let fps = format!("{:.0}", s.fps.min(9999.0));
     let big = 28.0 * u;
     let slot = d.text_width(big, 0.0, "0000");
@@ -297,10 +297,10 @@ pub fn build(w: u32, h: u32, srgb: bool, fonts: Option<&'static crate::animus_fo
     let end = d.text(nx, py + 22.0 * u, big, 0.0, &fps, ink);
     d.text(end + 6.0 * u, py + 22.0 * u + big - label, label, track, "FPS", accent);
 
-    // Colonna di destra: millisecondi e draw.
+    // Right column: milliseconds and draws.
     let cx = px + 180.0 * u;
     let small = if real { 11.0 * u } else { 10.5 * u };
-    // I valori sono allineati a destra, contro il bordo del pannello.
+    // The values are right-aligned, against the edge of the panel.
     let right = px + pw - 13.0 * u;
     for (row, name, value) in [(0.0, "MS", format!("{:.1}", s.ms.min(999.9))), (16.0, "DRAW", format!("{}", s.draws.min(99999)))] {
         d.text(cx, py + (24.0 + row) * u, label, track, name, dim);
@@ -308,11 +308,11 @@ pub fn build(w: u32, h: u32, srgb: bool, fonts: Option<&'static crate::animus_fo
         d.text(x, py + (22.0 + row) * u, small, 0.0, &value, ink);
     }
 
-    // Lo storico: una barretta ogni quarto di secondo, alta quanto i fotogrammi al secondo di
-    // quell'intervallo; le più vecchie a sinistra, più tenui. La scala è un gradino fisso
-    // (30, 60, 120…) scelto sul massimo visibile: cambia solo quando il ritmo cambia davvero.
-    // Rossa se l'intervallo è stato lento (sotto 30) o ha avuto uno scatto (un fotogramma oltre
-    // 50 ms): soglie assolute, quindi una barretta non cambia colore dopo.
+    // The history: one bar every quarter of a second, as tall as the frames per second of
+    // that interval; the oldest on the left, fainter. The scale is a fixed step
+    // (30, 60, 120…) chosen from the visible maximum: it changes only when the pace really changes.
+    // Red if the interval was slow (below 30) or had a stutter (a frame over
+    // 50 ms): absolute thresholds, so a bar does not change colour afterwards.
     let (gx, gy, gh) = (tx, py + 58.0 * u, 12.0 * u);
     let top = s.history.iter().map(|b| b.fps).fold(0.0f32, f32::max);
     let scale = [30.0, 60.0, 120.0, 240.0, 480.0, 960.0].into_iter().find(|&v| top <= v).unwrap_or(1920.0);
@@ -329,7 +329,7 @@ pub fn build(w: u32, h: u32, srgb: bool, fonts: Option<&'static crate::animus_fo
         d.rect(gx + i as f32 * step, gy + gh - bh, (step - u).max(t), bh, c);
     }
 
-    // Da pixel a coordinate di clip.
+    // From pixels to clip coordinates.
     let (sx, sy) = (2.0 / w.max(1) as f32, 2.0 / h.max(1) as f32);
     for v in &mut d.v {
         v.pos = [v.pos[0] * sx - 1.0, 1.0 - v.pos[1] * sy];
@@ -338,7 +338,7 @@ pub fn build(w: u32, h: u32, srgb: bool, fonts: Option<&'static crate::animus_fo
 }
 
 pub fn bytes(v: &[Vertex]) -> &[u8] {
-    // SAFETY: `Vertex` è `repr(C)` di soli f32, senza riempimento.
+    // SAFETY: `Vertex` is `repr(C)` made only of f32, with no padding.
     unsafe { std::slice::from_raw_parts(v.as_ptr().cast(), std::mem::size_of_val(v)) }
 }
 
@@ -348,7 +348,7 @@ struct V { @builtin(position) p: vec4f, @location(0) c: vec4f, @location(1) uv: 
 @group(0) @binding(1) var samp: sampler;
 @vertex fn vs(@location(0) pos: vec2f, @location(1) uv: vec2f, @location(2) color: vec4f) -> V { return V(vec4f(pos, 0.0, 1.0), color, uv); }
 @fragment fn fs(v: V) -> @location(0) vec4f {
-    // Le forme piene hanno uv negative; i caratteri prendono la copertura dall'atlante.
+    // Solid shapes have negative uv; glyphs take their coverage from the atlas.
     let cover = textureSampleLevel(atlas, samp, max(v.uv, vec2f(0.0)), 0.0).r;
     return vec4f(v.c.rgb, v.c.a * select(cover, 1.0, v.uv.x < 0.0));
 }

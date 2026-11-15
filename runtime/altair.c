@@ -1,11 +1,11 @@
-/* Runtime minimo per il codice generato: registro delle funzioni, trap, memoria guest. */
+/* Minimal runtime for the generated code: function registry, traps, guest memory. */
 #include "altair.h"
 
 #ifdef _WIN32
-/* Windows (clang in versione MinGW: è l'unica che dà un `long double` a 80 bit).
-   Il salto fuori dal codice guest usa le funzioni intrinseche del compilatore: `longjmp` del
-   sistema srotolerebbe lo stack con il meccanismo delle eccezioni, attraversando anche i frame
-   del runtime in Rust. */
+/* Windows (the MinGW flavour of clang: it is the only one that gives an 80-bit `long double`).
+   The jump out of guest code uses the compiler's intrinsic functions: the system's `longjmp`
+   would unwind the stack with the exception mechanism, also crossing the frames
+   of the Rust runtime. */
 #include <windows.h>
 typedef void *AltairJmp[5];
 #define ALTAIR_SETJMP(b) __builtin_setjmp(b)
@@ -33,9 +33,9 @@ static AltairFn find(u32 addr) {
     return lo < altair_function_count && altair_functions[lo].addr == addr ? altair_functions[lo].fn : 0;
 }
 
-/* Le ultime destinazioni di chiamate e salti indiretti di questo thread: quando qualcosa va
- * storto dicono da dove si è arrivati, anche attraverso le tail call che non lasciano un
- * indirizzo di ritorno sullo stack. */
+/* The last targets of this thread's indirect calls and jumps: when something goes
+ * wrong they say how one got there, even through tail calls that leave no
+ * return address on the stack. */
 #define TRAIL 32
 static __thread u32 trail[TRAIL];
 static __thread u32 trail_pos;
@@ -62,7 +62,7 @@ void altair_call_indirect(Ctx *c, u32 addr) {
     if (fn)
         fn(c);
     else if (!c->host_call || c->host_call(c, addr))
-        altair_trap(c, "funzione non tradotta o import non gestito", addr);
+        altair_trap(c, "untranslated function or unhandled import", addr);
 }
 
 _Noreturn void altair_trap(Ctx *c, const char *msg, u32 addr) {
@@ -71,8 +71,8 @@ _Noreturn void altair_trap(Ctx *c, const char *msg, u32 addr) {
     ALTAIR_LONGJMP(*(AltairJmp *)c->trap_jmp);
 }
 
-/* MXCSR dell'host: durante l'esecuzione guest vale quello del guest, così arrotondamento,
- * flush-to-zero e denormali si comportano come nell'originale. */
+/* Host MXCSR: during guest execution the guest's one is in effect, so rounding,
+ * flush-to-zero and denormals behave as in the original. */
 #if defined(__x86_64__) || defined(__i386__)
 static u32 host_mxcsr(void) { return __builtin_ia32_stmxcsr(); }
 static void set_host_mxcsr(u32 v) { __builtin_ia32_ldmxcsr(v); }
@@ -91,12 +91,12 @@ static void set_host_fpcw(u16 v) { (void)v; }
 
 void altair_set_fpcw(Ctx *c, u32 v) {
     c->fpcw = v & 0xffff;
-    set_host_fpcw((u16)(v | 0x3f)); /* le eccezioni restano mascherate sull'host */
+    set_host_fpcw((u16)(v | 0x3f)); /* exceptions stay masked on the host */
 }
 
 void altair_set_mxcsr(Ctx *c, u32 v) {
     c->mxcsr = v;
-    set_host_mxcsr(v | 0x1f80); /* le eccezioni restano mascherate sull'host */
+    set_host_mxcsr(v | 0x1f80); /* exceptions stay masked on the host */
 }
 
 int altair_run(Ctx *c, u32 addr) {
@@ -122,10 +122,10 @@ int altair_run(Ctx *c, u32 addr) {
 }
 
 #ifdef _WIN32
-/* Su Linux le pagine si materializzano quando vengono toccate. Su Windows la memoria va
-   impegnata subito e tutta: una zona solo riservata darebbe errore alle funzioni di sistema
-   che ci scrivono dentro (una ReadFile in un buffer del gioco). Sono 4 GB di "commit", che non
-   occupano RAM finché non vengono usati ma devono stare nel limite di RAM più file di paging. */
+/* On Linux pages materialize when they are touched. On Windows the memory must be
+   committed immediately and in full: a region that is only reserved would make the system
+   functions that write into it fail (a ReadFile into a game buffer). That is 4 GB of "commit",
+   which take up no RAM until they are used but must fit within the limit of RAM plus page file. */
 u8 *altair_mem_create(void) {
     return VirtualAlloc(0, GUEST_SPACE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 }
@@ -165,12 +165,12 @@ void altair_cpuid(Ctx *c) {
     u32 leaf = c->eax;
     c->eax = c->ebx = c->ecx = c->edx = 0;
     if (leaf == 0) {
-        c->eax = 1; /* foglia massima */
+        c->eax = 1; /* highest leaf */
         c->ebx = 0x756e6547; /* "GenuineIntel" */
         c->edx = 0x49656e69;
         c->ecx = 0x6c65746e;
     } else if (leaf == 1) {
-        c->eax = 0x000006f6; /* famiglia 6: Core 2 */
+        c->eax = 0x000006f6; /* family 6: Core 2 */
         /* FPU, TSC, CX8, CMOV, MMX, FXSR, SSE, SSE2 */
         c->edx = (1u << 0) | (1u << 4) | (1u << 8) | (1u << 15) | (1u << 23) | (1u << 24) | (1u << 25) | (1u << 26);
         c->ecx = 1u << 0; /* SSE3 */

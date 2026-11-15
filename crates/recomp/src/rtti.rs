@@ -1,29 +1,29 @@
-//! RTTI di MSVC a 32 bit: type descriptor, complete object locator, vtable.
+//! 32-bit MSVC RTTI: type descriptors, complete object locators, vtables.
 //!
-//! Stesso metodo di `tools/rtti.py`; i conteggi attesi per la build Steam DX9 sono
-//! 4.376 type descriptor, 4.597 vtable, 59.899 slot.
+//! Same method as `tools/rtti.py`; the expected counts for the Steam DX9 build are
+//! 4,376 type descriptors, 4,597 vtables, 59,899 slots.
 
 use altair_pe::Image;
 use std::collections::{HashMap, HashSet};
 
 pub struct Vtable {
-    #[allow(dead_code)] // servirà al traduttore per dare un nome alle funzioni virtuali
+    #[allow(dead_code)] // the translator will need it to name virtual functions
     pub addr: u32,
-    /// Nome decorato della classe (`.?AVFoo@bar@@`).
+    /// Decorated name of the class (`.?AVFoo@bar@@`).
     pub class: String,
-    /// Offset del sotto-oggetto: diverso da zero per le vtable secondarie.
+    /// Offset of the sub-object: non-zero for secondary vtables.
     pub offset: u32,
     pub slots: Vec<u32>,
 }
 
 pub struct Rtti {
     pub type_info_vftable: u32,
-    /// Indirizzo del type descriptor -> nome decorato.
+    /// Address of the type descriptor -> decorated name.
     pub types: HashMap<u32, String>,
     pub vtables: Vec<Vtable>,
 }
 
-/// `.?AVFoo@bar@@` -> `bar::Foo`. I template restano decorati.
+/// `.?AVFoo@bar@@` -> `bar::Foo`. Templates stay decorated.
 pub fn undecorate(name: &str) -> String {
     if name.len() < 6 || !name.starts_with(".?A") || !name.ends_with("@@") {
         return name.to_string();
@@ -36,10 +36,10 @@ pub fn undecorate(name: &str) -> String {
 }
 
 pub fn analyze(img: &Image) -> Rtti {
-    let text = img.section(".text").expect("sezione .text");
+    let text = img.section(".text").expect(".text section");
     let (text_lo, text_hi) = (text.va, text.file_end());
 
-    // 1. Type descriptor: stringhe ".?A" precedute da {puntatore a type_info::vftable, 0}.
+    // 1. Type descriptors: ".?A" strings preceded by {pointer to type_info::vftable, 0}.
     let mut cands: Vec<(u32, u32, String)> = Vec::new();
     for s in img.data_sections() {
         let blob = img.section_bytes(s);
@@ -62,9 +62,9 @@ pub fn analyze(img: &Image) -> Rtti {
     let types: HashMap<u32, String> =
         cands.into_iter().filter(|c| c.1 == type_info_vftable).map(|c| (c.0, c.2)).collect();
 
-    // 2. Complete object locator: signature 0, type descriptor noto, gerarchia plausibile.
+    // 2. Complete object locators: signature 0, known type descriptor, plausible hierarchy.
     let in_data = |a: u32| img.data_sections().any(|s| s.contains(a));
-    let mut cols: HashMap<u32, (u32, u32)> = HashMap::new(); // indirizzo -> (offset, type descriptor)
+    let mut cols: HashMap<u32, (u32, u32)> = HashMap::new(); // address -> (offset, type descriptor)
     for s in img.data_sections() {
         let w: Vec<(u32, u32)> = img.words(s).collect();
         for i in 0..w.len().saturating_sub(4) {
@@ -89,7 +89,7 @@ pub fn analyze(img: &Image) -> Rtti {
         }
     }
 
-    // 3. Vtable: una parola che punta a un COL, seguita da puntatori a codice.
+    // 3. Vtables: a word that points to a COL, followed by code pointers.
     let mut vtables = Vec::new();
     for s in img.data_sections() {
         let w: Vec<(u32, u32)> = img.words(s).collect();

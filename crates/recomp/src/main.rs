@@ -1,4 +1,4 @@
-//! `altair`: strumenti di analisi e ricompilazione per Assassin's Creed (2007), build Steam DX9.
+//! `altair`: analysis and recompilation tools for Assassin's Creed (2007), Steam DX9 build.
 
 mod discover;
 mod rtti;
@@ -11,36 +11,36 @@ use std::io::Write;
 use std::process::ExitCode;
 
 const USAGE: &str = "\
-uso: altair <comando> <AssassinsCreed_Dx9.exe> [opzioni]
+usage: altair <command> <AssassinsCreed_Dx9.exe> [options]
 
-  info                      hash, sezioni, import, export
-  rtti                      conteggi di type descriptor e vtable
+  info                      hash, sections, imports, exports
+  rtti                      counts of type descriptors and vtables
   discover [--strict] [--out FILE.json]
-                            scoperta delle funzioni; con --out salva l'elenco
-                            (contiene solo indirizzi, ma va comunque in private/)
+                            function discovery; with --out it saves the list
+                            (it only contains addresses, but still belongs in private/)
 
   translate --out FILE.c [--roots FILE] ADDR...
-                            traduce in C le funzioni indicate e quelle che chiamano
+                            translates the given functions and the ones they call into C
   image --out DIR [--window KB] [--big N] [--hooks FILE]
-  icon --out FILE.ico       estrae l'icona dell'eseguibile (per la build Windows; resta in build/)
-                            traduce l'intera immagine in DIR: un file C per finestra di
-                            indirizzi (64 KB), table.c e un Makefile. Le funzioni con più di
-                            N istruzioni (5000) non vengono ottimizzate dal compilatore
-  candidates [--max N]      funzioni adatte al test differenziale: tutta la chiusura è
-                            traducibile, senza import né chiamate indirette
-  coverage [--list]         quante funzioni si traducono oggi, e cosa blocca le altre;
-                            --list elenca ogni funzione non tradotta con origine e motivo
-  census                    quante volte compare ogni istruzione nel codice raggiunto,
-                            e quante di quelle il traduttore sa già emettere
+  icon --out FILE.ico       extracts the executable's icon (for the Windows build; stays in build/)
+                            translates the whole image into DIR: one C file per address
+                            window (64 KB), table.c and a Makefile. Functions with more than
+                            N instructions (5000) are not optimized by the compiler
+  candidates [--max N]      functions suited to the differential test: the whole closure is
+                            translatable, with no imports and no indirect calls
+  coverage [--list]         how many functions translate today, and what blocks the others;
+                            --list lists every function not translated with origin and reason
+  census                    how many times each instruction appears in the reached code,
+                            and how many of those the translator can already emit
 
-Opzione comune: --any-exe   accetta un eseguibile con hash diverso da quello della build Steam";
+Common option: --any-exe    accepts an executable whose hash differs from the Steam build's";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("errore: {e}");
+            eprintln!("error: {e}");
             ExitCode::FAILURE
         }
     }
@@ -62,15 +62,15 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let sha = img.sha1();
     if sha != AC1_DX9_STEAM_SHA1 && !flag(args, "--any-exe") {
         return Err(format!(
-            "SHA-1 {sha}: non è AssassinsCreed_Dx9.exe della build Steam ({AC1_DX9_STEAM_SHA1}).\n\
-             Usa --any-exe per analizzarlo comunque."
+            "SHA-1 {sha}: this is not AssassinsCreed_Dx9.exe from the Steam build ({AC1_DX9_STEAM_SHA1}).\n\
+             Use --any-exe to analyze it anyway."
         )
         .into());
     }
     match cmd.as_str() {
         "info" => info(&img, &sha),
         "rtti" => rtti_stats(&img),
-        "icon" => icon_cmd(&img, value(args, "--out").ok_or("manca --out FILE.ico")?)?,
+        "icon" => icon_cmd(&img, value(args, "--out").ok_or("missing --out FILE.ico")?)?,
         "discover" => discover_cmd(&img, flag(args, "--strict"), value(args, "--out"))?,
         "translate" => translate_cmd(&img, args)?,
         "coverage" => coverage_cmd(&img, flag(args, "--list")),
@@ -84,9 +84,9 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 
 fn info(img: &Image, sha: &str) {
     println!("sha1        {sha}");
-    println!("dimensione  {} byte", img.data.len());
+    println!("size        {} bytes", img.data.len());
     println!("image base  {:#x}   entry {:#x}   timestamp {}", img.base, img.entry, img.timestamp);
-    println!("sezioni:");
+    println!("sections:");
     for s in &img.sections {
         println!("  {:<8} va={:#010x} vsize={:#09x} rsize={:#09x}", s.name, s.va, s.vsize, s.rsize);
     }
@@ -94,12 +94,12 @@ fn info(img: &Image, sha: &str) {
     for i in &img.imports {
         *dlls.entry(&i.dll).or_default() += 1;
     }
-    println!("import      {} funzioni da {} DLL", img.imports.len(), dlls.len());
+    println!("imports     {} functions from {} DLLs", img.imports.len(), dlls.len());
     for (dll, n) in dlls {
         println!("  {n:4}  {dll}");
     }
-    println!("export      {}", img.exports.len());
-    println!("callback TLS {}", img.tls_callbacks.len());
+    println!("exports     {}", img.exports.len());
+    println!("TLS callbacks {}", img.tls_callbacks.len());
 }
 
 fn rtti_stats(img: &Image) {
@@ -108,14 +108,14 @@ fn rtti_stats(img: &Image) {
     let distinct: HashSet<u32> = slots.iter().copied().collect();
     let classes: HashSet<&str> = r.vtables.iter().map(|v| v.class.as_str()).collect();
     println!("type_info::vftable  {:#x}", r.type_info_vftable);
-    println!("type descriptor     {}", r.types.len());
-    println!("vtable              {}", r.vtables.len());
-    println!("  slot totali       {}", slots.len());
-    println!("  funzioni distinte {}", distinct.len());
-    println!("  classi con vtable {}", classes.len());
-    println!("  secondarie        {}", r.vtables.iter().filter(|v| v.offset != 0).count());
+    println!("type descriptors    {}", r.types.len());
+    println!("vtables             {}", r.vtables.len());
+    println!("  total slots       {}", slots.len());
+    println!("  distinct functions {}", distinct.len());
+    println!("  classes w/ vtable {}", classes.len());
+    println!("  secondary         {}", r.vtables.iter().filter(|v| v.offset != 0).count());
     if let Some(v) = r.vtables.iter().max_by_key(|v| v.slots.len()) {
-        println!("  la più grande     {} ({} slot)", rtti::undecorate(&v.class), v.slots.len());
+        println!("  largest           {} ({} slots)", rtti::undecorate(&v.class), v.slots.len());
     }
 }
 
@@ -123,24 +123,24 @@ fn discover_cmd(img: &Image, strict: bool, out: Option<&str>) -> std::io::Result
     let t0 = std::time::Instant::now();
     let (d, r) = Discovery::run(img, strict, true);
     let (code, table, int3, unknown) = d.text_breakdown();
-    println!("funzioni            {}", d.starts.len());
-    println!("istruzioni          {}", d.n_insn);
-    println!("jump table          {} (di cui {} con limite dal cmp)", d.tables, d.bounded_tables);
-    println!("per origine:");
+    println!("functions           {}", d.starts.len());
+    println!("instructions        {}", d.n_insn);
+    println!("jump tables         {} ({} of them with a bound from the cmp)", d.tables, d.bounded_tables);
+    println!("by origin:");
     let kinds = [Kind::Entry, Kind::Export, Kind::Tls, Kind::Vtable, Kind::Immediate, Kind::DataWord, Kind::Unaligned];
     for k in kinds {
         let direct = d.starts.values().filter(|o| o.kind == k && !o.via_call).count();
         let called = d.starts.values().filter(|o| o.kind == k && o.via_call).count();
         if direct + called > 0 {
-            println!("  {:<16} {direct:>6}  (+{called} raggiunte per call)", k.label());
+            println!("  {:<16} {direct:>6}  (+{called} reached by call)", k.label());
         }
     }
     let total = d.own.len() as f64;
-    println!(".text ({} byte):", d.own.len());
-    for (what, n) in [("codice", code), ("jump table", table), ("int3 non raggiunti", int3), ("non classificato", unknown)] {
+    println!(".text ({} bytes):", d.own.len());
+    for (what, n) in [("code", code), ("jump tables", table), ("unreached int3", int3), ("unclassified", unknown)] {
         println!("  {what:<20} {n:>9}  {:5.1}%", 100.0 * n as f64 / total);
     }
-    println!("scarti:");
+    println!("rejections:");
     let mut rej: Vec<_> = d.rejected.iter().collect();
     rej.sort_by_key(|&(_, n)| std::cmp::Reverse(*n));
     for (why, n) in rej {
@@ -154,8 +154,8 @@ fn discover_cmd(img: &Image, strict: bool, out: Option<&str>) -> std::io::Result
         .into_iter()
         .filter(|s| !d.starts.contains_key(s))
         .count();
-    println!("slot di vtable non accettati: {missing}");
-    println!("tempo               {:.2} s", t0.elapsed().as_secs_f64());
+    println!("vtable slots not accepted: {missing}");
+    println!("time                {:.2} s", t0.elapsed().as_secs_f64());
 
     if let Some(path) = out {
         let mut f = std::io::BufWriter::new(std::fs::File::create(path)?);
@@ -166,7 +166,7 @@ fn discover_cmd(img: &Image, strict: bool, out: Option<&str>) -> std::io::Result
             writeln!(f, "[{addr}, \"{label}\"]{}", if i + 1 < n { "," } else { "" })?;
         }
         writeln!(f, "]}}")?;
-        eprintln!("elenco scritto in {path}");
+        eprintln!("list written to {path}");
     }
     Ok(())
 }
@@ -175,7 +175,7 @@ fn origin_label(o: &discover::Origin) -> String {
     if o.via_call { format!("{} → call", o.kind.label()) } else { o.kind.label().to_string() }
 }
 
-/// Le partenze certe: un salto verso una di queste è una tail call, non codice interno.
+/// The certain starts: a jump to one of these is a tail call, not internal code.
 fn hard_starts(d: &Discovery) -> HashSet<u32> {
     d.starts
         .iter()
@@ -185,7 +185,7 @@ fn hard_starts(d: &Discovery) -> HashSet<u32> {
 }
 
 fn translate_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
-    let out = value(args, "--out").ok_or("manca --out FILE.c")?;
+    let out = value(args, "--out").ok_or("missing --out FILE.c")?;
     let mut roots = Vec::new();
     for a in args.iter().skip(2).filter(|a| a.starts_with("0x")) {
         roots.push(u32::from_str_radix(&a[2..], 16)?);
@@ -198,14 +198,14 @@ fn translate_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error:
         }
     }
     if roots.is_empty() {
-        return Err("nessun indirizzo da tradurre".into());
+        return Err("no address to translate".into());
     }
     let (d, _) = Discovery::run(img, false, false);
     let mut hard = hard_starts(&d);
     hard.extend(&roots);
     let is_hard = |a: u32| hard.contains(&a);
 
-    // Chiusura sulle chiamate dirette; le funzioni non traducibili restano fuori.
+    // Closure over direct calls; untranslatable functions are left out.
     let mut funcs: BTreeMap<u32, translate::Func> = BTreeMap::new();
     let mut failed: BTreeMap<u32, String> = BTreeMap::new();
     let mut pending = roots.clone();
@@ -224,7 +224,7 @@ fn translate_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error:
         }
     }
     let known = |a: u32| funcs.contains_key(&a);
-    let mut c = String::from("/* Generato da `altair translate`: non modificare e non pubblicare. */\n#include \"altair.h\"\n\n");
+    let mut c = String::from("/* Generated by `altair translate`: do not edit and do not publish. */\n#include \"altair.h\"\n\n");
     for a in funcs.keys() {
         c += &format!("void {}(Ctx *c);\n", translate::fn_name(*a));
     }
@@ -241,13 +241,13 @@ fn translate_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error:
     }
     c += &format!("}};\nconst u32 altair_function_count = {};\n", funcs.len());
     std::fs::write(out, c)?;
-    eprintln!("{} funzioni, {insns} istruzioni tradotte in {out}", funcs.len());
+    eprintln!("{} functions, {insns} instructions translated into {out}", funcs.len());
     for (a, e) in &failed {
-        eprintln!("  non tradotta {a:#010x}: {e}");
+        eprintln!("  not translated {a:#010x}: {e}");
     }
     for r in &roots {
         if failed.contains_key(r) {
-            return Err(format!("la funzione richiesta {r:#x} non è traducibile").into());
+            return Err(format!("the requested function {r:#x} is not translatable").into());
         }
     }
     Ok(())
@@ -278,26 +278,26 @@ fn coverage_cmd(img: &Image, list: bool) {
                 }
             }
             Err(e) => {
-                *blockers.entry(format!("[decodifica] {}", e.split(" (").next().unwrap_or("?"))).or_default() += 1;
-                failures.push((a, origin_label(&d.starts[&a]), format!("[decodifica] {e}")));
+                *blockers.entry(format!("[decode] {}", e.split(" (").next().unwrap_or("?"))).or_default() += 1;
+                failures.push((a, origin_label(&d.starts[&a]), format!("[decode] {e}")));
             }
         }
     }
     let n = d.starts.len();
-    println!("funzioni tradotte   {ok} su {n} ({:.1}%)", 100.0 * ok as f64 / n as f64);
-    println!("istruzioni          {ok_insns} su {total_insns} ({:.1}%), contate per funzione", 100.0 * ok_insns as f64 / total_insns as f64);
-    println!("istruzioni distinte {}", seen.len());
-    println!("primo ostacolo delle funzioni non tradotte:");
+    println!("functions translated {ok} of {n} ({:.1}%)", 100.0 * ok as f64 / n as f64);
+    println!("instructions        {ok_insns} of {total_insns} ({:.1}%), counted per function", 100.0 * ok_insns as f64 / total_insns as f64);
+    println!("distinct instructions {}", seen.len());
+    println!("first obstacle of the functions not translated:");
     let mut b: Vec<_> = blockers.into_iter().collect();
     b.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
     for (why, n) in b.iter().take(40) {
         println!("  {n:>6}  {why}");
     }
     if b.len() > 40 {
-        println!("  ... e altri {} motivi", b.len() - 40);
+        println!("  ... and {} more reasons", b.len() - 40);
     }
     if list {
-        println!("funzioni non tradotte:");
+        println!("functions not translated:");
         for (a, origin, why) in &failures {
             println!("  {a:#010x}  {origin:<26} {why}");
         }
@@ -328,13 +328,13 @@ fn candidates_cmd(img: &Image, max: usize) {
             }
         }
     }
-    // Risultati non confrontabili con l'emulatore: tempo, identità della CPU, e le funzioni
-    // trascendenti dell'x87, che l'emulatore calcola in doppia precisione.
+    // Results that cannot be compared with the emulator: time, CPU identity, and the x87
+    // transcendental functions, which the emulator computes in double precision.
     const UNCOMPARABLE: [Mnemonic; 12] = [
         Mnemonic::Rdtsc, Mnemonic::Cpuid, Mnemonic::Fsin, Mnemonic::Fcos, Mnemonic::Fsincos, Mnemonic::Fptan,
         Mnemonic::Fpatan, Mnemonic::Fyl2x, Mnemonic::Fyl2xp1, Mnemonic::F2xm1, Mnemonic::Fprem, Mnemonic::Fprem1,
     ];
-    // Chiusura sulle chiamate dirette: piccola, tutta traducibile, senza destinazioni ignote.
+    // Closure over direct calls: small, fully translatable, with no unknown targets.
     let mut good: Vec<(u32, BTreeSet<Mnemonic>)> = Vec::new();
     for (&a, root) in &info {
         if root.insns < 4 {
@@ -367,8 +367,8 @@ fn candidates_cmd(img: &Image, max: usize) {
         }
     }
     good.sort_by_key(|(a, _)| *a);
-    // Prima qualche funzione per ogni tipo di istruzione, partendo dalle più rare; poi le
-    // altre in ordine pseudo-casuale ma ripetibile.
+    // First a few functions for each kind of instruction, starting from the rarest; then the
+    // others in pseudo-random but repeatable order.
     let mut count: HashMap<Mnemonic, usize> = HashMap::new();
     for (_, mn) in &good {
         for m in mn {
@@ -393,7 +393,7 @@ fn candidates_cmd(img: &Image, max: usize) {
         }
         chosen.insert(a);
     }
-    eprintln!("{} funzioni adatte su {} traducibili; scelte {}", good.len(), info.len(), chosen.len());
+    eprintln!("{} suitable functions out of {} translatable; {} chosen", good.len(), info.len(), chosen.len());
     for a in chosen {
         println!("{a:#x}");
     }
@@ -410,7 +410,7 @@ fn census_cmd(img: &Image) {
             seen.extend(f.insns.iter().map(|(k, v)| (*k, *v)));
         }
     }
-    // (totale, non traducibili) per mnemonico, sulle istruzioni distinte.
+    // (total, untranslatable) per mnemonic, over the distinct instructions.
     let mut count: BTreeMap<String, (usize, usize)> = BTreeMap::new();
     for ins in seen.values() {
         let e = count.entry(format!("{:?}", ins.mnemonic()).to_lowercase()).or_default();
@@ -421,8 +421,8 @@ fn census_cmd(img: &Image) {
     }
     let total: usize = count.values().map(|c| c.0).sum();
     let missing: usize = count.values().map(|c| c.1).sum();
-    println!("istruzioni distinte {total}, di cui non ancora traducibili {missing} ({:.1}%)", 100.0 * missing as f64 / total as f64);
-    println!("{:>9} {:>9}  istruzione", "totale", "mancanti");
+    println!("distinct instructions {total}, of which not yet translatable {missing} ({:.1}%)", 100.0 * missing as f64 / total as f64);
+    println!("{:>9} {:>9}  instruction", "total", "missing");
     let mut rows: Vec<_> = count.into_iter().collect();
     rows.sort_by_key(|(_, c)| std::cmp::Reverse((c.1, c.0)));
     for (m, (n, miss)) in rows {
@@ -430,7 +430,7 @@ fn census_cmd(img: &Image) {
     }
 }
 
-/// Scrive il file solo se il contenuto è cambiato, così `make` non ricompila ciò che è uguale.
+/// Writes the file only if its content changed, so `make` does not recompile what is unchanged.
 fn write_if_changed(path: &std::path::Path, content: &str) -> std::io::Result<bool> {
     if std::fs::read(path).is_ok_and(|old| old == content.as_bytes()) {
         return Ok(false);
@@ -441,17 +441,17 @@ fn write_if_changed(path: &std::path::Path, content: &str) -> std::io::Result<bo
 
 fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     let t0 = std::time::Instant::now();
-    let out = std::path::PathBuf::from(value(args, "--out").ok_or("manca --out DIR")?);
+    let out = std::path::PathBuf::from(value(args, "--out").ok_or("missing --out DIR")?);
     let window = value(args, "--window").and_then(|v| v.parse::<u32>().ok()).unwrap_or(64) * 1024;
     let big = value(args, "--big").and_then(|v| v.parse::<usize>().ok()).unwrap_or(5000);
     std::fs::create_dir_all(&out)?;
-    // Agganci: funzioni guest che all'ingresso passano dal runtime (`altair_hook`), che può
-    // osservarle o sostituirle. Un indirizzo esadecimale per riga, il resto è commento.
+    // Hooks: guest functions that on entry go through the runtime (`altair_hook`), which can
+    // observe or replace them. One hexadecimal address per line, the rest is a comment.
     let mut hooks: BTreeSet<u32> = BTreeSet::new();
     if let Some(file) = value(args, "--hooks") {
         for line in std::fs::read_to_string(file)?.lines() {
             if let Some(word) = line.split('#').next().and_then(|l| l.split_whitespace().next()) {
-                hooks.insert(u32::from_str_radix(word.trim_start_matches("0x"), 16).map_err(|_| format!("{file}: indirizzo non valido: {word}"))?);
+                hooks.insert(u32::from_str_radix(word.trim_start_matches("0x"), 16).map_err(|_| format!("{file}: invalid address: {word}"))?);
             }
         }
     }
@@ -466,12 +466,12 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
             Ok(f) => {
                 funcs.insert(a, f);
             }
-            Err(e) => eprintln!("non decodificata {a:#010x}: {e}"),
+            Err(e) => eprintln!("not decoded {a:#010x}: {e}"),
         }
     }
-    // Rete di sicurezza: ogni destinazione di una `call` diretta nel codice tradotto deve essere
-    // una funzione tradotta, anche se la scoperta non l'aveva trovata (il traduttore segue le
-    // jump table in modo un po' diverso e raggiunge qualche caso in più).
+    // Safety net: every target of a direct `call` in the translated code must be a
+    // translated function, even if discovery had not found it (the translator follows
+    // jump tables slightly differently and reaches a few more cases).
     let mut extra = 0;
     loop {
         let missing: BTreeSet<u32> =
@@ -486,8 +486,8 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
                     extra += 1;
                 }
                 Err(e) => {
-                    eprintln!("destinazione di call non traducibile {a:#010x}: {e}");
-                    // Una funzione vuota evita di riprovare all'infinito; a runtime sarà una trap.
+                    eprintln!("call target not translatable {a:#010x}: {e}");
+                    // An empty function avoids retrying forever; at runtime it will be a trap.
                     funcs.insert(a, translate::Func::empty(a));
                 }
             }
@@ -495,7 +495,7 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
     }
     let known = |a: u32| funcs.contains_key(&a) && !funcs[&a].insns.is_empty();
 
-    // Un file per finestra di indirizzi: una funzione sta nel file della finestra in cui inizia.
+    // One file per address window: a function lives in the file of the window it starts in.
     let mut parts: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
     for &a in funcs.keys() {
         parts.entry(d.lo + (a - d.lo) / window * window).or_default().push(a);
@@ -531,7 +531,7 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
             body.push('\n');
         }
         let mut text = String::with_capacity(body.len() + 64 * protos.len());
-        text.push_str("/* Generato da `altair image`: non modificare e non pubblicare. */\n#include \"altair.h\"\n\n");
+        text.push_str("/* Generated by `altair image`: do not edit and do not publish. */\n#include \"altair.h\"\n\n");
         for p in &protos {
             text.push_str(&format!("void {}(Ctx *c);\n", translate::fn_name(*p)));
         }
@@ -543,7 +543,7 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
         names.insert(name);
     }
 
-    let mut table = String::from("/* Generato da `altair image`: tabella indirizzo -> funzione, ordinata. */\n#include \"altair.h\"\n\n");
+    let mut table = String::from("/* Generated by `altair image`: address -> function table, sorted. */\n#include \"altair.h\"\n\n");
     let emitted: Vec<u32> = funcs.iter().filter(|(_, f)| !f.insns.is_empty()).map(|(a, _)| *a).collect();
     for a in &emitted {
         table.push_str(&format!("void {}(Ctx *c);\n", translate::fn_name(*a)));
@@ -557,7 +557,7 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
     written += write_if_changed(&out.join("table.c"), &table)? as usize;
     names.insert("table.c".into());
 
-    // Via i file di finestre che non esistono più.
+    // Remove the files of windows that no longer exist.
     let mut removed = 0;
     for e in std::fs::read_dir(&out)? {
         let e = e?;
@@ -568,9 +568,9 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
         }
     }
 
-    let runtime = std::fs::canonicalize("runtime").map_err(|_| "lancia `altair image` dalla radice del progetto (serve runtime/)")?;
+    let runtime = std::fs::canonicalize("runtime").map_err(|_| "run `altair image` from the project root (runtime/ is needed)")?;
     let makefile = format!(
-        "# Generato da `altair image`. Uso: make -j$(nproc)   oppure   make -j$(nproc) CC=gcc TAG=gcc\n\
+        "# Generated by `altair image`. Usage: make -j$(nproc)   or   make -j$(nproc) CC=gcc TAG=gcc\n\
          CC = clang\n\
          OPT = -O2\n\
          TAG = $(CC)\n\
@@ -588,46 +588,46 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
     );
     write_if_changed(&out.join("Makefile"), &makefile)?;
 
-    println!("funzioni            {} (di cui {extra} aggiunte perché chiamate ma non scoperte)", funcs.len());
-    println!("istruzioni          {insns} (contate per funzione)");
-    println!("file                {} da {} KB di indirizzi, più table.c", parts.len(), window / 1024);
-    println!("dimensione          {:.1} MB di C", bytes as f64 / 1e6);
-    println!("file riscritti      {written}, rimossi {removed}");
+    println!("functions           {} ({extra} of them added because called but not discovered)", funcs.len());
+    println!("instructions        {insns} (counted per function)");
+    println!("files               {} of {} KB of addresses each, plus table.c", parts.len(), window / 1024);
+    println!("size                {:.1} MB of C", bytes as f64 / 1e6);
+    println!("files rewritten     {written}, removed {removed}");
     if !hooks.is_empty() {
-        println!("agganci             {hooked} su {} richiesti", hooks.len());
+        println!("hooks               {hooked} of {} requested", hooks.len());
     }
-    println!("funzioni non ottimizzate (più di {big} istruzioni): {n_big}; la più grande {:#x} con {} istruzioni", biggest.1, biggest.0);
-    println!("tempo               {:.1} s", t0.elapsed().as_secs_f64());
+    println!("functions not optimized (more than {big} instructions): {n_big}; the largest {:#x} with {} instructions", biggest.1, biggest.0);
+    println!("time                {:.1} s", t0.elapsed().as_secs_f64());
     Ok(())
 }
 
-/// Estrae la prima icona di gruppo dell'eseguibile in un file `.ico`. Come il C generato, il
-/// risultato è materiale derivato dal gioco: va in `build/`, mai nel repository.
+/// Extracts the executable's first group icon into a `.ico` file. Like the generated C, the
+/// result is material derived from the game: it goes in `build/`, never in the repository.
 fn icon_cmd(img: &Image, out: &str) -> Result<(), Box<dyn std::error::Error>> {
     let d = &img.data;
-    let u16_at = |o: usize| d.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize).ok_or("risorse troncate");
-    let u32_at = |o: usize| d.get(o..o + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize).ok_or("risorse troncate");
+    let u16_at = |o: usize| d.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize).ok_or("truncated resources");
+    let u32_at = |o: usize| d.get(o..o + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize).ok_or("truncated resources");
     let pe = u32_at(0x3c)?;
     let rva = u32_at(pe + 24 + 96 + 8 * 2)? as u32;
     if rva == 0 {
-        return Err("l'eseguibile non ha risorse".into());
+        return Err("the executable has no resources".into());
     }
-    let root = img.off(img.base + rva).ok_or("sezione delle risorse non trovata")?;
-    // Le voci di una directory: (id o nome, offset dalla radice, è una sottodirectory).
+    let root = img.off(img.base + rva).ok_or("resource section not found")?;
+    // The entries of a directory: (id or name, offset from the root, is a subdirectory).
     let entries = |dir: usize| -> Result<Vec<(usize, usize, bool)>, &'static str> {
         let n = u16_at(dir + 12)? + u16_at(dir + 14)?;
         (0..n).map(|i| Ok((u32_at(dir + 16 + 8 * i)?, u32_at(dir + 20 + 8 * i)? & 0x7fff_ffff, u32_at(dir + 20 + 8 * i)? >> 31 == 1))).collect()
     };
-    // I dati della prima lingua di una risorsa (tipo, id); senza id, la prima del tipo.
+    // The data of the first language of a resource (type, id); without an id, the first of the type.
     let find = |kind: usize, id: Option<usize>| -> Result<&[u8], Box<dyn std::error::Error>> {
         let types = entries(root)?;
-        let t = types.iter().find(|e| e.0 == kind && e.2).ok_or("tipo di risorsa assente")?;
+        let t = types.iter().find(|e| e.0 == kind && e.2).ok_or("resource type missing")?;
         let names = entries(root + t.1)?;
-        let n = names.iter().find(|e| id.map_or(true, |id| e.0 == id) && e.2).ok_or("risorsa assente")?;
-        let lang = *entries(root + n.1)?.first().ok_or("risorsa senza lingue")?;
+        let n = names.iter().find(|e| id.map_or(true, |id| e.0 == id) && e.2).ok_or("resource missing")?;
+        let lang = *entries(root + n.1)?.first().ok_or("resource has no languages")?;
         let (data_rva, size) = (u32_at(root + lang.1)? as u32, u32_at(root + lang.1 + 4)?);
-        let off = img.off(img.base + data_rva).ok_or("dati della risorsa fuori dalle sezioni")?;
-        Ok(d.get(off..off + size).ok_or("dati della risorsa troncati")?)
+        let off = img.off(img.base + data_rva).ok_or("resource data outside the sections")?;
+        Ok(d.get(off..off + size).ok_or("resource data truncated")?)
     };
     let group = find(14, None)?; // RT_GROUP_ICON
     let count = u16::from_le_bytes([group[4], group[5]]) as usize;
@@ -635,7 +635,7 @@ fn icon_cmd(img: &Image, out: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut images = Vec::new();
     let mut offset = 6 + 16 * count;
     for i in 0..count {
-        let e = group.get(6 + 14 * i..20 + 14 * i).ok_or("gruppo di icone troncato")?;
+        let e = group.get(6 + 14 * i..20 + 14 * i).ok_or("icon group truncated")?;
         let image = find(3, Some(u16::from_le_bytes([e[12], e[13]]) as usize))?; // RT_ICON
         ico.extend_from_slice(&e[..8]);
         ico.extend_from_slice(&(image.len() as u32).to_le_bytes());
@@ -650,6 +650,6 @@ fn icon_cmd(img: &Image, out: &str) -> Result<(), Box<dyn std::error::Error>> {
         std::fs::create_dir_all(dir)?;
     }
     std::fs::write(out, &ico)?;
-    println!("icona               {count} immagini, {} byte, in {out}", ico.len());
+    println!("icon                {count} images, {} bytes, in {out}", ico.len());
     Ok(())
 }

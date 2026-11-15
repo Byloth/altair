@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""Test differenziale: il codice tradotto da `altair` contro l'originale eseguito in Unicorn.
+"""Differential test: the code translated by `altair` against the original run in Unicorn.
 
-Uso (dalla radice del progetto, con il Python del venv):
-    .venv/bin/python tools/difftest.py <AssassinsCreed_Dx9.exe>                 scenari scritti a mano
+Usage (from the project root, with the venv's Python):
+    .venv/bin/python tools/difftest.py <AssassinsCreed_Dx9.exe>                 hand-written scenarios
     .venv/bin/python tools/difftest.py <AssassinsCreed_Dx9.exe> --auto N [--cases K]
-        N funzioni scelte da `altair candidates`, K casi ciascuna (8) con ingressi generati;
+        N functions chosen by `altair candidates`, K cases each (8) with generated inputs;
     .venv/bin/python tools/difftest.py <AssassinsCreed_Dx9.exe> --funcs 0xA,0xB [--cases K]
-        lo stesso sulle funzioni indicate, anche se non sono candidate;
+        the same on the given functions, even if they are not candidates;
     ... --auto N --lib build/libaltair_ac1-clang.so
-        usa la libreria dell'immagine intera (`altair image` + make) invece di compilare il campione;
-        il dettaglio va in build/difftest-auto.txt
+        uses the library of the whole image (`altair image` + make) instead of compiling the sample;
+        the detail goes to build/difftest-auto.txt
 
-Passi:
-  1. `altair translate` traduce in C le funzioni degli scenari (build/gen/difftest.c);
-  2. clang le compila con runtime/altair.c in una libreria (build/difftest.so);
-  3. ogni scenario gira due volte con gli stessi ingressi: sull'originale in Unicorn
-     (tools/harness.py) e sul codice tradotto, in una memoria guest identica;
-  4. si confrontano, chiamata per chiamata, eax, ecx, edx, i byte tolti dallo stack, gli import
-     chiamati, e alla fine il contenuto di heap di prova e stack.
+Steps:
+  1. `altair translate` translates the scenarios' functions into C (build/gen/difftest.c);
+  2. clang compiles them with runtime/altair.c into a library (build/difftest.so);
+  3. each scenario runs twice with the same inputs: on the original in Unicorn
+     (tools/harness.py) and on the translated code, in an identical guest memory;
+  4. the two are compared, call by call: eax, ecx, edx, the bytes popped off the stack, the imports
+     called, and at the end the contents of test heap and stack.
 
-Uno scenario è una funzione `scenario(g, rng)` che usa solo l'interfaccia comune a `Guest`
-(Unicorn) e `Native` (tradotto): alloc, alloc_str, write, read, call.
+A scenario is a function `scenario(g, rng)` that uses only the interface common to `Guest`
+(Unicorn) and `Native` (translated): alloc, alloc_str, write, read, call.
 """
 import ctypes
 import hashlib
@@ -54,7 +54,7 @@ Ctx._fields_ = [(r, ctypes.c_uint32) for r in ('eax', 'ecx', 'edx', 'ebx', 'esp'
 
 
 class Native:
-    """Stessa interfaccia di harness.Guest, ma esegue il codice tradotto."""
+    """Same interface as harness.Guest, but runs the translated code."""
 
     def __init__(self, exe, lib):
         self.pe = pe = PE(exe)
@@ -63,7 +63,7 @@ class Native:
         lib.altair_run.argtypes = [ctypes.POINTER(Ctx), ctypes.c_uint32]
         self.mem = lib.altair_mem_create()
         if not self.mem:
-            raise harness.GuestError('impossibile riservare la memoria guest')
+            raise harness.GuestError('cannot reserve the guest memory')
         self._writable, self._readonly = [], []
         for name, va, vs, raw, rs in pe.sections:
             size = max(vs, rs)
@@ -95,7 +95,7 @@ class Native:
     def alloc(self, size, align=16):
         a = (self.heap_top + align - 1) & ~(align - 1)
         if a + size > HEAP + HEAP_SIZE:
-            raise harness.GuestError('heap di prova esaurito')
+            raise harness.GuestError('test heap exhausted')
         self.heap_top = a + size
         return a
 
@@ -111,7 +111,7 @@ class Native:
         return b''.join(self.read(va, len(data)) for va, data in self._writable)
 
     def readonly_damaged(self):
-        """Il codice tradotto ha scritto in codice o costanti? Se sì le ripristina."""
+        """Has the translated code written into code or constants? If so, restores them."""
         damaged = False
         for va, data in self._readonly:
             if self.read(va, len(data)) != data:
@@ -131,7 +131,7 @@ class Native:
     def _host_call(self, cp, addr):
         c = cp.contents
         if addr not in self.imports:
-            self._fault = f'chiamata a {addr:#010x}: né funzione tradotta né import'
+            self._fault = f'call to {addr:#010x}: neither a translated function nor an import'
             return 1
         dll, fn = self.imports[addr]
         ret = self.u32(c.esp)
@@ -139,7 +139,7 @@ class Native:
         self._log.append((name, ret))
         h = self.handlers.get(name)
         if h is None:
-            self._fault = f'import non gestito: {dll}!{fn} (chiamato da {ret:#010x})'
+            self._fault = f'unhandled import: {dll}!{fn} (called from {ret:#010x})'
             return 1
         esp = c.esp
         eax, pop = h(self, lambda i: self.u32(esp + 4 + 4 * i))
@@ -174,7 +174,7 @@ class Native:
 
 
 class Recorder:
-    """Avvolge un motore e registra ciò che si può osservare di ogni chiamata."""
+    """Wraps an engine and records what can be observed of each call."""
 
     def __init__(self, engine):
         self.e = engine
@@ -189,7 +189,7 @@ class Recorder:
             self.log.append((addr, tuple(args), r.regs, r.xmm, r.x87, r.popped, tuple(r.imports)))
             return r
         except harness.GuestError as err:
-            self.log.append((addr, tuple(args), 'errore', str(err)))
+            self.log.append((addr, tuple(args), 'error', str(err)))
             raise
 
     def snapshot(self):
@@ -199,7 +199,7 @@ class Recorder:
                 hashlib.sha1(self.e.image_state()).hexdigest())
 
 
-# --- scenari ---------------------------------------------------------------------------------
+# --- scenarios -------------------------------------------------------------------------------
 
 STRLEN, STRCMP, MEMCPY = 0x00FA6790, 0x00FA9760, 0x00F9FB80
 
@@ -234,7 +234,7 @@ def sc_memcpy(g, rng):
         for sa in range(4):
             for da in range(4):
                 g.call(MEMCPY, [g.alloc(n + 16) + da, src + sa, n])
-    # Regioni sovrapposte, in avanti e all'indietro (percorso con il flag di direzione).
+    # Overlapping regions, forwards and backwards (path with the direction flag).
     buf = g.alloc_bytes(bytes(rng.randrange(256) for _ in range(900)))
     for _ in range(200):
         n = rng.randrange(0, 300)
@@ -245,8 +245,8 @@ def sc_memcpy(g, rng):
 
 
 def sc_floor(g, rng):
-    """`floor` del CRT, ramo x87: mette RC verso il basso con `fldcw` e arrotonda con `frndint`.
-    I mezzi interi distinguono la modalità giusta dall'arrotondamento al più vicino."""
+    """The CRT's `floor`, x87 branch: sets RC towards minus infinity with `fldcw` and rounds with `frndint`.
+    Half-integers tell the right mode apart from round-to-nearest."""
     values = [11.5, 8.5, 2.5, 3.5, -2.5, -3.5, 0.5, -0.5, 0.0, -0.0, 11.4999, 1e10 + 0.5, 4503599627370497.0, 1e300,
               float('inf'), float('-inf')]
     values += [rng.uniform(-1e6, 1e6) for _ in range(200)] + [rng.randrange(-1000, 1000) + 0.5 for _ in range(100)]
@@ -256,11 +256,11 @@ def sc_floor(g, rng):
 
 
 def sc_cpuid(g, rng):
-    """Il CRT decide se usare SSE2: inverte il bit ID di EFLAGS (`pushfd`/`popfd`), poi `cpuid`."""
-    # Si confronta solo il verdetto: negli altri registri e sullo stack restano i bit di `cpuid`, che tra la CPU
-    # emulata da Unicorn e quella dichiarata dal runtime sono diversi per forza.
+    """The CRT decides whether to use SSE2: it flips the ID bit of EFLAGS (`pushfd`/`popfd`), then `cpuid`."""
+    # Only the verdict is compared: the other registers and the stack are left with the bits of `cpuid`, which between
+    # the CPU emulated by Unicorn and the one declared by the runtime are bound to differ.
     g.log.append(('sse2', g.e.call(SSE2_AVAILABLE, []).eax))
-    g.write(STACK_TOP - STACK_CLEAR, bytes(STACK_CLEAR))    # i bit di `cpuid` restano anche sullo stack
+    g.write(STACK_TOP - STACK_CLEAR, bytes(STACK_CLEAR))    # the bits of `cpuid` remain on the stack too
 
 
 FLOOR, SSE2_AVAILABLE = 0x00FA1120, 0x00FCA495
@@ -306,18 +306,18 @@ def run(exe):
         (la, sa), (lb, sb) = logs
         diff = next((i for i, (x, y) in enumerate(zip(la, lb)) if x != y), None)
         if diff is None and len(la) == len(lb) and sa == sb:
-            print(f'ok       {name}: {len(la)} chiamate identiche; heap, stack e dati globali identici')
+            print(f'ok         {name}: {len(la)} identical calls; heap, stack and global data identical')
             continue
         failed += 1
-        print(f'DIVERSO  {name}')
+        print(f'DIFFERENT  {name}')
         if diff is not None:
-            print(f'  chiamata {diff}:\n    originale {la[diff]}\n    tradotto  {lb[diff]}')
+            print(f'  call {diff}:\n    original   {la[diff]}\n    translated {lb[diff]}')
         elif len(la) != len(lb):
-            print(f'  {len(la)} chiamate nell\'originale, {len(lb)} nel tradotto')
+            print(f'  {len(la)} calls in the original, {len(lb)} in the translated')
         else:
-            print(f'  memoria finale: heap {"=" if sa[0] == sb[0] else "DIVERSO"}, '
-                  f'stack {"=" if sa[1] == sb[1] else "DIVERSO"}, dati {"=" if sa[2] == sb[2] else "DIVERSI"}')
-    print('difftest:', 'OK' if not failed else f'{failed} scenari diversi')
+            print(f'  final memory: heap {"=" if sa[0] == sb[0] else "DIFFERENT"}, '
+                  f'stack {"=" if sa[1] == sb[1] else "DIFFERENT"}, data {"=" if sa[2] == sb[2] else "DIFFERENT"}')
+    print('difftest:', 'OK' if not failed else f'{failed} scenarios differ')
     return 1 if failed else 0
 
 
@@ -326,8 +326,8 @@ SPECIAL_FLOATS = [0.0, -0.0, 1.0, -1.0, 0.5, float('inf'), float('-inf'), float(
 
 
 def make_inputs(g, rng):
-    """Ingressi generici: buffer pieni di puntatori ad altri buffer, interi piccoli, float e
-    valori casuali; argomenti e registri scelti tra puntatori e interi."""
+    """Generic inputs: buffers full of pointers to other buffers, small integers, floats and
+    random values; arguments and registers chosen among pointers and integers."""
     bufs = [g.alloc(512) for _ in range(6)]
 
     def value(p_ptr):
@@ -348,7 +348,7 @@ def make_inputs(g, rng):
 
     for b in bufs:
         g.write(b, struct.pack('<128I', *[value(0.35) for _ in range(128)]))
-    # Registri XMM iniziali: quattro float ciascuno, a volte due double.
+    # Initial XMM registers: four floats each, sometimes two doubles.
     xmm = []
     for _ in range(8):
         if rng.random() < 0.25:
@@ -365,11 +365,11 @@ def observe(g, r):
 
 
 def same_but_nan(a, b):
-    """Due blocchi di byte sono uguali, a meno di parole che sono NaN in entrambi.
+    """Two blocks of bytes are equal, except for words that are NaN in both.
 
-    Quando i due operandi di un'operazione SSE sono entrambi NaN, l'hardware x86 restituisce
-    il primo; l'emulatore (QEMU) applica la regola dell'x87 e può restituire l'altro. Il codice
-    tradotto segue l'hardware, quindi segno e payload di un NaN possono differire."""
+    When both operands of an SSE operation are NaN, x86 hardware returns
+    the first; the emulator (QEMU) applies the x87 rule and may return the other. The translated
+    code follows the hardware, so sign and payload of a NaN may differ."""
     if a == b:
         return True
     if len(a) != len(b):
@@ -385,7 +385,7 @@ def same_but_nan(a, b):
     for i, (x, y) in enumerate(zip(wa, wb)):
         if x == y or (nan32(x) and nan32(y)):
             continue
-        j = i & ~1                      # la parola doppia che la contiene, allineata a 8
+        j = i & ~1                      # the double word that contains it, aligned to 8
         if j + 1 < len(wa) and nan64(wa[j], wa[j + 1]) and nan64(wb[j], wb[j + 1]):
             continue
         return False
@@ -393,13 +393,13 @@ def same_but_nan(a, b):
 
 
 def x87_same_but_nan(a, b):
-    """Stessa cima dello stack e stessi registri, a meno di registri che sono NaN in entrambi."""
+    """Same top of the stack and same registers, except for registers that are NaN in both."""
     def nan(r):
         return (r[9] & 0x7F) == 0x7F and r[8] == 0xFF
 
     def mmx(x, y):
-        # Dopo un'istruzione MMX l'hardware porta l'esponente del registro a tutti uno;
-        # l'emulatore lo lascia com'era. Il tradotto (y) segue l'hardware.
+        # After an MMX instruction the hardware sets the register's exponent to all ones;
+        # the emulator leaves it as it was. The translated code (y) follows the hardware.
         return x[:8] == y[:8] and y[8:] == b'\xff\xff'
     return a[0] == b[0] and all(x == y or (nan(x) and nan(y)) or mmx(x, y) for x, y in zip(a[1], b[1]))
 
@@ -408,13 +408,13 @@ def xmm_bytes(regs):
     return b''.join(v.to_bytes(16, 'little') for v in regs)
 
 
-FIELDS = ('registri (eax ecx edx ebx ebp esi edi)', 'registri xmm', 'stato x87', 'byte tolti dallo stack', 'import', 'heap', 'stack',
-          'dati globali')
+FIELDS = ('registers (eax ecx edx ebx ebp esi edi)', 'xmm registers', 'x87 state', 'bytes popped off the stack', 'imports', 'heap', 'stack',
+          'global data')
 
 
 def instruction_report(gen, ok_roots):
-    """Quali tipi di istruzione compaiono nelle funzioni risultate identiche (con le funzioni
-    che chiamano). Comparire non garantisce che il caso di prova sia passato di lì."""
+    """Which kinds of instruction appear in the functions that turned out identical (with the functions
+    they call). Appearing does not guarantee that the test case went through there."""
     import collections
     import re
     src = open(gen).read()
@@ -454,8 +454,8 @@ def run_auto(exe, count, cases, only=None, lib=None):
         lib = build(exe, roots, name='difftest-auto', opt='-O1')
         gen = os.path.join(ROOT, 'build', 'gen', 'difftest-auto.c')
     else:
-        gen = None                      # libreria dell'immagine intera: già compilata
-        print('libreria:', lib)
+        gen = None                      # library of the whole image: already compiled
+        print('library:', lib)
     oracle, native = harness.Guest(exe), Native(exe, lib)
     same, differ, never = [], [], []
     nan_only = set()
@@ -470,22 +470,22 @@ def run_auto(exe, count, cases, only=None, lib=None):
                 args, ecx, edx, xmm = make_inputs(engine, random.Random(addr * 1000 + case))
                 if engine is native:
                     with open(current, 'w') as f:
-                        f.write(f'{addr:#x} caso {case}\n')
-                    signal.alarm(60)       # un ciclo infinito nel tradotto uccide il processo
+                        f.write(f'{addr:#x} case {case}\n')
+                    signal.alarm(60)       # an infinite loop in the translated code kills the process
                 try:
                     r = engine.call(addr, args, ecx=ecx, edx=edx, max_insns=300_000, xmm=xmm)
                     obs.append(observe(engine, r))
                 except harness.GuestError as e:
-                    obs.append(('errore', str(e)))
+                    obs.append(('error', str(e)))
                 finally:
                     signal.alarm(0)
-                if obs[0][0] == 'errore':
-                    break                   # l'originale non gira con questi ingressi: caso saltato
-            if obs[0][0] == 'errore':
+                if obs[0][0] == 'error':
+                    break                   # the original does not run with these inputs: case skipped
+            if obs[0][0] == 'error':
                 continue
             ran += 1
-            if obs[0] != obs[1] and obs[1][0] != 'errore':
-                # Tolleranza sui soli NaN, per registri XMM e memoria (indici 1, 4, 5, 6).
+            if obs[0] != obs[1] and obs[1][0] != 'error':
+                # Tolerance on NaNs only, for XMM registers and memory (indices 1, 4, 5, 6).
                 o0 = (obs[0][0], xmm_bytes(obs[0][1])) + obs[0][2:]
                 o1 = (obs[1][0], xmm_bytes(obs[1][1])) + obs[1][2:]
                 if all(same_but_nan(x, y) if k in (1, 5, 6, 7) else x87_same_but_nan(x, y) if k == 2 else x == y
@@ -493,45 +493,45 @@ def run_auto(exe, count, cases, only=None, lib=None):
                     nan_only.add(addr)
                     continue
             if obs[0] != obs[1] and bad is None:
-                if obs[1][0] == 'errore':
-                    bad = (case, f'il tradotto si ferma: {obs[1][1]}')
+                if obs[1][0] == 'error':
+                    bad = (case, f'the translated code stops: {obs[1][1]}')
                 else:
                     k = next(i for i in range(len(FIELDS)) if obs[0][i] != obs[1][i])
-                    detail = (f'{obs[0][k]} contro {obs[1][k]}' if k in (0, 3, 4) else
-                              f'cima {obs[0][2][0]} contro {obs[1][2][0]}; ' + ' '.join(
-                                  f'fp{i}: {a.hex()} contro {b.hex()}' for i, (a, b) in
+                    detail = (f'{obs[0][k]} versus {obs[1][k]}' if k in (0, 3, 4) else
+                              f'top {obs[0][2][0]} versus {obs[1][2][0]}; ' + ' '.join(
+                                  f'fp{i}: {a.hex()} versus {b.hex()}' for i, (a, b) in
                                   enumerate(zip(obs[0][2][1], obs[1][2][1])) if a != b) if k == 2 else
-                              ' '.join(f'xmm{i}: {a:032x} contro {b:032x}' for i, (a, b) in
+                              ' '.join(f'xmm{i}: {a:032x} versus {b:032x}' for i, (a, b) in
                                        enumerate(zip(obs[0][1], obs[1][1])) if a != b) if k == 1 else '')
                     bad = (case, f'{FIELDS[k]} {detail}')
         if native.readonly_damaged() and not bad:
-            bad = ('-', 'il tradotto ha scritto in sezioni di sola lettura')
+            bad = ('-', 'the translated code wrote into read-only sections')
         if bad:
             differ.append(addr)
-            report.append(f'DIVERSO {addr:#010x} caso {bad[0]}: {bad[1]}')
+            report.append(f'DIFFERENT {addr:#010x} case {bad[0]}: {bad[1]}')
         elif ran:
             same.append(addr)
-            report.append(f'ok      {addr:#010x} ({ran} casi)')
+            report.append(f'ok        {addr:#010x} ({ran} cases)')
         else:
             never.append(addr)
-            report.append(f'saltata {addr:#010x} (l\'originale non gira con gli ingressi generati)')
+            report.append(f'skipped   {addr:#010x} (the original does not run with the generated inputs)')
     with open(os.path.join(ROOT, 'build', 'difftest-auto.txt'), 'w') as f:
         f.write('\n'.join(report) + '\n')
-    print(f'{len(roots)} funzioni: {len(same)} identiche, {len(differ)} diverse, {len(never)} saltate')
+    print(f'{len(roots)} functions: {len(same)} identical, {len(differ)} different, {len(never)} skipped')
     nan_ok = sorted(nan_only - set(differ))
     if nan_ok:
-        print(f'  di cui {len(nan_ok)} identiche a meno di un NaN o dell\'esponente di un registro MMX: '
+        print(f'  of which {len(nan_ok)} identical except for a NaN or the exponent of an MMX register: '
               + ' '.join(f'{a:#x}' for a in nan_ok[:8]))
     if gen:
         ndone, verified, missing = instruction_report(gen, same)
-        print(f'funzioni eseguite in casi identici, comprese quelle chiamate: {ndone}; '
-              f'{sum(verified.values())} istruzioni di {len(verified)} tipi')
+        print(f'functions executed in identical cases, including those called: {ndone}; '
+              f'{sum(verified.values())} instructions of {len(verified)} kinds')
         if missing:
-            print('tipi tradotti ma assenti dalle funzioni verificate:', ' '.join(missing))
+            print('kinds translated but absent from the verified functions:', ' '.join(missing))
         with open(os.path.join(ROOT, 'build', 'difftest-auto.txt'), 'a') as f:
-            f.write('\nistruzioni nelle funzioni verificate:\n')
+            f.write('\ninstructions in the verified functions:\n')
             f.write(''.join(f'{n:7} {m}\n' for m, n in verified.most_common()))
-    for line in [x for x in report if x.startswith('DIVERSO')][:25]:
+    for line in [x for x in report if x.startswith('DIFFERENT')][:25]:
         print(' ', line[:200])
     return 1 if differ else 0
 

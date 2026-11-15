@@ -1,13 +1,13 @@
-//! Lo stato della macchina guest visto dal runtime: contesto della CPU, memoria, heap.
+//! The state of the guest machine as seen by the runtime: CPU context, memory, heap.
 
 use std::collections::HashMap;
 
-/// Un registro x87 a 80 bit, opaco per il runtime (in C è `long double`).
+/// An 80-bit x87 register, opaque to the runtime (in C it is `long double`).
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
 pub struct F80(pub [u8; 16]);
 
-/// Deve coincidere campo per campo con `struct Ctx` di `runtime/altair.h`.
+/// Must match `struct Ctx` in `runtime/altair.h` field by field.
 #[repr(C)]
 pub struct Ctx {
     pub eax: u32,
@@ -38,7 +38,7 @@ const _: () = assert!(std::mem::size_of::<Ctx>() == 352);
 
 impl Ctx {
     pub fn new(mem: *mut u8) -> Ctx {
-        // SAFETY: tutti i campi sono interi, puntatori o Option di puntatore a funzione: lo zero è valido.
+        // SAFETY: all fields are integers, pointers or Option of function pointer: zero is valid.
         let mut c: Ctx = unsafe { std::mem::zeroed() };
         c.mem = mem;
         c.mxcsr = 0x1f80;
@@ -47,18 +47,18 @@ impl Ctx {
     }
 }
 
-/// Accesso alla memoria guest. Lo spazio di 4 GB è riservato per intero, quindi ogni indirizzo
-/// a 32 bit è un puntatore host valido.
+/// Access to guest memory. The 4 GB space is reserved in full, so every 32-bit address
+/// is a valid host pointer.
 #[derive(Clone, Copy)]
 pub struct Mem(pub *mut u8);
 
-// SAFETY: la memoria guest è condivisa tra i thread guest come lo era nel processo originale.
+// SAFETY: guest memory is shared between the guest threads as it was in the original process.
 unsafe impl Send for Mem {}
 unsafe impl Sync for Mem {}
 
 impl Mem {
     pub fn ptr(self, a: u32) -> *mut u8 {
-        // SAFETY: vedi il commento sul tipo.
+        // SAFETY: see the comment on the type.
         unsafe { self.0.add(a as usize) }
     }
     pub fn r8(self, a: u32) -> u8 {
@@ -91,7 +91,7 @@ impl Mem {
     pub fn fill(self, a: u32, len: u32, v: u8) {
         unsafe { std::ptr::write_bytes(self.ptr(a), v, len as usize) }
     }
-    /// Stringa terminata da zero, al più 64 KB.
+    /// Zero-terminated string, at most 64 KB.
     pub fn cstr_bytes<'a>(self, a: u32) -> &'a [u8] {
         let mut n = 0;
         while n < 0x10000 && self.r8(a + n) != 0 {
@@ -124,13 +124,13 @@ impl Mem {
     }
 }
 
-/// Allocatore dello heap guest: blocchi allineati a 16, liste libere per dimensione.
-/// I metadati stanno sul lato host, così un overflow nel gioco non li corrompe.
+/// Guest heap allocator: blocks aligned to 16, free lists per size.
+/// The metadata lives on the host side, so an overflow in the game does not corrupt it.
 pub struct Heap {
     next: u32,
     end: u32,
     free: HashMap<u32, Vec<u32>>,
-    /// indirizzo -> (dimensione richiesta, dimensione del blocco)
+    /// address -> (requested size, block size)
     live: HashMap<u32, (u32, u32)>,
     pub bytes_live: u64,
 }
@@ -149,7 +149,7 @@ impl Heap {
         }
     }
 
-    /// Ritorna (indirizzo, il blocco è riciclato e quindi può contenere dati vecchi).
+    /// Returns (address, the block is recycled and so may contain old data).
     pub fn alloc(&mut self, size: u32) -> Option<(u32, bool)> {
         let class = Heap::class(size);
         let (addr, reused) = match self.free.get_mut(&class).and_then(Vec::pop) {

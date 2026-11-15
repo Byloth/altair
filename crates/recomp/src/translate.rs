@@ -1,14 +1,14 @@
-//! Traduzione di una funzione x86 in C.
+//! Translation of an x86 function into C.
 //!
-//! Ogni funzione guest diventa `void f_XXXXXXXX(Ctx *c)`:
-//!  - i registri stanno nel contesto, la memoria guest si legge con `rdN`/`wrN`;
-//!  - i salti interni sono `goto`, le jump table uno `switch` sugli indirizzi di destinazione;
-//!  - una `call` spinge il vero indirizzo di ritorno sullo stack guest e chiama la funzione
-//!    tradotta; `ret` lo toglie. Un salto verso un'altra funzione è una tail call;
-//!  - i flag sono variabili locali calcolate dopo ogni istruzione che li scrive: il compilatore
-//!    C elimina quelle che nessuno legge.
-//! Le istruzioni non ancora supportate fanno fallire la traduzione dell'intera funzione, con
-//! il nome dell'istruzione: `altair coverage` le conta.
+//! Every guest function becomes `void f_XXXXXXXX(Ctx *c)`:
+//!  - the registers live in the context, guest memory is accessed with `rdN`/`wrN`;
+//!  - internal jumps are `goto`s, jump tables a `switch` over the target addresses;
+//!  - a `call` pushes the real return address onto the guest stack and calls the translated
+//!    function; `ret` pops it. A jump to another function is a tail call;
+//!  - the flags are local variables computed after every instruction that writes them: the C
+//!    compiler eliminates the ones nobody reads.
+//! Instructions not yet supported make the translation of the whole function fail, with
+//! the name of the instruction: `altair coverage` counts them.
 
 use crate::discover::table_bound;
 use altair_pe::Image;
@@ -24,7 +24,7 @@ pub struct Func {
     pub insns: BTreeMap<u32, Instruction>,
     labels: BTreeSet<u32>,
     tables: HashMap<u32, Vec<u32>>,
-    /// Destinazioni di `call` dirette e di tail call: altre funzioni.
+    /// Targets of direct `call`s and of tail calls: other functions.
     pub calls: BTreeSet<u32>,
 }
 
@@ -33,7 +33,7 @@ impl Func {
         Func { start, insns: BTreeMap::new(), labels: BTreeSet::new(), tables: HashMap::new(), calls: BTreeSet::new() }
     }
 
-    /// Contiene chiamate o salti indiretti la cui destinazione non è nota staticamente.
+    /// Contains indirect calls or jumps whose target is not statically known.
     pub fn has_opaque_indirect(&self) -> bool {
         self.insns.values().any(|i| match i.flow_control() {
             FlowControl::IndirectCall => true,
@@ -45,11 +45,11 @@ impl Func {
 
 type R<T> = Result<T, String>;
 
-/// Decodifica il corpo di una funzione seguendo il flusso di controllo da `start`.
-/// `hard_start` dice se un indirizzo è l'inizio certo di un'altra funzione: un salto lì è una
-/// tail call. Le partenze deboli restano codice interno (al più duplicato in due funzioni).
+/// Decodes the body of a function by following the control flow from `start`.
+/// `hard_start` tells whether an address is the certain start of another function: a jump there
+/// is a tail call. Weak starts stay internal code (at most duplicated in two functions).
 pub fn decode(img: &Image, start: u32, hard_start: &dyn Fn(u32) -> bool) -> R<Func> {
-    let text_sec = img.section(".text").ok_or("manca .text")?;
+    let text_sec = img.section(".text").ok_or(".text is missing")?;
     let text = img.section_bytes(text_sec);
     let (lo, hi) = (text_sec.va, text_sec.va + text.len() as u32);
     let mut f = Func { start, insns: BTreeMap::new(), labels: BTreeSet::new(), tables: HashMap::new(), calls: BTreeSet::new() };
@@ -62,21 +62,21 @@ pub fn decode(img: &Image, start: u32, hard_start: &dyn Fn(u32) -> bool) -> R<Fu
             continue;
         }
         if a < lo || a >= hi {
-            return Err(format!("salto fuori da .text ({a:#x})"));
+            return Err(format!("jump outside .text ({a:#x})"));
         }
         hist.clear();
         let mut dec = Decoder::with_ip(32, &text[(a - lo) as usize..], a as u64, DecoderOptions::NONE);
         loop {
             if !dec.can_decode() {
-                return Err("fine di .text".into());
+                return Err("end of .text".into());
             }
             dec.decode_out(&mut ins);
             if ins.is_invalid() {
-                return Err(format!("byte non decodificabili a {:#x}", ins.ip()));
+                return Err(format!("undecodable bytes at {:#x}", ins.ip()));
             }
             let addr = ins.ip() as u32;
             if addr != a && external(addr) {
-                // Il codice prosegue dentro un'altra funzione: è una tail call verso di essa.
+                // The code continues into another function: it is a tail call to it.
                 f.calls.insert(addr);
                 break;
             }
@@ -100,7 +100,7 @@ pub fn decode(img: &Image, start: u32, hard_start: &dyn Fn(u32) -> bool) -> R<Fu
                 }
                 FlowControl::UnconditionalBranch => {
                     if !matches!(ins.op0_kind(), OpKind::NearBranch32) {
-                        return Err("salto far".into());
+                        return Err("far jump".into());
                     }
                     branch(&mut f, &mut work, ins.near_branch_target() as u32);
                     break;
@@ -113,9 +113,9 @@ pub fn decode(img: &Image, start: u32, hard_start: &dyn Fn(u32) -> bool) -> R<Fu
                             let v = img.u32((table as i64 + 4 * k) as u32)?;
                             (lo <= v && v < hi).then_some(v)
                         };
-                        // Per le estensioni euristiche qui sotto: una voce vera punta vicino alla
-                        // tabella, che MSVC mette subito dopo la funzione. Scarta i byte di
-                        // padding che per caso formano un indirizzo di codice.
+                        // For the heuristic extensions below: a real entry points near the
+                        // table, which MSVC places right after the function. It discards padding
+                        // bytes that happen to form a code address.
                         let near = |k: i64| entry(k).filter(|&v| v.abs_diff(table) < 0x2000);
                         let mut entries = Vec::new();
                         while entries.len() < max {
@@ -128,14 +128,14 @@ pub fn decode(img: &Image, start: u32, hard_start: &dyn Fn(u32) -> bool) -> R<Fu
                             i.mnemonic() == Mnemonic::Neg && i.op0_register() == ins.memory_index()
                         });
                         if negated {
-                            // `neg ecx; jmp [ecx*4 + T]`: la tabella si estende all'indietro da T.
+                            // `neg ecx; jmp [ecx*4 + T]`: the table extends backwards from T.
                             entries.truncate(1);
                             entries.extend((1..=16).map_while(|k| near(-k)));
                         }
                         if entries.is_empty() {
-                            // La base non è una voce valida: il `memcpy` di MSVC indicizza alcune
-                            // tabelle da 1 e altre con indici negativi. Si prendono le voci
-                            // valide contigue subito dopo e subito prima della base.
+                            // The base is not a valid entry: MSVC's `memcpy` indexes some
+                            // tables from 1 and others with negative indices. The contiguous valid
+                            // entries right after and right before the base are taken.
                             entries.extend((1..=8).map_while(near));
                             entries.extend((1..=8).map_while(|k| near(-k)));
                         }
@@ -151,7 +151,7 @@ pub fn decode(img: &Image, start: u32, hard_start: &dyn Fn(u32) -> bool) -> R<Fu
                 }
                 FlowControl::Call => {
                     if !matches!(ins.op0_kind(), OpKind::NearBranch32) {
-                        return Err("call far".into());
+                        return Err("far call".into());
                     }
                     f.calls.insert(ins.near_branch_target() as u32);
                     hist.push(ins);
@@ -161,8 +161,8 @@ pub fn decode(img: &Image, start: u32, hard_start: &dyn Fn(u32) -> bool) -> R<Fu
             }
         }
     }
-    // Dove il flusso prosegue su un'istruzione che non è la successiva nell'ordine di
-    // emissione serve un'etichetta per il `goto` esplicito.
+    // Where the flow continues to an instruction that is not the next one in emission
+    // order, a label is needed for the explicit `goto`.
     let keys: Vec<u32> = f.insns.keys().copied().collect();
     for (i, a) in keys.iter().enumerate() {
         let ins = &f.insns[a];
@@ -190,7 +190,7 @@ pub fn fn_name(addr: u32) -> String {
 
 fn reg32(r: Register) -> R<&'static str> {
     if !r.is_gpr() {
-        return Err(format!("registro {r:?}"));
+        return Err(format!("register {r:?}"));
     }
     Ok(match r.full_register32() {
         Register::EAX => "c->eax",
@@ -201,11 +201,11 @@ fn reg32(r: Register) -> R<&'static str> {
         Register::EBP => "c->ebp",
         Register::ESI => "c->esi",
         Register::EDI => "c->edi",
-        other => return Err(format!("registro {other:?}")),
+        other => return Err(format!("register {other:?}")),
     })
 }
 
-/// L'accumulatore della larghezza data: al, ax, eax.
+/// The accumulator of the given width: al, ax, eax.
 fn acc_reg(bits: u32) -> Register {
     match bits {
         8 => Register::AL,
@@ -225,7 +225,7 @@ fn rd_reg(r: Register) -> R<String> {
         2 => format!("(u16){full}"),
         1 if is_high(r) => format!("(u8)({full} >> 8)"),
         1 => format!("(u8){full}"),
-        _ => return Err(format!("registro {r:?}")),
+        _ => return Err(format!("register {r:?}")),
     })
 }
 
@@ -233,20 +233,20 @@ fn wr_reg(r: Register, v: &str) -> R<String> {
     let full = reg32(r)?;
     Ok(match r.size() {
         4 => format!("{full} = {v};"),
-        // Scritture strette: vedi SET8L in runtime/altair.h e tests/compiler/.
+        // Narrow writes: see SET8L in runtime/altair.h and tests/compiler/.
         2 => format!("SET16({full}, {v});"),
         1 if is_high(r) => format!("SET8H({full}, {v});"),
         1 => format!("SET8L({full}, {v});"),
-        _ => return Err(format!("registro {r:?}")),
+        _ => return Err(format!("register {r:?}")),
     })
 }
 
-/// Indirizzo effettivo dell'operando di memoria, come espressione `u32`.
+/// Effective address of the memory operand, as a `u32` expression.
 fn ea(ins: &Instruction) -> R<String> {
     let mut parts: Vec<String> = Vec::new();
     for r in [ins.memory_base(), ins.memory_index()] {
         if r != Register::None && r.size() != 4 {
-            return Err("indirizzamento a 16 bit".into());
+            return Err("16-bit addressing".into());
         }
     }
     if ins.memory_base() != Register::None {
@@ -261,7 +261,7 @@ fn ea(ins: &Instruction) -> R<String> {
     }
     match ins.memory_segment() {
         Register::FS => parts.push("c->fs_base".into()),
-        Register::GS => return Err("segmento gs".into()),
+        Register::GS => return Err("gs segment".into()),
         _ => {}
     }
     Ok(format!("(u32)({})", parts.join(" + ")))
@@ -275,7 +275,7 @@ fn bits(ins: &Instruction, k: u32) -> R<u32> {
     };
     match n {
         8 | 16 | 32 => Ok(n as u32),
-        _ => Err(format!("operando di {n} bit")),
+        _ => Err(format!("{n}-bit operand")),
     }
 }
 
@@ -287,7 +287,7 @@ fn read(ins: &Instruction, k: u32, bits: u32) -> R<String> {
             let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
             format!("(u{bits}){:#x}u", ins.immediate(k) as u32 & mask)
         }
-        other => return Err(format!("operando {other:?}")),
+        other => return Err(format!("operand {other:?}")),
     })
 }
 
@@ -295,7 +295,7 @@ fn write(ins: &Instruction, k: u32, bits: u32, v: &str) -> R<String> {
     match ins.op_kind(k) {
         OpKind::Register => wr_reg(ins.op_register(k), v),
         OpKind::Memory => Ok(format!("wr{bits}(c, {}, {v});", ea(ins)?)),
-        other => Err(format!("destinazione {other:?}")),
+        other => Err(format!("destination {other:?}")),
     }
 }
 
@@ -317,13 +317,13 @@ fn cond(cc: ConditionCode) -> R<&'static str> {
         ConditionCode::ge => "(sf == of)",
         ConditionCode::le => "(zf || sf != of)",
         ConditionCode::g => "(!zf && sf == of)",
-        ConditionCode::None => return Err("condizione".into()),
+        ConditionCode::None => return Err("condition".into()),
     })
 }
 
 pub struct Emitter<'a> {
     pub f: &'a Func,
-    /// La funzione di destinazione è definita nello stesso output?
+    /// Is the target function defined in the same output?
     pub known: &'a dyn Fn(u32) -> bool,
 }
 
@@ -336,7 +336,7 @@ impl Emitter<'_> {
         }
     }
 
-    /// Trasferimento del controllo a `t`: `goto` se è dentro la funzione, altrimenti tail call.
+    /// Transfer of control to `t`: `goto` if it is inside the function, otherwise a tail call.
     fn go(&self, t: u32) -> String {
         if self.f.insns.contains_key(&t) {
             format!("goto L_{t:08x};")
@@ -354,7 +354,7 @@ impl Emitter<'_> {
         out.push_str("    u32 cf = 0, zf = 0, sf = 0, of = 0, pf = 0, af = 0;\n");
         let keys: Vec<u32> = f.insns.keys().copied().collect();
         if keys.first() != Some(&f.start) {
-            // Codice sotto l'entry: il corpo è emesso in ordine di indirizzo, quindi si salta.
+            // Code below the entry: the body is emitted in address order, so we jump.
             writeln!(out, "    goto L_{:08x};", f.start).unwrap();
         }
         for (i, addr) in keys.iter().enumerate() {
@@ -364,7 +364,7 @@ impl Emitter<'_> {
             if f.labels.contains(addr) {
                 writeln!(out, "L_{addr:08x}:;").unwrap();
             }
-            let body = self.insn(ins).map_err(|e| format!("{e} ({text} a {addr:#x})"))?;
+            let body = self.insn(ins).map_err(|e| format!("{e} ({text} at {addr:#x})"))?;
             writeln!(out, "    /* {addr:08x}  {text} */").unwrap();
             if !body.is_empty() {
                 writeln!(out, "    {body}").unwrap();
@@ -387,10 +387,10 @@ impl Emitter<'_> {
         let next = ins.next_ip() as u32;
         let has_mem = (0..ins.op_count()).any(|k| ins.op_kind(k) == OpKind::Memory);
         if ins.has_lock_prefix() || (m == Xchg && has_mem) {
-            // `xchg` con un operando in memoria è atomico anche senza prefisso.
+            // `xchg` with a memory operand is atomic even without the prefix.
             return self.atomic(ins);
         }
-        // Operazioni binarie con flag: (corpo che calcola r da a e b, scrive il risultato?)
+        // Binary operations with flags: (body that computes r from a and b, writes the result?)
         let binary = |calc: &str, store: bool| -> R<String> {
             let n = bits(ins, 0)?;
             let (a, b) = (read(ins, 0, n)?, read(ins, 1, n)?);
@@ -478,7 +478,7 @@ impl Emitter<'_> {
             };
         }
 
-        // Istruzioni di stringa: l'operando di destinazione o sorgente è implicito.
+        // String instructions: the destination or source operand is implicit.
         let string_op = matches!(
             ins.op0_kind(),
             OpKind::MemoryESEDI | OpKind::MemorySegESI | OpKind::MemorySegEDI
@@ -490,8 +490,8 @@ impl Emitter<'_> {
         match m {
             Nop | Pause | Wait | Prefetchnta | Prefetcht0 | Prefetcht1 | Prefetcht2 => Ok(String::new()),
             Mov if ins.op1_kind() == OpKind::Register && ins.op1_register().is_segment_register() => {
-                // Selettori di un processo a 32 bit su Windows a 64 bit. Il CRT li legge solo per
-                // riempire il contesto di un'eccezione.
+                // Selectors of a 32-bit process on 64-bit Windows. The CRT reads them only to
+                // fill in the context of an exception.
                 let sel = match ins.op1_register() {
                     Register::CS => 0x23,
                     Register::FS => 0x53,
@@ -518,14 +518,14 @@ impl Emitter<'_> {
             }
             Lea => {
                 if ins.memory_segment() == Register::FS {
-                    return Err("lea con fs".into());
+                    return Err("lea with fs".into());
                 }
                 let n = bits(ins, 0)?;
                 write(ins, 0, n, &ea(ins)?)
             }
             Push => {
                 let v = match ins.op0_kind() {
-                    OpKind::Register if ins.op0_register().size() != 4 => return Err("push a 16 bit".into()),
+                    OpKind::Register if ins.op0_register().size() != 4 => return Err("16-bit push".into()),
                     OpKind::Register | OpKind::Memory => read(ins, 0, 32)?,
                     _ => format!("{:#x}u", ins.immediate(0) as u32),
                 };
@@ -533,7 +533,7 @@ impl Emitter<'_> {
             }
             Pop => {
                 if bits(ins, 0)? != 32 {
-                    return Err("pop a 16 bit".into());
+                    return Err("16-bit pop".into());
                 }
                 Ok(format!("{{ u32 v = rd32(c, c->esp); c->esp += 4; {} }}", write(ins, 0, 32, "v")?))
             }
@@ -619,7 +619,7 @@ impl Emitter<'_> {
             }
             Shld | Shrd => {
                 if bits(ins, 0)? != 32 {
-                    return Err("shld/shrd a 16 bit".into());
+                    return Err("16-bit shld/shrd".into());
                 }
                 let calc = if m == Shld {
                     "r = (a << n) | (b >> (32 - n)); cf = (a >> (32 - n)) & 1;"
@@ -635,7 +635,7 @@ impl Emitter<'_> {
                 ))
             }
             Rcl | Rcr => {
-                // Rotazione attraverso il carry: su bits + 1 bit.
+                // Rotation through the carry: over bits + 1 bits.
                 let n = bits(ins, 0)?;
                 let calc = if m == Rcl {
                     format!("w = ((w << k) | (w >> ({n} + 1 - k))) & mask; r = (u{n})w; cf = (u32)(w >> {n}) & 1; of = ((r >> {}) & 1) ^ cf;", n - 1)
@@ -650,9 +650,9 @@ impl Emitter<'_> {
                 ))
             }
             Bt | Bts | Btr | Btc if ins.op0_kind() == OpKind::Memory && ins.op1_kind() == OpKind::Register => {
-                // Stringa di bit: l'indice (con segno) sceglie anche la parola, oltre al bit.
+                // Bit string: the (signed) index also selects the word, besides the bit.
                 if bits(ins, 0)? != 32 {
-                    return Err("bt su stringa di bit a 16 bit".into());
+                    return Err("bt on a 16-bit bit string".into());
                 }
                 let upd = match m {
                     Bt => "",
@@ -723,13 +723,13 @@ impl Emitter<'_> {
         }
     }
 
-    /// `mul`, `imul`, `div`, `idiv` a un operando: accumulatore implicito, 8, 16 o 32 bit.
+    /// One-operand `mul`, `imul`, `div`, `idiv`: implicit accumulator, 8, 16 or 32 bits.
     fn muldiv(&self, ins: &Instruction) -> R<String> {
         use Mnemonic::*;
         let n = bits(ins, 0)?;
         let v = read(ins, 0, n)?;
         let addr = ins.ip() as u32;
-        // (parte bassa, parte alta) dell'accumulatore doppio: ah:al, dx:ax, edx:eax.
+        // (low part, high part) of the double accumulator: ah:al, dx:ax, edx:eax.
         let (lo, hi) = match n {
             8 => (Register::AL, Register::AH),
             16 => (Register::AX, Register::DX),
@@ -754,7 +754,7 @@ impl Emitter<'_> {
                 store("(u32)q", "(u32)r")?
             ),
             Idiv => {
-                let sx = 64 - 2 * n; // estende il segno del dividendo a 2n bit (per 32 bit non serve)
+                let sx = 64 - 2 * n; // sign-extends the dividend to 2n bits (not needed for 32 bits)
                 format!(
                     "{{ s64 n = (s64)({wide} << {sx}) >> {sx}; s64 d = (s{n}){v}; \
                      if (d == 0 || (n == INT64_MIN && d == -1)) altair_trap(c, \"idiv\", {addr:#x}u); \
@@ -766,11 +766,11 @@ impl Emitter<'_> {
         })
     }
 
-    /// Istruzioni con prefisso `lock` (e `xchg` con memoria): atomiche vere sulla memoria host.
+    /// Instructions with the `lock` prefix (and `xchg` with memory): real atomics on host memory.
     fn atomic(&self, ins: &Instruction) -> R<String> {
         use Mnemonic::*;
         let m = ins.mnemonic();
-        let mem = (0..ins.op_count()).find(|&k| ins.op_kind(k) == OpKind::Memory).ok_or("lock senza operando in memoria")?;
+        let mem = (0..ins.op_count()).find(|&k| ins.op_kind(k) == OpKind::Memory).ok_or("lock without a memory operand")?;
         let n = bits(ins, mem)?;
         let p = format!("MP(u{n}, {})", ea(ins)?);
         const SEQ: &str = "__ATOMIC_SEQ_CST";
@@ -820,7 +820,7 @@ impl Emitter<'_> {
             }
             Bts | Btr | Btc => {
                 if ins.op1_kind() == OpKind::Register {
-                    return Err("lock bt su stringa di bit".into());
+                    return Err("lock bt on a bit string".into());
                 }
                 let f = match m {
                     Bts => "__atomic_fetch_or(P, bit, S)",
@@ -840,7 +840,7 @@ impl Emitter<'_> {
         })
     }
 
-    /// x87: stack di registri a 80 bit. Le operazioni sono in `runtime/altair_x87.h`.
+    /// x87: stack of 80-bit registers. The operations are in `runtime/altair_x87.h`.
     fn x87(&self, ins: &Instruction) -> R<String> {
         use Mnemonic::*;
         let m = ins.mnemonic();
@@ -860,7 +860,7 @@ impl Emitter<'_> {
                 4 => format!("(f80)rdf32(c, {a})"),
                 8 => format!("(f80)rdf64(c, {a})"),
                 10 => format!("rdf80(c, {a})"),
-                _ => return Err(format!("{m:?} con operando di {msize} byte")),
+                _ => return Err(format!("{m:?} with a {msize}-byte operand")),
             })
         };
         let iload = || -> R<String> {
@@ -869,12 +869,12 @@ impl Emitter<'_> {
                 2 => format!("(f80)(s16)rd16(c, {a})"),
                 4 => format!("(f80)(s32)rd32(c, {a})"),
                 8 => format!("(f80)(s64)rd64(c, {a})"),
-                _ => return Err(format!("{m:?} con operando di {msize} byte")),
+                _ => return Err(format!("{m:?} with a {msize}-byte operand")),
             })
         };
         let push = |v: &str| Ok(format!("fpush(c, {v});"));
 
-        // Aritmetica: (espressione su destinazione d e sorgente s, intera?, pop?)
+        // Arithmetic: (expression over destination d and source s, integer?, pop?)
         let arith = |expr: &str, int: bool, pop: bool| -> R<String> {
             let (d, s) = if mem {
                 ("ST(0)".to_string(), if int { iload()? } else { fload()? })
@@ -887,7 +887,7 @@ impl Emitter<'_> {
             };
             Ok(format!("{{ f80 s = {s}, d = {d}; {d} = {expr};{} }}", if pop { " fpop(c);" } else { "" }))
         };
-        // Confronti con ST0: (scrive i flag della CPU?, intero?, numero di pop)
+        // Comparisons with ST0: (writes the CPU flags?, integer?, number of pops)
         let compare = |cpu: bool, int: bool, pops: usize| -> R<String> {
             let other = if mem {
                 if int { iload()? } else { fload()? }
@@ -909,7 +909,7 @@ impl Emitter<'_> {
         let store_int = |trunc: bool, pop: bool| -> R<String> {
             let n = msize * 8;
             if !matches!(n, 16 | 32 | 64) {
-                return Err(format!("{m:?} con operando di {msize} byte"));
+                return Err(format!("{m:?} with a {msize}-byte operand"));
             }
             Ok(format!(
                 "wr{n}(c, {}, (u{n})x87_toi(c, ST(0), {n}, {}));{}",
@@ -932,7 +932,7 @@ impl Emitter<'_> {
                         4 => format!("wrf32(c, {a}, (float)ST(0));{pop}"),
                         8 => format!("wrf64(c, {a}, (double)ST(0));{pop}"),
                         10 => format!("wrf80(c, {a}, ST(0));{pop}"),
-                        _ => return Err(format!("{m:?} con operando di {msize} byte")),
+                        _ => return Err(format!("{m:?} with a {msize}-byte operand")),
                     })
                 } else {
                     Ok(format!("{} = ST(0);{pop}", st(0)?))
@@ -1021,8 +1021,8 @@ impl Emitter<'_> {
         }
     }
 
-    /// MMX: registri MM come mantisse dei registri x87. Riusa le operazioni a corsie di SSE
-    /// sulla metà bassa di un valore a 128 bit.
+    /// MMX: MM registers as mantissas of the x87 registers. It reuses the lane-wise SSE
+    /// operations on the low half of a 128-bit value.
     fn mmx(&self, ins: &Instruction) -> R<String> {
         use Mnemonic::*;
         let m = ins.mnemonic();
@@ -1035,7 +1035,7 @@ impl Emitter<'_> {
                 Err(format!("{m:?}"))
             }
         };
-        // Sorgente a 64 bit: registro MM o memoria.
+        // 64-bit source: MM register or memory.
         let src = |k: u32| -> R<String> {
             if kind(k) == OpKind::Memory {
                 Ok(format!("rd64(c, {})", ea(ins)?))
@@ -1048,7 +1048,7 @@ impl Emitter<'_> {
             let d = mm(0)?;
             Ok(format!("mmw(c, {d}, x_{f}(xq(mmr(c, {d})), xq({})).q[0]);", src(1)?))
         };
-        // Le varianti "alte" lavorano sulla metà alta dei 64 bit: si scorre e si usa quella bassa.
+        // The "high" variants work on the high half of the 64 bits: we shift and use the low one.
         let bin_high = |f: &str| -> R<String> {
             let d = mm(0)?;
             Ok(format!("mmw(c, {d}, x_{f}(xq(mmr(c, {d}) >> 32), xq({} >> 32)).q[0]);", src(1)?))
@@ -1146,7 +1146,7 @@ impl Emitter<'_> {
         }
     }
 
-    /// SSE e SSE2 sui registri XMM. Le operazioni sono funzioni di `runtime/altair_sse.h`.
+    /// SSE and SSE2 on the XMM registers. The operations are functions in `runtime/altair_sse.h`.
     fn sse(&self, ins: &Instruction) -> R<String> {
         use Mnemonic::*;
         let m = ins.mnemonic();
@@ -1162,7 +1162,7 @@ impl Emitter<'_> {
                 Err(format!("{m:?}"))
             }
         };
-        // Sorgente a 128 bit, oppure i soli 32 o 64 bit bassi quando l'operando è più corto.
+        // 128-bit source, or just the low 32 or 64 bits when the operand is shorter.
         let src128 = |k: u32| -> R<String> {
             if kind(k) == OpKind::Memory {
                 Ok(format!("xld(c, {})", ea(ins)?))
@@ -1311,7 +1311,7 @@ impl Emitter<'_> {
                 xmm(0)?,
                 if kind(1) == OpKind::Memory { format!("xq(rd64(c, {}))", ea(ins)?) } else { xmm(1)? }
             )),
-            // Con sorgente in memoria (con un registro MM passa da `mmx`).
+            // With a memory source (with an MM register it goes through `mmx`).
             Cvtpi2ps => Ok(format!(
                 "{{ u64 s = rd64(c, {}); {d}.f[0] = (float)(s32)s; {d}.f[1] = (float)(s32)(s >> 32); }}",
                 ea(ins)?,
@@ -1327,7 +1327,7 @@ impl Emitter<'_> {
             Pmaddwd => packed2("pmaddwd"),
             Cvttps2dq => packed1("cvttps2dq"),
             Cvtps2dq => packed1("cvtps2dq"),
-            // L'operando in memoria di `cvtps2pd` è di soli 64 bit.
+            // The memory operand of `cvtps2pd` is only 64 bits.
             Cvtps2pd => Ok(format!(
                 "{} = x_cvtps2pd({});",
                 xmm(0)?,
@@ -1411,7 +1411,7 @@ impl Emitter<'_> {
             other => return Err(format!("{other:?}")),
         };
         if ins.segment_prefix() == Register::FS || ins.segment_prefix() == Register::GS {
-            return Err("istruzione di stringa con segmento".into());
+            return Err("string instruction with a segment".into());
         }
         let acc = match n {
             8 => Register::AL,
@@ -1435,7 +1435,7 @@ impl Emitter<'_> {
         let compare = matches!(kind, "scas" | "cmps");
         let looped = if ins.has_repne_prefix() {
             if !compare {
-                return Err("repne su istruzione non di confronto".into());
+                return Err("repne on a non-comparison instruction".into());
             }
             format!("while (c->ecx) {{ c->ecx--; {body} if (zf) break; }}")
         } else if ins.has_rep_prefix() || ins.has_repe_prefix() {
@@ -1451,15 +1451,15 @@ impl Emitter<'_> {
     }
 }
 
-/// Il traduttore sa emettere questa istruzione, presa da sola?
+/// Can the translator emit this instruction, taken on its own?
 pub fn supported(ins: &Instruction) -> bool {
     let f = Func { start: 0, insns: BTreeMap::new(), labels: BTreeSet::new(), tables: HashMap::new(), calls: BTreeSet::new() };
     Emitter { f: &f, known: &|_| true }.insn(ins).is_ok()
 }
 
-/// Traduce `f`; `known` dice quali funzioni saranno definite nello stesso file.
+/// Translates `f`; `known` tells which functions will be defined in the same file.
 pub fn emit(f: &Func, known: &dyn Fn(u32) -> bool) -> R<String> {
-    // `u(BITS)` nei modelli diventa il tipo senza segno della larghezza giusta.
+    // `u(BITS)` in the templates becomes the unsigned type of the right width.
     let c = Emitter { f, known }.emit()?;
     Ok(c.replace("u(8)", "u8").replace("u(16)", "u16").replace("u(32)", "u32"))
 }

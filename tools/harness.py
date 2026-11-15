@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""Esegue funzioni dell'eseguibile originale in Unicorn: l'oracolo dei test differenziali.
+"""Runs functions of the original executable in Unicorn: the oracle of the differential tests.
 
-Uso da riga di comando (serve unicorn: usare il Python del venv):
+Command-line usage (unicorn is needed: use the venv's Python):
     .venv/bin/python tools/harness.py <exe> selftest
     .venv/bin/python tools/harness.py <exe> call 0xADDR [--ecx V] [--trace] [arg ...]
-        gli argomenti sono interi (0x..) oppure stringhe: s:testo viene copiato in memoria
-        guest e passato come puntatore
+        the arguments are integers (0x..) or strings: s:text is copied into guest
+        memory and passed as a pointer
 
-Uso da Python:
+Usage from Python:
     from harness import Guest
     g = Guest(exe)
     p = g.alloc_str(b'ShaderPermutation')
     r = g.call(0x00AB1234, [p], ecx=0)        # r.eax, r.insns, r.imports
 
-Memoria guest:
-    0x00400000  immagine PE (sezioni ai loro indirizzi; nessuna rilocazione)
-    0x10000000  heap di prova per gli argomenti (1 MB)
-    0x6FF00000  stack (1 MB), cresce verso il basso
-    0x7FFD0000  TEB (fs:[0] = fine catena SEH, fs:[0x18] = self, fs:[0x2C] = array TLS)
-    0x7F000000  trampolini degli import (16 byte ciascuno)
-    0x7FFE0000  GDT (serve solo a dare a fs la base del TEB)
-    0x7FFF0000  indirizzo di ritorno sentinella
+Guest memory:
+    0x00400000  PE image (sections at their addresses; no relocations)
+    0x10000000  test heap for the arguments (1 MB)
+    0x6FF00000  stack (1 MB), grows downwards
+    0x7FFD0000  TEB (fs:[0] = end of SEH chain, fs:[0x18] = self, fs:[0x2C] = TLS array)
+    0x7F000000  import trampolines (16 bytes each)
+    0x7FFE0000  GDT (only needed to give fs the base of the TEB)
+    0x7FFF0000  sentinel return address
 """
 import os
 import struct
@@ -45,8 +45,8 @@ TRAMP = 0x7F000000
 SENTINEL = 0x7FFF0000
 GDT = 0x7FFE0000
 PAGE = 0x1000
-STACK_CLEAR = 0x10000      # parte alta dello stack azzerata da reset()
-HEAP_CLEAR = HEAP_SIZE     # reset() azzera tutto lo heap di prova, anche la parte non allocata
+STACK_CLEAR = 0x10000      # upper part of the stack zeroed by reset()
+HEAP_CLEAR = HEAP_SIZE     # reset() zeroes the whole test heap, including the unallocated part
 
 
 class GuestError(Exception):
@@ -58,9 +58,9 @@ class Result:
         self.__dict__.update(kw)
 
     def __repr__(self):
-        return (f'eax={self.eax:#010x} edx={self.edx:#010x} tolti={self.popped} '
-                f'import={[n for n, _ in self.imports]}'
-                + (f' istruzioni={self.insns}' if self.insns is not None else ''))
+        return (f'eax={self.eax:#010x} edx={self.edx:#010x} popped={self.popped} '
+                f'imports={[n for n, _ in self.imports]}'
+                + (f' instructions={self.insns}' if self.insns is not None else ''))
 
 
 class Guest:
@@ -80,7 +80,7 @@ class Guest:
         uc.mem_map(SENTINEL, PAGE)
         self.heap_top = HEAP
 
-        # Segmenti: in modalità a 32 bit la base di fs si imposta solo tramite una GDT.
+        # Segments: in 32-bit mode the base of fs can only be set through a GDT.
         def desc(base, limit, access):
             return struct.pack('<HHBBBB', limit & 0xFFFF, base & 0xFFFF, (base >> 16) & 0xFF,
                                access, 0xC0 | ((limit >> 16) & 0xF), (base >> 24) & 0xFF)
@@ -93,9 +93,9 @@ class Guest:
             uc.reg_write(reg, 0x10)
         uc.reg_write(UC_X86_REG_FS, 0x18)
 
-        # Import: ogni cella IAT punta a un trampolino; l'hook decide cosa fare.
-        self.imports = {}                          # indirizzo del trampolino -> (dll, nome)
-        self.handlers = {}                         # nome -> funzione(guest, args_reader) -> (eax, byte da togliere)
+        # Imports: each IAT cell points to a trampoline; the hook decides what to do.
+        self.imports = {}                          # trampoline address -> (dll, name)
+        self.handlers = {}                         # name -> function(guest, args_reader) -> (eax, bytes to pop)
         for i, (dll, fn, slot) in enumerate(iat_entries(pe)):
             t = TRAMP + 16 * i
             self.imports[t] = (dll, fn)
@@ -104,8 +104,8 @@ class Guest:
 
         self._log = []
         self._insns = 0
-        # L'hook costa una chiamata Python per istruzione: di norma copre solo i trampolini
-        # degli import. Con trace=True copre tutto, e conta le istruzioni.
+        # The hook costs one Python call per instruction: normally it covers only the import
+        # trampolines. With trace=True it covers everything, and counts the instructions.
         self.trace = trace
         if trace:
             uc.hook_add(UC_HOOK_CODE, self._on_code)
@@ -113,9 +113,9 @@ class Guest:
             uc.hook_add(UC_HOOK_CODE, self._on_code, begin=TRAMP, end=TRAMP + 0x10000)
         uc.hook_add(UC_HOOK_MEM_UNMAPPED | UC_HOOK_MEM_WRITE_PROT, self._on_unmapped)
         self._fault = None
-        # Sezioni che il codice può scrivere: si ripristinano tra un caso e l'altro. Le altre
-        # sono protette in scrittura, così un puntatore sbagliato ferma il caso invece di
-        # sporcare codice e costanti per i casi successivi.
+        # Sections the code may write to: they are restored between one case and the next. The others
+        # are write-protected, so a wrong pointer stops the case instead of
+        # dirtying code and constants for the following cases.
         self._writable = []
         for name, va, vs, raw, rs in pe.sections:
             size = max(vs, rs)
@@ -124,11 +124,11 @@ class Guest:
             else:
                 self._writable.append((base + va, pe.data[raw:raw + min(rs, size)].ljust(size, b'\0')))
 
-    # --- memoria ---------------------------------------------------------
+    # --- memory ----------------------------------------------------------
     def alloc(self, size, align=16):
         a = (self.heap_top + align - 1) & ~(align - 1)
         if a + size > HEAP + HEAP_SIZE:
-            raise GuestError('heap di prova esaurito')
+            raise GuestError('test heap exhausted')
         self.heap_top = a + size
         return a
 
@@ -150,7 +150,7 @@ class Guest:
         return struct.unpack('<I', self.read(addr, 4))[0]
 
     def reset(self):
-        """Riporta sezioni scrivibili, heap di prova e stack allo stato iniziale."""
+        """Brings writable sections, test heap and stack back to their initial state."""
         for va, data in self._writable:
             self.uc.mem_write(va, data)
         self.uc.mem_write(STACK_TOP - STACK_CLEAR, bytes(STACK_CLEAR))
@@ -159,7 +159,7 @@ class Guest:
         self.uc.mem_write(HEAP, bytes(max(self.heap_top - HEAP, HEAP_CLEAR)))
         self.heap_top = HEAP
 
-    # --- hook ------------------------------------------------------------
+    # --- hooks -----------------------------------------------------------
     def _on_code(self, uc, addr, size, _):
         self._insns += 1
         if self.trace and addr < TRAMP:
@@ -172,7 +172,7 @@ class Guest:
             self._log.append((name, ret))
             h = self.handlers.get(name)
             if h is None:
-                self._fault = f'import non gestito: {dll}!{fn} (chiamato da {ret:#010x})'
+                self._fault = f'unhandled import: {dll}!{fn} (called from {ret:#010x})'
                 uc.emu_stop()
                 return
             eax, pop = h(self, lambda i: self.u32(esp + 4 + 4 * i))
@@ -182,12 +182,12 @@ class Guest:
 
     def _on_unmapped(self, uc, access, addr, size, value, _):
         eip = uc.reg_read(UC_X86_REG_EIP)
-        self._fault = f'accesso a memoria non mappata o protetta {addr:#010x} da eip={eip:#010x}'
+        self._fault = f'access to unmapped or protected memory {addr:#010x} from eip={eip:#010x}'
         return False
 
-    # --- chiamata --------------------------------------------------------
+    # --- call ------------------------------------------------------------
     def _x87(self):
-        """(cima dello stack, gli otto registri fisici come 10 byte ciascuno)."""
+        """(top of the stack, the eight physical registers as 10 bytes each)."""
         regs = []
         for i in range(8):
             mant, exp = self.uc.reg_read(UC_X86_REG_FP0 + i)
@@ -195,16 +195,16 @@ class Guest:
         return (self.uc.reg_read(UC_X86_REG_FPSW) >> 11) & 7, tuple(regs)
 
     def image_state(self):
-        """Contenuto attuale delle sezioni scrivibili (per i confronti)."""
+        """Current contents of the writable sections (for comparisons)."""
         return b''.join(self.read(va, len(data)) for va, data in self._writable)
 
     def call(self, addr, args=(), ecx=0, edx=0, max_insns=5_000_000, xmm=None):
-        """Chiama `addr` con gli argomenti sullo stack (cdecl/stdcall/thiscall con ecx).
-        `xmm`: otto interi a 128 bit con il valore iniziale dei registri XMM (default zero)."""
+        """Calls `addr` with the arguments on the stack (cdecl/stdcall/thiscall with ecx).
+        `xmm`: eight 128-bit integers with the initial value of the XMM registers (default zero)."""
         uc = self.uc
         teb = bytearray(PAGE * 2)
-        struct.pack_into('<I', teb, 0x00, 0xFFFFFFFF)            # fine della catena SEH
-        struct.pack_into('<I', teb, 0x04, STACK_TOP)             # base dello stack
+        struct.pack_into('<I', teb, 0x00, 0xFFFFFFFF)            # end of the SEH chain
+        struct.pack_into('<I', teb, 0x04, STACK_TOP)             # stack base
         struct.pack_into('<I', teb, 0x08, STACK_TOP - STACK_SIZE)
         struct.pack_into('<I', teb, 0x18, TEB)                   # self
         struct.pack_into('<I', teb, 0x2C, TEB + PAGE)            # ThreadLocalStoragePointer
@@ -219,16 +219,16 @@ class Guest:
                        (UC_X86_REG_EDX, edx), (UC_X86_REG_EAX, 0), (UC_X86_REG_EBX, 0),
                        (UC_X86_REG_ESI, 0), (UC_X86_REG_EDI, 0)):
             uc.reg_write(reg, v & 0xFFFFFFFF)
-        # I flag vanno azzerati: una funzione interrotta può lasciare impostato il flag di
-        # direzione, e le `rep movs`/`rep stos` successive andrebbero all'indietro.
+        # The flags must be cleared: an interrupted function can leave the direction flag
+        # set, and the following `rep movs`/`rep stos` would run backwards.
         uc.reg_write(UC_X86_REG_EFLAGS, 0x202)
         for i in range(8):
             uc.reg_write(UC_X86_REG_XMM0 + i, xmm[i] if xmm else 0)
-        # Scrivere il registro MXCSR dall'esterno non aggiorna lo stato interno dell'emulatore
-        # (arrotondamento, flush-to-zero, denormali): un `ldmxcsr` eseguito da una funzione
-        # resterebbe attivo per le chiamate successive. Lo si reimposta eseguendo l'istruzione.
-        # Lo stesso vale per l'x87: `fninit` e `fldcw` con la parola di controllo di Windows
-        # (0x027F, precisione a 53 bit), poi registri azzerati.
+        # Writing the MXCSR register from outside does not update the emulator's internal state
+        # (rounding, flush-to-zero, denormals): an `ldmxcsr` executed by a function
+        # would stay in effect for the following calls. It is reset by executing the instruction.
+        # The same goes for the x87: `fninit` and `fldcw` with Windows' control word
+        # (0x027F, 53-bit precision), then registers zeroed.
         uc.mem_write(SENTINEL + 0x100, b'\x0f\xae\x15' + struct.pack('<I', SENTINEL + 0x200)
                      + b'\xdb\xe3\xd9\x2d' + struct.pack('<I', SENTINEL + 0x204))
         uc.mem_write(SENTINEL + 0x200, struct.pack('<IH', 0x1F80, 0x027F))
@@ -239,18 +239,18 @@ class Guest:
         try:
             uc.emu_start(addr, SENTINEL, count=max_insns)
         except UcError as e:
-            raise GuestError(self._fault or f'{e} a eip={uc.reg_read(UC_X86_REG_EIP):#010x}')
+            raise GuestError(self._fault or f'{e} at eip={uc.reg_read(UC_X86_REG_EIP):#010x}')
         if self._fault:
             raise GuestError(self._fault)
         if uc.reg_read(UC_X86_REG_EIP) != SENTINEL:
-            raise GuestError(f'limite di {max_insns} istruzioni raggiunto')
+            raise GuestError(f'limit of {max_insns} instructions reached')
         regs = tuple(uc.reg_read(r) for r in (UC_X86_REG_EAX, UC_X86_REG_ECX, UC_X86_REG_EDX, UC_X86_REG_EBX,
                                               UC_X86_REG_EBP, UC_X86_REG_ESI, UC_X86_REG_EDI))
         return Result(eax=regs[0], ecx=regs[1], edx=regs[2], regs=regs,
                       xmm=tuple(uc.reg_read(UC_X86_REG_XMM0 + i) for i in range(8)),
                       x87=self._x87(),
                       st0=uc.reg_read(UC_X86_REG_ST0),
-                      popped=(uc.reg_read(UC_X86_REG_ESP) - esp0 - 4) & 0xFFFFFFFF,   # byte tolti dal chiamato
+                      popped=(uc.reg_read(UC_X86_REG_ESP) - esp0 - 4) & 0xFFFFFFFF,   # bytes popped by the callee
                       insns=self._insns if self.trace else None, imports=list(self._log))
 
 
@@ -261,24 +261,24 @@ def _selftest(exe):
     for name, addr, fn in SELFTESTS:
         try:
             passed = fn(g, addr, zlib)
-            print(f'{"ok     " if passed else "FALLITO"} {name} @ {addr:#010x}')
+            print(f'{"ok    " if passed else "FAILED"} {name} @ {addr:#010x}')
             ok &= passed
             g.reset()
         except GuestError as e:
-            print(f'FALLITO {name}: {e}')
+            print(f'FAILED {name}: {e}')
             ok = False
-    print('selftest:', 'OK' if ok else 'FALLITO')
+    print('selftest:', 'OK' if ok else 'FAILED')
     return 0 if ok else 1
 
 
 def _t_strlen(g, addr, zlib):
     for n in (0, 1, 3, 4, 5, 31, 32, 255, 1000):
-        for shift in range(4):                      # tutti gli allineamenti
+        for shift in range(4):                      # all the alignments
             p = g.alloc(n + 8) + shift
             g.write(p, b'x' * n + b'\0')
             r = g.call(addr, [p])
             if r.eax != n:
-                print(f'strlen({n}, allineamento {shift}) = {r.eax}')
+                print(f'strlen({n}, alignment {shift}) = {r.eax}')
                 return False
     return True
 
@@ -292,13 +292,13 @@ def _t_strcmp(g, addr, zlib):
         got = struct.unpack('<i', struct.pack('<I', r.eax))[0]
         want = (x > y) - (x < y)
         if (got > 0) - (got < 0) != want:
-            print(f'strcmp({x!r}, {y!r}) = {got}, atteso segno {want}')
+            print(f'strcmp({x!r}, {y!r}) = {got}, expected sign {want}')
             return False
     return True
 
 
 def _t_memcpy(g, addr, zlib):
-    # Percorre le jump table del memcpy di MSVC: ogni lunghezza e ogni allineamento.
+    # Walks the jump tables of MSVC's memcpy: every length and every alignment.
     src0 = g.alloc(600)
     data = bytes((i * 7 + 3) & 0xFF for i in range(600))
     g.write(src0, data)
@@ -308,13 +308,13 @@ def _t_memcpy(g, addr, zlib):
                 dst = g.alloc(n + 16) + da
                 r = g.call(addr, [dst, src0 + sa, n])
                 if r.eax != dst or g.read(dst, n) != data[sa:sa + n]:
-                    print(f'memcpy(n={n}, src+{sa}, dst+{da}) errato')
+                    print(f'memcpy(n={n}, src+{sa}, dst+{da}) wrong')
                     return False
     return True
 
 
-# (nome, indirizzo nella build Steam DX9, prova). Gli indirizzi sono stati trovati dalle firme
-# di byte delle routine assembly del CRT di MSVC 8; vedi docs/analisi/harness.md.
+# (name, address in the Steam DX9 build, test). The addresses were found from the byte
+# signatures of the assembly routines of the MSVC 8 CRT; see docs/analysis/harness.md.
 SELFTESTS = [
     ('strlen', 0x00FA6790, _t_strlen),
     ('strcmp', 0x00FA9760, _t_strcmp),
@@ -341,7 +341,7 @@ def main(argv):
         try:
             print(g.call(addr, args, ecx=ecx))
         except GuestError as e:
-            sys.exit(f'errore: {e}')
+            sys.exit(f'error: {e}')
         return
     sys.exit(__doc__)
 

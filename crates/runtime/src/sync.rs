@@ -1,4 +1,4 @@
-//! Oggetti del kernel su cui si può aspettare: eventi, semafori, thread.
+//! Kernel objects that can be waited on: events, semaphores, threads.
 
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -9,15 +9,15 @@ pub enum Kind {
     Thread,
 }
 
-/// `state` è: per un evento 0/1 (segnalato); per un semaforo il conteggio; per un thread 1 quando
-/// è terminato.
+/// `state` is: for an event 0/1 (signalled); for a semaphore the count; for a thread 1 when
+/// it has terminated.
 pub struct Object {
     pub kind: Kind,
     state: Mutex<i64>,
     cv: Condvar,
-    /// Thread: codice d'uscita. Altrimenti inutilizzato.
+    /// Thread: exit code. Otherwise unused.
     pub exit_code: Mutex<u32>,
-    /// Thread creato sospeso: parte quando diventa true.
+    /// Thread created suspended: it starts when this becomes true.
     pub gate: Mutex<bool>,
     pub gate_cv: Condvar,
 }
@@ -34,7 +34,7 @@ impl Object {
         }
     }
 
-    /// Prova a prendere l'oggetto senza aspettare.
+    /// Tries to take the object without waiting.
     fn take(&self, s: &mut i64) -> bool {
         if *s <= 0 {
             return false;
@@ -52,7 +52,7 @@ impl Object {
         self.take(&mut s)
     }
 
-    /// Aspetta al più `ms` millisecondi (`None` = per sempre). True se l'oggetto è stato preso.
+    /// Waits at most `ms` milliseconds (`None` = forever). True if the object was taken.
     pub fn wait(&self, ms: Option<u32>) -> bool {
         let deadline = ms.map(|m| Instant::now() + Duration::from_millis(m as u64));
         let mut s = self.state.lock().unwrap();
@@ -82,7 +82,7 @@ impl Object {
         *self.state.lock().unwrap() = 0;
     }
 
-    /// `ReleaseSemaphore`: ritorna il conteggio precedente, o None se supererebbe il massimo.
+    /// `ReleaseSemaphore`: returns the previous count, or None if it would exceed the maximum.
     pub fn release(&self, n: i64) -> Option<i64> {
         let mut s = self.state.lock().unwrap();
         let Kind::Semaphore { max } = self.kind else { return None };

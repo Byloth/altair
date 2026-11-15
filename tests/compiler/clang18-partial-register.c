@@ -1,15 +1,15 @@
-/* Riproduzione di una miscompilazione di clang 18.1.3 (Ubuntu 24.04), trovata il 2026-11-14
- * dal test differenziale sulla funzione 0x0099BC40.
+/* Reproduction of a miscompilation by clang 18.1.3 (Ubuntu 24.04), found on 2026-11-14
+ * by the differential test on function 0x0099BC40.
  *
- *   x = (x & 0xffffff00) | (u8)mem[x];      con x appena caricato dalla memoria
+ *   x = (x & 0xffffff00) | (u8)mem[x];      with x just loaded from memory
  *
- * Da -O1 in su clang scrive in x il solo byte, esteso con zeri, e perde i 24 bit alti.
- * Risultato atteso: 0x133. clang -O0 e gcc -O2: 0x133. clang -O1/-O2: 0x33.
+ * From -O1 upwards clang writes only the byte into x, zero-extended, and loses the upper 24 bits.
+ * Expected result: 0x133. clang -O0 and gcc -O2: 0x133. clang -O1/-O2: 0x33.
  *
  *   clang -O2 tests/compiler/clang18-partial-register.c -o /tmp/t && /tmp/t
  *
- * Per questo il codice generato scrive i registri a 8 e 16 bit con le macro SET8L, SET8H e
- * SET16 di runtime/altair.h (scritture strette dirette) invece che con maschera e OR.
+ * This is why the generated code writes the 8- and 16-bit registers with the SET8L, SET8H and
+ * SET16 macros of runtime/altair.h (direct narrow writes) instead of with mask and OR.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -34,6 +34,6 @@ int main(void) {
     u32 v = 0x00000100; memcpy(mem + 8, &v, 4); mem[0x100] = 0x33;
     Ctx c = {0, 0x12345678, 0, 0, mem};
     f(&c);
-    printf("%#x %s\n", c.ecx, c.ecx == 0x133 ? "ok" : "MISCOMPILATO");
+    printf("%#x %s\n", c.ecx, c.ecx == 0x133 ? "ok" : "MISCOMPILED");
     return c.ecx != 0x133;
 }

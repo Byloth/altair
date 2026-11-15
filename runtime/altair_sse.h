@@ -1,13 +1,13 @@
-/* SSE/SSE2 per il codice generato, in C portabile.
+/* SSE/SSE2 for the generated code, in portable C.
  *
- * Ogni operazione lavora corsia per corsia con l'aritmetica IEEE del C: sugli host x86-64 il
- * compilatore la traduce nelle stesse istruzioni SSE dell'originale, quindi i risultati
- * coincidono bit per bit (arrotondamento compreso, perché durante l'esecuzione guest l'MXCSR
- * dell'host è quello del guest). Va compilato senza -ffast-math e con -ffp-contract=off.
+ * Every operation works lane by lane with C's IEEE arithmetic: on x86-64 hosts the
+ * compiler translates it into the same SSE instructions as the original, so the results
+ * match bit for bit (rounding included, because during guest execution the host's MXCSR
+ * is the guest's one). It must be compiled without -ffast-math and with -ffp-contract=off.
  *
- * Differenze note rispetto all'hardware, scelte per coincidere con l'emulatore di riferimento:
- * `rsqrt*` e `rcp*` sono esatti (1/sqrt(x), 1/x), mentre le CPU reali danno 12 bit.
- * Su host non x86 andranno riviste la propagazione dei NaN e le conversioni.
+ * Known differences from the hardware, chosen to match the reference emulator:
+ * `rsqrt*` and `rcp*` are exact (1/sqrt(x), 1/x), whereas real CPUs give 12 bits.
+ * On non-x86 hosts NaN propagation and the conversions will have to be revisited.
  */
 #ifndef ALTAIR_SSE_H
 #define ALTAIR_SSE_H
@@ -18,15 +18,15 @@ static inline float rdf32(Ctx *c, u32 a) { float v; memcpy(&v, c->mem + a, 4); r
 static inline double rdf64(Ctx *c, u32 a) { double v; memcpy(&v, c->mem + a, 8); return v; }
 static inline Xmm xld(Ctx *c, u32 a) { Xmm v; memcpy(&v, c->mem + a, 16); return v; }
 static inline void xst(Ctx *c, u32 a, Xmm v) { memcpy(c->mem + a, &v, 16); }
-/* Carica 64 o 32 bit e azzera il resto, come `movq`/`movd`/`movss` da memoria. */
+/* Loads 64 or 32 bits and zeroes the rest, like `movq`/`movd`/`movss` from memory. */
 static inline Xmm xq(u64 v) { Xmm r = {.q = {v, 0}}; return r; }
 static inline Xmm xd(u32 v) { Xmm r = {.d = {v, 0, 0, 0}}; return r; }
 
-/* Confronti: `comiss`/`ucomiss`/`comisd`/`ucomisd` scrivono zf, pf, cf e azzerano gli altri. */
+/* Comparisons: `comiss`/`ucomiss`/`comisd`/`ucomisd` write zf, pf, cf and clear the others. */
 #define X_COMI(a, b) \
     { int un = (a) != (a) || (b) != (b); zf = un || (a) == (b); pf = un; cf = un || (a) < (b); of = sf = af = 0; }
 
-/* Predicati di `cmpps`/`cmpss`/`cmppd`/`cmpsd` (imm8 da 0 a 7). */
+/* Predicates of `cmpps`/`cmpss`/`cmppd`/`cmpsd` (imm8 from 0 to 7). */
 #define X_CMP(x, y, imm, out) \
     switch ((imm) & 7) { \
     case 0: out = (x) == (y); break; \
@@ -39,7 +39,7 @@ static inline Xmm xd(u32 v) { Xmm r = {.d = {v, 0, 0, 0}}; return r; }
     default: out = !((x) != (x) || (y) != (y)); break; \
     }
 
-/* Conversioni verso intero: fuori intervallo o NaN danno 0x80000000, come su x86. */
+/* Conversions to integer: out of range or NaN give 0x80000000, as on x86. */
 static inline u32 x_f2i(double x) { return (x >= -2147483648.0 && x < 2147483648.0) ? (u32)(s32)x : 0x80000000u; }
 
 #define X_PS2(name, expr) \
@@ -71,7 +71,7 @@ X_PS2(addps, x + y)
 X_PS2(subps, x - y)
 X_PS2(mulps, x * y)
 X_PS2(divps, x / y)
-/* min/max di x86: se uno è NaN o sono uguali, vince il secondo operando. */
+/* x86 min/max: if one is NaN or they are equal, the second operand wins. */
 X_PS2(minps, x < y ? x : y)
 X_PS2(maxps, x > y ? x : y)
 X_PD2(addpd, x + y)

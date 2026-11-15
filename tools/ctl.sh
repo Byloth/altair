@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Manda comandi al gioco in esecuzione (avviato con ALTAIR_CTL=run/ctl) e aspetta che li esegua.
-# Uso: tools/ctl.sh "key 28" "shot a.png"      (dalla radice del progetto)
-# Comandi: key DIK [fotogrammi] | text TESTO | shot FILE.png | quit
+# Sends commands to the running game (started with ALTAIR_CTL=run/ctl) and waits for it to execute them.
+# Usage: tools/ctl.sh "key 28" "shot a.png"      (from the project root)
+# Commands: key DIK [frames] | text TEXT | shot FILE.png | quit
 set -euo pipefail
 cd "$(dirname "$0")/.."
 dir="${ALTAIR_CTL:-run/ctl}"
-rm -f "$dir/stato"
+rm -f "$dir/status"
 printf '%s\n' "$@" > "$dir/cmd.tmp"
 mv "$dir/cmd.tmp" "$dir/cmd"
 for _ in $(seq "${ALTAIR_CTL_WAIT:-600}"); do
-  [ -f "$dir/stato" ] && { echo "fotogramma $(cat "$dir/stato")"; exit 0; }
+  [ -f "$dir/status" ] && { echo "frame $(cat "$dir/status")"; exit 0; }
   sleep 0.1
 done
-echo "il gioco non ha risposto" >&2; exit 1
+echo "the game did not respond" >&2; exit 1

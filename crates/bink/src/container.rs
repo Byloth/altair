@@ -1,11 +1,11 @@
-//! Il contenitore Bink: intestazione, tracce audio, indice dei fotogrammi.
+//! The Bink container: header, audio tracks, frame index.
 //!
 //! ```text
-//! "BIK" + revisione, u32 dimensione - 8, u32 fotogrammi, u32 fotogramma più grande, u32,
-//! u32 larghezza, u32 altezza, u32 fps numeratore, u32 fps denominatore, u32 flag video,
-//! u32 tracce audio; per traccia u32 (dimensione massima), poi u16 frequenza + u16 flag,
-//! poi u32 id; infine fotogrammi + 1 offset u32 (bit 0 = fotogramma chiave).
-//! Ogni fotogramma: per traccia u32 lunghezza + dati audio; poi il video.
+//! "BIK" + revision, u32 size - 8, u32 frames, u32 largest frame, u32,
+//! u32 width, u32 height, u32 fps numerator, u32 fps denominator, u32 video flags,
+//! u32 audio tracks; per track u32 (maximum size), then u16 sample rate + u16 flags,
+//! then u32 id; finally frames + 1 u32 offsets (bit 0 = keyframe).
+//! Each frame: per track u32 length + audio data; then the video.
 //! ```
 
 use crate::{Error, Result};
@@ -19,15 +19,15 @@ const AUDIO_STEREO: u16 = 0x2000;
 pub struct AudioTrack {
     pub sample_rate: u32,
     pub channels: u32,
-    /// Trasformata usata: DCT, altrimenti RDFT (non gestita).
+    /// Transform used: DCT, otherwise RDFT (not supported).
     pub dct: bool,
     pub id: u32,
 }
 
-/// Un fotogramma del contenitore, diviso nelle sue parti.
+/// A frame of the container, split into its parts.
 pub struct Packet {
     pub keyframe: bool,
-    /// Un pacchetto audio per traccia (vuoto se la traccia non ha dati in questo fotogramma).
+    /// One audio packet per track (empty if the track has no data in this frame).
     pub audio: Vec<Vec<u8>>,
     pub video: Vec<u8>,
 }
@@ -41,7 +41,7 @@ pub struct Bink<R> {
     pub fps_den: u32,
     pub video_flags: u32,
     pub tracks: Vec<AudioTrack>,
-    /// (offset, dimensione, fotogramma chiave) di ogni fotogramma.
+    /// (offset, size, keyframe) of each frame.
     index: Vec<(u64, u32, bool)>,
 }
 
@@ -51,19 +51,19 @@ impl<R: Read + Seek> Bink<R> {
         reader.read_exact(&mut head)?;
         let field = |i: usize| u32::from_le_bytes(head[i..i + 4].try_into().unwrap());
         if &head[..3] != b"BIK" {
-            return Err(Error::Unsupported("non è un file Bink 1".into()));
+            return Err(Error::Unsupported("not a Bink 1 file".into()));
         }
         let revision = head[3];
         if !matches!(revision, b'f' | b'g' | b'h' | b'i') {
-            return Err(Error::Unsupported(format!("revisione Bink '{}' non gestita", revision as char)));
+            return Err(Error::Unsupported(format!("Bink revision '{}' not supported", revision as char)));
         }
         let (file_size, frames) = (field(4) as u64 + 8, field(8));
         let (width, height, fps_num, fps_den, video_flags, track_count) = (field(20), field(24), field(28), field(32), field(36), field(40));
         if frames == 0 || frames > 1_000_000 || width == 0 || height == 0 || width > 7680 || height > 4800 || fps_num == 0 || fps_den == 0 || track_count > 256 {
-            return Err(Error::Unsupported("intestazione Bink non valida".into()));
+            return Err(Error::Unsupported("invalid Bink header".into()));
         }
         if video_flags & FLAG_ALPHA != 0 {
-            return Err(Error::Unsupported("Bink con canale alfa non gestito".into()));
+            return Err(Error::Unsupported("Bink with alpha channel not supported".into()));
         }
         let mut u32s = |n: usize| -> Result<Vec<u32>> {
             let mut raw = vec![0u8; 4 * n];
@@ -88,7 +88,7 @@ impl<R: Read + Seek> Bink<R> {
             let start = (offsets[i] & !1) as u64;
             let end = if i + 1 == frames as usize { file_size } else { (offsets[i + 1] & !1) as u64 };
             if end <= start || end - start > u32::MAX as u64 {
-                return Err(Error::Unsupported("indice dei fotogrammi non valido".into()));
+                return Err(Error::Unsupported("invalid frame index".into()));
             }
             index.push((start, (end - start) as u32, offsets[i] & 1 != 0));
         }
@@ -99,23 +99,23 @@ impl<R: Read + Seek> Bink<R> {
         self.index.len() as u32
     }
 
-    /// Dimensione su disco di un fotogramma e se è un fotogramma chiave.
+    /// Size on disk of a frame and whether it is a keyframe.
     pub fn frame_info(&self, frame: u32) -> Option<(u32, bool)> {
         self.index.get(frame as usize).map(|e| (e.1, e.2))
     }
 
-    /// Legge un fotogramma (da 0) e lo divide in audio e video.
+    /// Reads a frame (from 0) and splits it into audio and video.
     pub fn packet(&mut self, frame: u32) -> Result<Packet> {
-        let &(offset, size, keyframe) = self.index.get(frame as usize).ok_or(Error::Invalid("fotogramma oltre la fine"))?;
+        let &(offset, size, keyframe) = self.index.get(frame as usize).ok_or(Error::Invalid("frame past the end"))?;
         self.reader.seek(SeekFrom::Start(offset))?;
         let mut data = vec![0u8; size as usize];
         self.reader.read_exact(&mut data)?;
         let mut pos = 0usize;
         let mut audio = Vec::with_capacity(self.tracks.len());
         for _ in 0..self.tracks.len() {
-            let len = data.get(pos..pos + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize).ok_or(Error::Invalid("pacchetto audio troncato"))?;
+            let len = data.get(pos..pos + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize).ok_or(Error::Invalid("truncated audio packet"))?;
             pos += 4;
-            let body = data.get(pos..pos + len).ok_or(Error::Invalid("pacchetto audio oltre il fotogramma"))?;
+            let body = data.get(pos..pos + len).ok_or(Error::Invalid("audio packet past the frame"))?;
             audio.push(body.to_vec());
             pos += len;
         }

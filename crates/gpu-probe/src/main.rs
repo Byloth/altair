@@ -1,10 +1,10 @@
-//! Prove della catena grafica su questa macchina (vedi docs/analisi/d3d9.md).
+//! Tests of the graphics stack on this machine (see docs/analysis/d3d9.md).
 //!
-//!   altair-gpu-probe                 elenca gli adattatori che wgpu vede
-//!   altair-gpu-probe triangle F.png  disegna un triangolo fuori schermo e lo salva
-//!   altair-gpu-probe window [sec]    apre una finestra con il triangolo per qualche secondo
+//!   altair-gpu-probe                 lists the adapters wgpu sees
+//!   altair-gpu-probe triangle F.png  draws a triangle off-screen and saves it
+//!   altair-gpu-probe window [sec]    opens a window with the triangle for a few seconds
 //!
-//! Per usare la GPU da WSL: GALLIUM_DRIVER=d3d12 LD_LIBRARY_PATH=/usr/lib/wsl/lib
+//! To use the GPU from WSL: GALLIUM_DRIVER=d3d12 LD_LIBRARY_PATH=/usr/lib/wsl/lib
 
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
@@ -28,17 +28,17 @@ fn instance() -> wgpu::Instance {
 
 fn describe(a: &wgpu::Adapter) -> String {
     let i = a.get_info();
-    format!("{:?} | {} | tipo {:?} | {}", i.backend, i.name, i.device_type, i.driver_info)
+    format!("{:?} | {} | type {:?} | {}", i.backend, i.name, i.device_type, i.driver_info)
 }
 
-/// L'adattatore migliore: prima una GPU vera, poi quello che c'è.
+/// The best adapter: a real GPU first, then whatever is there.
 fn pick(instance: &wgpu::Instance, surface: Option<&wgpu::Surface>) -> wgpu::Adapter {
     let mut all = instance.enumerate_adapters(wgpu::Backends::all());
     if let Some(s) = surface {
         all.retain(|a| a.is_surface_supported(s));
     }
     all.sort_by_key(|a| a.get_info().device_type == wgpu::DeviceType::Cpu);
-    all.into_iter().next().expect("nessun adattatore grafico utilizzabile")
+    all.into_iter().next().expect("no usable graphics adapter")
 }
 
 fn pipeline(device: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
@@ -80,7 +80,7 @@ fn draw(device: &wgpu::Device, queue: &wgpu::Queue, pipeline: &wgpu::RenderPipel
 fn triangle(path: &str) {
     let instance = instance();
     let adapter = pick(&instance, None);
-    println!("adattatore: {}", describe(&adapter));
+    println!("adapter: {}", describe(&adapter));
     let (device, queue) = pollster::block_on(adapter.request_device(&Default::default(), None)).expect("device");
     let (w, h) = (640u32, 360u32);
     let format = wgpu::TextureFormat::Rgba8Unorm;
@@ -105,7 +105,7 @@ fn triangle(path: &str) {
         wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
     );
     queue.submit([enc.finish()]);
-    buf.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("lettura del buffer"));
+    buf.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("buffer read"));
     device.poll(wgpu::Maintain::Wait);
     let data = buf.slice(..).get_mapped_range();
     let mut pixels = Vec::with_capacity((w * h * 4) as usize);
@@ -113,11 +113,11 @@ fn triangle(path: &str) {
         let start = (y * row) as usize;
         pixels.extend_from_slice(&data[start..start + (w * 4) as usize]);
     }
-    let mut enc = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(path).expect("file di uscita")), w, h);
+    let mut enc = png::Encoder::new(std::io::BufWriter::new(std::fs::File::create(path).expect("output file")), w, h);
     enc.set_color(png::ColorType::Rgba);
     enc.write_header().unwrap().write_image_data(&pixels).unwrap();
     let lit = pixels.chunks(4).filter(|p| p[0] > 40 || p[1] > 40 || p[2] > 60).count();
-    println!("scritto {path}: {w}x{h}, {lit} pixel colorati dal triangolo");
+    println!("wrote {path}: {w}x{h}, {lit} pixels colored by the triangle");
 }
 
 struct App {
@@ -132,15 +132,15 @@ impl ApplicationHandler for App {
         if self.state.is_some() {
             return;
         }
-        let window = Arc::new(el.create_window(Window::default_attributes().with_title("Altair: prova grafica").with_inner_size(winit::dpi::LogicalSize::new(640, 360))).expect("finestra"));
+        let window = Arc::new(el.create_window(Window::default_attributes().with_title("Altair: graphics test").with_inner_size(winit::dpi::LogicalSize::new(640, 360))).expect("window"));
         let instance = instance();
-        let surface = instance.create_surface(window.clone()).expect("superficie");
+        let surface = instance.create_surface(window.clone()).expect("surface");
         let adapter = pick(&instance, Some(&surface));
-        println!("adattatore: {}", describe(&adapter));
+        println!("adapter: {}", describe(&adapter));
         let (device, queue) = pollster::block_on(adapter.request_device(&Default::default(), None)).expect("device");
         let size = window.inner_size();
-        let config = surface.get_default_config(&adapter, size.width.max(1), size.height.max(1)).expect("configurazione della superficie");
-        println!("superficie: {}x{} {:?}", config.width, config.height, config.format);
+        let config = surface.get_default_config(&adapter, size.width.max(1), size.height.max(1)).expect("surface configuration");
+        println!("surface: {}x{} {:?}", config.width, config.height, config.format);
         surface.configure(&device, &config);
         let pipe = pipeline(&device, config.format);
         self.start = std::time::Instant::now();
@@ -160,7 +160,7 @@ impl ApplicationHandler for App {
                     self.frames += 1;
                 }
                 if self.start.elapsed().as_secs_f32() >= self.seconds {
-                    println!("{} fotogrammi presentati in {:.1} s", self.frames, self.start.elapsed().as_secs_f32());
+                    println!("{} frames presented in {:.1} s", self.frames, self.start.elapsed().as_secs_f32());
                     el.exit();
                 } else {
                     window.request_redraw();
@@ -185,17 +185,17 @@ fn main() {
             let seconds = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(5.0);
             let el = EventLoop::new().expect("event loop");
             let mut app = App { seconds, start: std::time::Instant::now(), state: None, frames: 0 };
-            el.run_app(&mut app).expect("ciclo degli eventi");
+            el.run_app(&mut app).expect("event loop run");
         }
         _ => {
             let adapters = instance().enumerate_adapters(wgpu::Backends::all());
             if adapters.is_empty() {
-                println!("nessun adattatore trovato");
+                println!("no adapter found");
             }
             for a in adapters {
                 let (l, f) = (a.limits(), a.features());
-                println!("{} | texture 2D max {} | render target {}", describe(&a), l.max_texture_dimension_2d, l.max_color_attachments);
-                println!("    compressione BC (DXT): {} | float32 filtrabile: {}", f.contains(wgpu::Features::TEXTURE_COMPRESSION_BC), f.contains(wgpu::Features::FLOAT32_FILTERABLE));
+                println!("{} | max 2D texture {} | render targets {}", describe(&a), l.max_texture_dimension_2d, l.max_color_attachments);
+                println!("    BC (DXT) compression: {} | filterable float32: {}", f.contains(wgpu::Features::TEXTURE_COMPRESSION_BC), f.contains(wgpu::Features::FLOAT32_FILTERABLE));
             }
         }
     }

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Mappa degli import di un PE32: nome, cella IAT, riferimenti nel codice, categoria.
+"""Map of the imports of a PE32: name, IAT cell, references in the code, category.
 
-Uso:
-    python3 -I tools/imports.py <exe>          tabelle Markdown per DLL
-    python3 -I tools/imports.py <exe> --guids  GUID COM noti presenti nell'immagine
+Usage:
+    python3 -I tools/imports.py <exe>          Markdown tables per DLL
+    python3 -I tools/imports.py <exe> --guids  known COM GUIDs present in the image
 
-I riferimenti sono le occorrenze dell'indirizzo della cella IAT dentro .text:
-`call [IAT]` (FF 15), `jmp [IAT]` (FF 25) e altri usi (es. `mov esi, [IAT]`).
+The references are the occurrences of the IAT cell's address inside .text:
+`call [IAT]` (FF 15), `jmp [IAT]` (FF 25) and other uses (e.g. `mov esi, [IAT]`).
 """
 import os
 import re
@@ -32,37 +32,37 @@ ORDINALS = {
     'xinput1_3.dll': {2: 'XInputGetState', 3: 'XInputSetState', 4: 'XInputGetCapabilities'},
 }
 
-# (categoria, regex sui nomi KERNEL32); la prima che corrisponde vince
+# (category, regex on the KERNEL32 names); the first that matches wins
 KERNEL32 = [
     ('ini', r'PrivateProfile'),
-    ('eccezioni', r'RaiseException|RtlUnwind|UnhandledExceptionFilter'),
-    ('tempo', r'QueryPerformance|GetTickCount|SystemTime|GetLocalTime|FileTimeTo|ToFileTime|TimeZone|GetProcessTimes'),
+    ('exceptions', r'RaiseException|RtlUnwind|UnhandledExceptionFilter'),
+    ('time', r'QueryPerformance|GetTickCount|SystemTime|GetLocalTime|FileTimeTo|ToFileTime|TimeZone|GetProcessTimes'),
     ('file', r'File|Directory|FindClose|GetDriveType|GetLogicalDrive|GetTempPath|GetOverlappedResult|SetHandleCount'),
-    ('sincronizzazione', r'CriticalSection|Event|Semaphore|WaitFor|Interlocked'),
+    ('synchronization', r'CriticalSection|Event|Semaphore|WaitFor|Interlocked'),
     ('thread', r'Thread|^Tls|^Sleep$|DuplicateHandle|CloseHandle'),
-    ('memoria', r'^Heap|^Virtual|LocalFree|GetProcessHeap'),
-    ('locale e stringhe', r'CompareString|LCMapString|GetStringType|MultiByte|WideChar|CP$|CPInfo|CodePage|Locale|LCID|GetDateFormat|GetTimeFormat'),
-    ('console e debug', r'Console|StdHandle|Debug|FatalAppExit|FormatMessage'),
+    ('memory', r'^Heap|^Virtual|LocalFree|GetProcessHeap'),
+    ('locale and strings', r'CompareString|LCMapString|GetStringType|MultiByte|WideChar|CP$|CPInfo|CodePage|Locale|LCID|GetDateFormat|GetTimeFormat'),
+    ('console and debug', r'Console|StdHandle|Debug|FatalAppExit|FormatMessage'),
 ]
 
-# DLL -> (modulo del nostro runtime, fase, nota)
+# DLL -> (module of our runtime, phase, note)
 MODULES = {
     'kernel32.dll': ('win32/kernel32', 2, ''),
-    'user32.dll': ('win32/user32', 2, 'una finestra, messaggi, cursore, hook di tastiera'),
-    'advapi32.dll': ('win32/system', 2, 'registro (sola lettura), numeri casuali, nome utente'),
-    'shell32.dll': ('win32/system', 2, 'cartelle speciali: dove vanno i salvataggi'),
+    'user32.dll': ('win32/user32', 2, 'one window, messages, cursor, keyboard hooks'),
+    'advapi32.dll': ('win32/system', 2, 'registry (read-only), random numbers, user name'),
+    'shell32.dll': ('win32/system', 2, 'special folders: where the saves go'),
     'ole32.dll': ('win32/com', 2, ''),
     'oleaut32.dll': ('win32/com', 2, ''),
     'winmm.dll': ('win32/system', 2, ''),
-    'iphlpapi.dll': ('stub', 2, 'risponde "nessuna scheda"'),
-    'wininet.dll': ('stub', 2, 'cookie: fallisce'),
-    'ws2_32.dll': ('stub', 2, 'rete: fallisce come non disponibile'),
-    'd3d9.dll': ('d3d9', 3, 'tutto il resto passa da vtable COM'),
+    'iphlpapi.dll': ('stub', 2, 'answers "no adapter"'),
+    'wininet.dll': ('stub', 2, 'cookies: fails'),
+    'ws2_32.dll': ('stub', 2, 'network: fails as unavailable'),
+    'd3d9.dll': ('d3d9', 3, 'everything else goes through COM vtables'),
     'd3dx9_36.dll': ('d3d9', 3, ''),
-    'dinput8.dll': ('input', 3, 'tastiera e mouse via COM'),
+    'dinput8.dll': ('input', 3, 'keyboard and mouse via COM'),
     'xinput1_3.dll': ('input', 3, ''),
-    'dsound.dll': ('audio', 3, 'buffer e listener via COM'),
-    'eax.dll': ('audio', 3, 'si può dichiarare assente'),
+    'dsound.dll': ('audio', 3, 'buffers and listener via COM'),
+    'eax.dll': ('audio', 3, 'can be declared absent'),
     'binkw32.dll': ('video', 3, 'stdcall'),
 }
 
@@ -91,7 +91,7 @@ GUIDS = {
 
 
 def iat_entries(pe):
-    """[(dll, nome, indirizzo della cella IAT)]"""
+    """[(dll, name, address of the IAT cell)]"""
     out = []
     off = pe.rva_to_off(pe.data_dirs[1][0])
     while True:
@@ -119,7 +119,7 @@ def category(dll, fn):
     for cat, rx in KERNEL32:
         if re.search(rx, fn):
             return cat
-    return 'processo e ambiente'
+    return 'process and environment'
 
 
 def main(argv):
@@ -133,7 +133,7 @@ def main(argv):
             if n:
                 o = pe.data.find(raw)
                 sec = next(s for s in pe.sections if s[3] <= o < s[3] + s[4])
-                print(f'{name:<40} {n} volta/e, prima a {pe.image_base + sec[1] + o - sec[3]:#010x} ({sec[0]})')
+                print(f'{name:<40} {n} time(s), first at {pe.image_base + sec[1] + o - sec[3]:#010x} ({sec[0]})')
         return
 
     _, tva, tvs, traw, trs = next(s for s in pe.sections if s[0] == '.text')
@@ -147,18 +147,18 @@ def main(argv):
         jmps = text.count(b'\xff\x25' + key)
         rows.setdefault(dll, []).append((fn, slot, calls, jmps, total - calls - jmps))
 
-    print('| DLL | Funzioni | Riferimenti nel codice | Modulo nostro | Fase | Nota |')
+    print('| DLL | Functions | References in the code | Our module | Phase | Note |')
     print('|---|---|---|---|---|---|')
     for dll, fns in sorted(rows.items(), key=lambda kv: -len(kv[1])):
         mod, phase, note = MODULES.get(dll, ('?', '?', ''))
         refs = sum(c + j + o for _, _, c, j, o in fns)
         print(f'| `{dll}` | {len(fns)} | {refs} | `{mod}` | {phase} | {note} |')
-    print(f'\nTotale: {len(entries)} funzioni da {len(rows)} DLL.\n')
+    print(f'\nTotal: {len(entries)} functions from {len(rows)} DLLs.\n')
 
     for dll, fns in sorted(rows.items(), key=lambda kv: -len(kv[1])):
         print(f'### `{dll}` ({len(fns)})\n')
         k32 = dll == 'kernel32.dll'
-        print('| Funzione | Cella IAT | call | jmp | altri usi |' + (' Categoria |' if k32 else ''))
+        print('| Function | IAT cell | call | jmp | other uses |' + (' Category |' if k32 else ''))
         print('|---|---|---|---|---|' + ('---|' if k32 else ''))
         order = sorted(fns, key=lambda r: (category(dll, r[0]), -(r[2] + r[3] + r[4]), r[0]))
         for fn, slot, c, j, o in order:

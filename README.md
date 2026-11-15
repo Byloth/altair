@@ -1,37 +1,37 @@
 # AC1 Recompiled - Altaïr
 
-Progetto non ufficiale e non affiliato con Ubisoft: ricompilazione statica di
-**Assassin's Creed (2007)**, build Steam DX9, per farlo girare in nativo e nel browser
-e usarlo come base per un gioco migliorato. Serve la propria copia del gioco; questo
-repository non contiene nulla di Ubisoft.
+Unofficial project, not affiliated with Ubisoft: a static recompilation of
+**Assassin's Creed (2007)**, Steam DX9 build, to run it natively and in the browser
+and to use it as the basis for an improved game. You need your own copy of the game; this
+repository contains nothing from Ubisoft.
 
-**Altair** è il nome tecnico del progetto: il ricompilatore (`altair`), i suoi crate e il
-supporto del codice generato (`runtime/altair.h`). Il nome completo è "AC1 Recompiled - Altaïr".
+**Altair** is the technical name of the project: the recompiler (`altair`), its crates and the
+support code for the generated code (`runtime/altair.h`). The full name is "AC1 Recompiled - Altaïr".
 
-## Struttura
+## Layout
 
-| Percorso | Contenuto |
+| Path | Contents |
 |---|---|
-| `CLAUDE.md` | Regole di lavoro e regole legali del progetto |
-| `docs/PIANO.md` | Piano di lavoro con fasi, attività e gate |
-| `docs/decisioni.md` | Registro delle decisioni, con le motivazioni |
-| `docs/domande-aperte.md` | Cose da scoprire |
-| `docs/diario.md` | Diario delle sessioni |
-| `docs/fonti.md` | Progetti, mod e riferimenti esterni |
-| `docs/ambiente.md` | Strumenti installati e come avviarli |
-| `docs/analisi/` | Fatti verificati sui file del gioco |
-| `crates/` | Il ricompilatore in Rust: `altair` (vedi `docs/analisi/traduttore.md`) |
-| `runtime/` | Supporto in C del codice generato |
-| `crates/shader/` | Traduttore degli shader Direct3D 9 in WGSL (`altair-shaderc`) |
-| `crates/gpu-probe/` | Prove della catena grafica |
-| `crates/runtime/` | `altair-run`: il runtime Win32 che esegue il gioco tradotto (vedi `docs/analisi/runtime.md`) |
-| `tools/` | Script di analisi e di test (vedi `tools/README.md`) |
-| `ref/`, `build/`, `private/`, `.venv/`, `opt/` | Riferimenti clonati, output generato, materiale non pubblicabile, strumenti locali: ignorati da git |
+| `CLAUDE.md` | Working rules and legal rules of the project |
+| `docs/PLAN.md` | Work plan with phases, tasks and gates |
+| `docs/decisions.md` | Decision log, with the reasons |
+| `docs/open-questions.md` | Things still to find out |
+| `docs/journal.md` | Session journal |
+| `docs/sources.md` | External projects, mods and references |
+| `docs/environment.md` | Installed tools and how to start them |
+| `docs/analysis/` | Verified facts about the game files |
+| `crates/` | The recompiler in Rust: `altair` (see `docs/analysis/translator.md`) |
+| `runtime/` | C support for the generated code |
+| `crates/shader/` | Translator from Direct3D 9 shaders to WGSL (`altair-shaderc`) |
+| `crates/gpu-probe/` | Tests of the graphics chain |
+| `crates/runtime/` | `altair-run`: the Win32 runtime that runs the translated game (see `docs/analysis/runtime.md`) |
+| `tools/` | Analysis and test scripts (see `tools/README.md`) |
+| `ref/`, `build/`, `private/`, `.venv/`, `opt/` | Cloned references, generated output, unpublishable material, local tools: ignored by git |
 
-## Stato
+## Status
 
-Fase 0 (fondamenta) chiusa il 2026-11-14. Fase 1 (il ricompilatore): gate raggiunto il 2026-11-15, tutto il codice del gioco si traduce in C e compila.
-Fase 2 (il runtime Win32): gate raggiunto il 2026-11-15. Il gioco tradotto esegue l'avvio, crea i suoi
-thread, apre i `.forge` e crea la finestra.
-Fase 3 (grafica) in corso: il gioco tradotto mostra menu e profili, avvia una nuova partita e disegna la
-prima scena 3D, il laboratorio Abstergo, con il nostro Direct3D 9 su wgpu (fuori schermo, input da copione). Vedi `docs/PIANO.md`.
+Phase 0 (foundations) closed on 2026-11-14. Phase 1 (the recompiler): gate reached on 2026-11-15, all of the game's code translates to C and compiles.
+Phase 2 (the Win32 runtime): gate reached on 2026-11-15. The translated game runs its startup, creates its
+threads, opens the `.forge` files and creates the window.
+Phase 3 (graphics) in progress: the translated game shows menus and profiles, starts a new game and draws the
+first 3D scene, the Abstergo lab, with our Direct3D 9 on wgpu (off-screen, scripted input). See `docs/PLAN.md`.

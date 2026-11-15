@@ -1,13 +1,13 @@
-//! Scoperta delle funzioni senza simboli né rilocazioni.
+//! Function discovery without symbols or relocations.
 //!
-//! Partenze, in ordine di affidabilità:
-//!  1. forti: entry point, export, callback TLS e ogni `call` diretta dal codice raggiunto;
-//!  2. slot delle vtable trovate dall'RTTI;
-//!  3. indirizzi di codice usati come immediati;
-//!  4. parole nelle sezioni dati che puntano nel codice.
-//! Le partenze 2-4 sono deboli: si accettano solo se la decodifica di prova non incontra
-//! byte non validi, istruzioni che un gioco non esegue, o il mezzo di un'istruzione nota.
-//! Le 3 e 4 devono anche "sembrare un inizio". Metodo e limiti: docs/analisi/funzioni.md.
+//! Starts, in order of reliability:
+//!  1. strong: entry point, exports, TLS callbacks and every direct `call` from the reached code;
+//!  2. slots of the vtables found through RTTI;
+//!  3. code addresses used as immediates;
+//!  4. words in the data sections that point into the code.
+//! Starts 2-4 are weak: they are accepted only if the trial decode does not run into
+//! invalid bytes, instructions a game does not execute, or the middle of a known instruction.
+//! 3 and 4 must also "look like a start". Method and limits: docs/analysis/functions.md.
 
 use crate::rtti;
 use altair_pe::Image;
@@ -22,7 +22,7 @@ pub enum Kind {
     Vtable,
     Immediate,
     DataWord,
-    /// Parola nei dati a un indirizzo non allineato a 4: tabelle compatte del CRT.
+    /// Word in the data at an address not aligned to 4: packed tables of the CRT.
     Unaligned,
 }
 
@@ -31,11 +31,11 @@ impl Kind {
         match self {
             Kind::Entry => "entry",
             Kind::Export => "export",
-            Kind::Tls => "callback TLS",
+            Kind::Tls => "TLS callback",
             Kind::Vtable => "vtable",
-            Kind::Immediate => "immediato",
-            Kind::DataWord => "parola nei dati",
-            Kind::Unaligned => "parola non allineata",
+            Kind::Immediate => "immediate",
+            Kind::DataWord => "data word",
+            Kind::Unaligned => "unaligned word",
         }
     }
 }
@@ -43,7 +43,7 @@ impl Kind {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Origin {
     pub kind: Kind,
-    /// Raggiunta da una `call` diretta a partire da una partenza di quel tipo.
+    /// Reached by a direct `call` starting from a start of that kind.
     pub via_call: bool,
 }
 
@@ -57,7 +57,7 @@ pub struct Discovery<'a> {
     pub lo: u32,
     pub hi: u32,
     text: &'a [u8],
-    /// Un byte per byte di `.text`: ignoto, inizio di istruzione, interno, dati di jump table.
+    /// One byte per byte of `.text`: unknown, start of instruction, inside, jump table data.
     pub own: Vec<u8>,
     pub starts: BTreeMap<u32, Origin>,
     imms: HashSet<u32>,
@@ -67,7 +67,7 @@ pub struct Discovery<'a> {
     pub n_insn: usize,
     pub rejected: BTreeMap<String, usize>,
     strict: bool,
-    /// `--why ADDR`: spiega perché questa partenza viene accettata o scartata.
+    /// `--why ADDR`: explains why this start is accepted or discarded.
     pub debug: Option<u32>,
     last: u32,
     boundaries_only: bool,
@@ -92,9 +92,9 @@ fn never_executed(m: Mnemonic) -> bool {
     )
 }
 
-/// Numero di voci di una jump table ricavato dal `cmp x, N; ja default` che la precede.
-/// Per le tabelle a due livelli (`movzx r, byte [r + B]`) il limite vale per la tabella di
-/// byte, e le voci sono il massimo indice più uno.
+/// Number of entries of a jump table derived from the `cmp x, N; ja default` that precedes it.
+/// For two-level tables (`movzx r, byte [r + B]`) the bound applies to the byte table,
+/// and the entries are the maximum index plus one.
 pub fn table_bound(img: &Image, hist: &[Instruction]) -> Option<usize> {
     let n = hist.len();
     let from = n.saturating_sub(10);
@@ -125,7 +125,7 @@ pub fn table_bound(img: &Image, hist: &[Instruction]) -> Option<usize> {
 
 impl<'a> Discovery<'a> {
     pub fn new(img: &'a Image, strict: bool) -> Self {
-        let text_sec = img.section(".text").expect("sezione .text");
+        let text_sec = img.section(".text").expect(".text section");
         let text = img.section_bytes(text_sec);
         Discovery {
             img,
@@ -172,31 +172,31 @@ impl<'a> Discovery<'a> {
         out
     }
 
-    /// Decodifica il codice raggiungibile da `start`, marcando `own`. In caso di errore
-    /// ritorna il motivo; ciò che è stato marcato resta nel `Trial` per essere annullato.
+    /// Decodes the code reachable from `start`, marking `own`. On error it returns the
+    /// reason; what has been marked stays in the `Trial` so it can be undone.
     fn explore(&mut self, start: u32, t: &mut Trial) -> Result<(), &'static str> {
         let mut work = vec![start];
         let mut hist: Vec<Instruction> = Vec::new();
         let mut ins = Instruction::default();
         while let Some(a) = work.pop() {
             if !self.in_text(a) {
-                return Err("salto fuori da .text");
+                return Err("jump outside .text");
             }
             let o = (a - self.lo) as usize;
             match self.own[o] {
                 INSN => continue,
                 UNKNOWN => {}
-                _ => return Err("dentro un'istruzione o una tabella"),
+                _ => return Err("inside an instruction or a table"),
             }
             hist.clear();
             let mut dec = Decoder::with_ip(32, &self.text[o..], a as u64, DecoderOptions::NONE);
             loop {
                 if !dec.can_decode() {
-                    return Err("byte non decodificabili");
+                    return Err("undecodable bytes");
                 }
                 dec.decode_out(&mut ins);
                 if ins.is_invalid() {
-                    return Err("byte non decodificabili");
+                    return Err("undecodable bytes");
                 }
                 let addr = ins.ip() as u32;
                 self.last = addr;
@@ -206,16 +206,16 @@ impl<'a> Discovery<'a> {
                     break;
                 }
                 if self.own[p..p + len].iter().any(|&b| b != UNKNOWN) {
-                    return Err("sovrapposizione");
+                    return Err("overlap");
                 }
                 let m = ins.mnemonic();
-                // `push es`, `pop ds`…: sono i byte 06, 07, 0E, 16, 17, 1E, 1F delle tabelle di
-                // indici degli switch a due livelli, non codice a 32 bit.
+                // `push es`, `pop ds`…: these are the bytes 06, 07, 0E, 16, 17, 1E, 1F of the index
+                // tables of two-level switches, not 32-bit code.
                 let seg_stack = matches!(m, Mnemonic::Push | Mnemonic::Pop)
                     && ins.op0_kind() == OpKind::Register
                     && ins.op0_register().is_segment_register();
                 if never_executed(m) || seg_stack || (m == Mnemonic::Int3 && addr == start) {
-                    return Err("istruzione improbabile");
+                    return Err("unlikely instruction");
                 }
                 self.own[p] = INSN;
                 self.own[p + 1..p + len].fill(INSIDE);
@@ -241,7 +241,7 @@ impl<'a> Discovery<'a> {
                     }
                     FlowControl::UnconditionalBranch => {
                         if !matches!(ins.op0_kind(), OpKind::NearBranch32 | OpKind::NearBranch16) {
-                            return Err("istruzione improbabile");
+                            return Err("unlikely instruction");
                         }
                         work.push(ins.near_branch_target() as u32);
                         break;
@@ -262,7 +262,7 @@ impl<'a> Discovery<'a> {
                                     let q = (table - self.lo) as usize;
                                     let n = 4 * entries.len();
                                     if self.own[q..q + n].iter().any(|&b| b != UNKNOWN) {
-                                        return Err("tabella sopra codice");
+                                        return Err("table over code");
                                     }
                                     self.own[q..q + n].fill(TABLE);
                                     t.journal.push((q, n));
@@ -274,30 +274,30 @@ impl<'a> Discovery<'a> {
                     }
                     FlowControl::Call => {
                         if !matches!(ins.op0_kind(), OpKind::NearBranch32 | OpKind::NearBranch16) {
-                            return Err("istruzione improbabile");
+                            return Err("unlikely instruction");
                         }
                         let target = ins.near_branch_target() as u32;
                         if !self.in_text(target) {
-                            return Err("call fuori da .text");
+                            return Err("call outside .text");
                         }
                         t.calls.push(target);
                         hist.push(ins);
                     }
                     FlowControl::IndirectCall => hist.push(ins),
                     FlowControl::Return | FlowControl::Interrupt | FlowControl::Exception => break,
-                    FlowControl::XbeginXabortXend => return Err("istruzione improbabile"),
+                    FlowControl::XbeginXabortXend => return Err("unlikely instruction"),
                 }
             }
         }
         Ok(())
     }
 
-    /// Esplora una partenza; `None` se è stata scartata (solo per le partenze di prova).
+    /// Explores a start; `None` if it was discarded (only for tentative starts).
     fn try_function(&mut self, start: u32, tentative: bool) -> Option<Vec<u32>> {
         let mut t = Trial { journal: Vec::new(), calls: Vec::new(), imms: Vec::new(), slots: Vec::new(), tables: 0, bounded: 0 };
         if let Err(why) = self.explore(start, &mut t) {
             if self.debug == Some(start) {
-                eprintln!("[perché] {start:#x} scartata: {why}, all'istruzione {:#x} (di prova: {tentative})", self.last);
+                eprintln!("[why] {start:#x} discarded: {why}, at instruction {:#x} (tentative: {tentative})", self.last);
             }
             if tentative {
                 for &(p, n) in &t.journal {
@@ -306,7 +306,7 @@ impl<'a> Discovery<'a> {
                 self.reject(why);
                 return None;
             }
-            self.reject(&format!("[forte] {why}"));
+            self.reject(&format!("[strong] {why}"));
         }
         self.n_insn += t.journal.iter().filter(|&&(p, _)| self.own[p] == INSN).count();
         self.tables += t.tables;
@@ -316,7 +316,7 @@ impl<'a> Discovery<'a> {
         Some(t.calls)
     }
 
-    /// Aggiunge una funzione e, a catena, quelle che chiama direttamente.
+    /// Adds a function and, in a chain, the ones it calls directly.
     fn add(&mut self, addr: u32, kind: Kind, tentative: bool) -> bool {
         if self.starts.contains_key(&addr) {
             return true;
@@ -343,29 +343,29 @@ impl<'a> Discovery<'a> {
             return true;
         }
         let t = self.text;
-        // Una funzione che è solo `ret` o `ret n`: spesso è la coda di un'altra, usata come
-        // callback che non fa nulla.
+        // A function that is just `ret` or `ret n`: often it is the tail of another one, used as
+        // a callback that does nothing.
         if matches!(t[o], 0xC3 | 0xC2) {
             return true;
         }
-        // Allineata a 16, oppure subito dopo padding, `ret`, `ret n`.
+        // Aligned to 16, or right after padding, `ret`, `ret n`.
         if matches!(t[o - 1], 0xCC | 0xC3) || t[o - 3] == 0xC2 {
             return true;
         }
-        // Nel primo giro basta così: solo confini certi. Un indirizzo soltanto allineato può
-        // cadere in mezzo a una funzione vera e, accettato per primo, la farebbe scartare.
+        // In the first round that is enough: only certain boundaries. An address that is merely
+        // aligned can fall in the middle of a real function and, accepted first, would get it discarded.
         if self.boundaries_only {
             return t[o - 1] == 0x90 && (matches!(t[o - 2], 0x90 | 0xC3) || t[o - 4] == 0xC2);
         }
         if a % 16 == 0 {
             return true;
         }
-        // Dopo dei `nop` di riempimento: almeno due, o uno dopo un `ret`. Un solo 0x90 è spesso
-        // il byte ModRM di un'istruzione (`mov edx, [eax+…]`).
+        // After padding `nop`s: at least two, or one after a `ret`. A single 0x90 is often
+        // the ModRM byte of an instruction (`mov edx, [eax+…]`).
         if t[o - 1] == 0x90 && (matches!(t[o - 2], 0x90 | 0xC3) || t[o - 4] == 0xC2) {
             return true;
         }
-        // Regola larga: anche subito dopo `jmp rel32` o `jmp rel8`.
+        // Loose rule: also right after `jmp rel32` or `jmp rel8`.
         !self.strict && (t[o - 5] == 0xE9 || t[o - 2] == 0xEB)
     }
 
@@ -375,14 +375,14 @@ impl<'a> Discovery<'a> {
         }
         let state = self.own[(addr - self.lo) as usize];
         if self.debug == Some(addr) {
-            eprintln!("[perché] {addr:#x} proposta come {:?}: stato del primo byte {state}, sembra un inizio: {}", kind, self.looks_like_start(addr));
+            eprintln!("[why] {addr:#x} proposed as {:?}: state of the first byte {state}, looks like a start: {}", kind, self.looks_like_start(addr));
         }
         if state == INSIDE || state == TABLE {
-            self.reject("dentro un'istruzione o una tabella");
+            self.reject("inside an instruction or a table");
         } else if need_look && !self.looks_like_start(addr) {
-            self.reject("non sembra un inizio");
+            self.reject("does not look like a start");
         } else if state == INSN {
-            // Codice già raggiunto (tail call, fall-through): è comunque un punto d'ingresso.
+            // Code already reached (tail call, fall-through): it is an entry point all the same.
             self.starts.insert(addr, Origin { kind, via_call: false });
         } else {
             self.add(addr, kind, true);
@@ -393,7 +393,7 @@ impl<'a> Discovery<'a> {
         let mut d = Discovery::new(img, strict);
         let say = |d: &Discovery, what: &str| {
             if log {
-                eprintln!("{what}: funzioni={} istruzioni={}", d.starts.len(), d.n_insn);
+                eprintln!("{what}: functions={} instructions={}", d.starts.len(), d.n_insn);
             }
         };
 
@@ -406,7 +406,7 @@ impl<'a> Discovery<'a> {
         for &cb in &img.tls_callbacks {
             d.add(cb, Kind::Tls, false);
         }
-        say(&d, "partenze forti");
+        say(&d, "strong starts");
 
         let r = rtti::analyze(img);
         for v in &r.vtables {
@@ -414,21 +414,21 @@ impl<'a> Discovery<'a> {
                 d.weak(s, Kind::Vtable, false);
             }
         }
-        say(&d, "slot delle vtable");
+        say(&d, "vtable slots");
 
         let data_words: Vec<(u32, u32)> = img
             .data_sections()
             .flat_map(|s| img.words(s))
             .filter(|&(_, v)| d.in_text(v))
             .collect();
-        // Due passate. Nella prima una parola nei dati deve "sembrare un inizio"; solo quando
-        // questa non trova più nulla, la seconda accetta anche le voci di tabelle di puntatori a
-        // funzione che non lo sembrano. L'ordine conta: un falso inizio accettato per primo
-        // occupa i byte di una funzione vera e la fa scartare.
+        // Two passes. In the first one a data word must "look like a start"; only when
+        // that one finds nothing more does the second also accept entries of function pointer
+        // tables that do not look like one. Order matters: a false start accepted first
+        // takes up the bytes of a real function and gets it discarded.
         let mut seen: HashSet<u32> = HashSet::new();
-        // Tre passate, dalla più severa: (0) solo partenze precedute da riempimento o da un
-        // `ret`; (1) anche quelle soltanto allineate o dopo un `jmp`; (2) anche le voci di
-        // tabelle di puntatori che non sembrano inizi.
+        // Three passes, strictest first: (0) only starts preceded by padding or by a
+        // `ret`; (1) also those that are merely aligned or after a `jmp`; (2) also entries of
+        // pointer tables that do not look like starts.
         for tier in 0..3 {
             let relaxed = tier == 2;
             d.boundaries_only = tier == 0;
@@ -445,24 +445,24 @@ impl<'a> Discovery<'a> {
                     let in_table = relaxed && ((i > 0 && neighbour(i - 1, a - 4)) || neighbour(i + 1, a + 4));
                     d.weak(v, Kind::DataWord, !in_table);
                 }
-                // Gli immediati dopo i dati: sono la fonte con più falsi positivi (costanti
-                // numeriche che cadono per caso nell'intervallo del codice).
+                // Immediates after the data: they are the source with the most false positives
+                // (numeric constants that happen to fall within the code range).
                 let mut fresh: Vec<u32> = d.imms.difference(&seen).copied().collect();
                 fresh.sort_unstable();
                 for v in fresh {
                     seen.insert(v);
                     d.weak(v, Kind::Immediate, true);
                 }
-                say(&d, &format!("passata {tier}, giro {round}: immediati e dati"));
+                say(&d, &format!("pass {tier}, round {round}: immediates and data"));
                 if d.starts.len() == before {
                     break;
                 }
             }
         }
 
-        // Le routine matematiche del CRT saltano attraverso tabelle di puntatori impacchettate
-        // senza allineamento (le destinazioni sono etichette dentro le routine). Si cercano
-        // solo in `.data`, e solo destinazioni che seguono un `ret` o un `jmp`.
+        // The CRT math routines jump through pointer tables packed without
+        // alignment (the targets are labels inside the routines). They are looked for
+        // only in `.data`, and only targets that follow a `ret` or a `jmp`.
         if let Some(data) = img.section(".data") {
             let bytes = img.section_bytes(data);
             let mut found = Vec::new();
@@ -482,8 +482,8 @@ impl<'a> Discovery<'a> {
                     d.weak(v, Kind::Unaligned, false);
                 }
             }
-            // Tabelle vere e proprie: almeno tre puntatori a codice consecutivi, a passo 4, a un
-            // indirizzo non allineato. Le loro voci sono etichette qualsiasi dentro le routine.
+            // Proper tables: at least three consecutive code pointers, with a stride of 4, at an
+            // unaligned address. Their entries are arbitrary labels inside the routines.
             for residue in 1..4usize {
                 let mut run: Vec<u32> = Vec::new();
                 let mut off = residue;
@@ -506,12 +506,12 @@ impl<'a> Discovery<'a> {
                     off += 4;
                 }
             }
-            say(&d, "parole non allineate in .data");
+            say(&d, "unaligned words in .data");
         }
         (d, r)
     }
 
-    /// (codice, jump table, int3 non raggiunti, non classificati) in byte.
+    /// (code, jump tables, unreached int3, unclassified) in bytes.
     pub fn text_breakdown(&self) -> (usize, usize, usize, usize) {
         let (mut code, mut table, mut int3, mut unknown) = (0, 0, 0, 0);
         for (i, &b) in self.own.iter().enumerate() {

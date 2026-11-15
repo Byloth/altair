@@ -1,34 +1,34 @@
-//! Lettura degli archivi `.forge` di Assassin's Creed (2007), contenitore versione 25.
+//! Reading the `.forge` archives of Assassin's Creed (2007), container version 25.
 //!
-//! Riscrittura in Rust di `tools/forge.py`, che resta il riferimento con cui si confronta
-//! (`altair-forge digest` contro `forge.py digest`). Il formato è descritto in
-//! `docs/analisi/forge.md`; qui in breve:
+//! A Rust rewrite of `tools/forge.py`, which remains the reference it is compared against
+//! (`altair-forge digest` versus `forge.py digest`). The format is described in
+//! `docs/analysis/forge.md`; in short:
 //!
 //! ```text
-//! Header      "scimitar\0", u32 versione (25), u64 offset di HeaderFat, …
-//! HeaderFat   u32 numero di file, u32, u64, u64, u32, u32 numero di tabelle, u64 prima tabella
-//! Tabella     u32 voci, u32, u64 offset delle voci, u64 tabella successiva (-1 = fine), …
-//! Voce        u64 offset del record, u32 id, u32 dimensione dei dati
-//! Record      "FILEDATA", char[128] nome, … 0x1B8 byte in tutto; poi i dati
-//! Sezione     u64 marcatore, u16 versione, u8 codec (1 = LZO1X), u16, u16, u16 blocchi,
-//!             blocchi × (u16 decompressi, u16 su disco), poi per blocco u32 checksum + dati
+//! Header      "scimitar\0", u32 version (25), u64 offset of HeaderFat, …
+//! HeaderFat   u32 number of files, u32, u64, u64, u32, u32 number of tables, u64 first table
+//! Table       u32 entries, u32, u64 offset of the entries, u64 next table (-1 = end), …
+//! Entry       u64 offset of the record, u32 id, u32 size of the data
+//! Record      "FILEDATA", char[128] name, … 0x1B8 bytes in all; then the data
+//! Section     u64 marker, u16 version, u8 codec (1 = LZO1X), u16, u16, u16 chunks,
+//!             chunks × (u16 decompressed, u16 on disk), then per chunk u32 checksum + data
 //! ```
 //!
-//! I nomi delle voci e i dati estratti sono contenuti del gioco: non vanno nel repository.
+//! Entry names and extracted data are game content: they do not go into the repository.
 
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
-/// Marcatore di una sezione compressa.
+/// Marker of a compressed section.
 pub const MARK: [u8; 8] = [0x33, 0xaa, 0xfb, 0x57, 0x99, 0xfa, 0x04, 0x10];
-/// Dimensione del record che precede i dati di una voce.
+/// Size of the record that precedes an entry's data.
 pub const RECORD: u64 = 0x1b8;
 
 #[derive(Debug)]
 pub enum Error {
     Io(io::Error),
-    /// Il file non ha la struttura attesa.
+    /// The file does not have the expected structure.
     Format(String),
 }
 impl From<io::Error> for Error {
@@ -50,17 +50,17 @@ fn bad<T>(what: impl Into<String>) -> Result<T> {
     Err(Error::Format(what.into()))
 }
 
-/// Una voce dell'archivio.
+/// An entry of the archive.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Entry {
-    /// Offset del record `FILEDATA`.
+    /// Offset of the `FILEDATA` record.
     pub record: u64,
     pub id: u32,
-    /// Dimensione dei dati su disco, dopo il record.
+    /// Size of the data on disk, after the record.
     pub size: u32,
 }
 
-/// Un blocco di una sezione: byte decompressi, byte su disco, offset dei dati.
+/// A chunk of a section: decompressed bytes, bytes on disk, offset of the data.
 #[derive(Clone, Copy, Debug)]
 pub struct Chunk {
     pub unpacked: u16,
@@ -68,7 +68,7 @@ pub struct Chunk {
     pub offset: u64,
 }
 
-/// Una sezione compressa dei dati di una voce.
+/// A compressed section of an entry's data.
 #[derive(Clone, Debug)]
 pub struct Section {
     pub codec: u8,
@@ -97,7 +97,7 @@ impl Forge {
         let mut forge = Forge { file: File::open(path)?, version: 0, file_count: 0, entries: Vec::new() };
         let head = forge.read(0, 0x1a)?;
         if &head[..9] != b"scimitar\0" {
-            return bad("non è un archivio forge");
+            return bad("not a forge archive");
         }
         forge.version = u32_at(&head, 9);
         let fat = forge.read(u64_at(&head, 13), 0x28)?;
@@ -113,7 +113,7 @@ impl Forge {
         Ok(forge)
     }
 
-    /// Legge `len` byte da `offset`; meno, se il file finisce prima.
+    /// Reads `len` bytes from `offset`; fewer, if the file ends first.
     pub fn read(&mut self, offset: u64, len: usize) -> Result<Vec<u8>> {
         self.file.seek(SeekFrom::Start(offset))?;
         let mut buf = Vec::with_capacity(len);
@@ -124,22 +124,22 @@ impl Forge {
     fn read_exact(&mut self, offset: u64, len: usize) -> Result<Vec<u8>> {
         let buf = self.read(offset, len)?;
         if buf.len() != len {
-            return bad(format!("fine del file a {offset:#x}"));
+            return bad(format!("end of file at {offset:#x}"));
         }
         Ok(buf)
     }
 
-    /// Il nome di una voce, o `None` se il record non comincia con `FILEDATA`.
+    /// The name of an entry, or `None` if the record does not start with `FILEDATA`.
     pub fn name(&mut self, entry: &Entry) -> Result<Option<String>> {
         let r = self.read(entry.record, 8 + 128)?;
         if r.len() < 8 || &r[..8] != b"FILEDATA" {
             return Ok(None);
         }
-        // Latin-1: ogni byte è il carattere con lo stesso codice.
+        // Latin-1: each byte is the character with the same code.
         Ok(Some(r[8..].iter().take_while(|b| **b != 0).map(|b| *b as char).collect()))
     }
 
-    /// Le sezioni compresse di una voce; vuoto se i dati sono grezzi.
+    /// The compressed sections of an entry; empty if the data is raw.
     pub fn sections(&mut self, entry: &Entry) -> Result<Vec<Section>> {
         let mut pos = entry.record + RECORD;
         let end = pos + entry.size as u64;
@@ -161,7 +161,7 @@ impl Forge {
         Ok(out)
     }
 
-    /// I dati decompressi di una sezione.
+    /// The decompressed data of a section.
     pub fn decompress(&mut self, section: &Section) -> Result<Vec<u8>> {
         let mut out = Vec::with_capacity(section.chunks.iter().map(|c| c.unpacked as usize).sum());
         for c in &section.chunks {
@@ -175,21 +175,21 @@ impl Forge {
         Ok(out)
     }
 
-    /// I dati grezzi di una voce (per quelle senza sezioni).
+    /// The raw data of an entry (for those without sections).
     pub fn raw(&mut self, entry: &Entry) -> Result<Vec<u8>> {
         self.read_exact(entry.record + RECORD, entry.size as usize)
     }
 }
 
-/// Decomprime un blocco LZO1X (formato pubblico) in coda a `out`; deve produrre `expect` byte.
+/// Decompresses an LZO1X block (public format) onto the end of `out`; it must produce `expect` bytes.
 pub fn lzo1x_decompress(src: &[u8], expect: usize, out: &mut Vec<u8>) -> Result<()> {
     let base = out.len();
     let mut ip = 0usize;
-    let get = |i: usize| -> Result<usize> { src.get(i).map(|b| *b as usize).ok_or(Error::Format("LZO: dati troncati".into())) };
-    // Copia `n` byte da `dist` byte indietro; gli intervalli possono sovrapporsi.
+    let get = |i: usize| -> Result<usize> { src.get(i).map(|b| *b as usize).ok_or(Error::Format("LZO: truncated data".into())) };
+    // Copies `n` bytes from `dist` bytes back; the ranges may overlap.
     fn copy(out: &mut Vec<u8>, base: usize, dist: usize, n: usize) -> Result<()> {
         if dist == 0 || dist > out.len() - base {
-            return bad("LZO: distanza fuori dal buffer");
+            return bad("LZO: distance outside the buffer");
         }
         let mut p = out.len() - dist;
         for _ in 0..n {
@@ -199,16 +199,16 @@ pub fn lzo1x_decompress(src: &[u8], expect: usize, out: &mut Vec<u8>) -> Result<
         Ok(())
     }
     fn literals(src: &[u8], ip: &mut usize, n: usize, out: &mut Vec<u8>) -> Result<()> {
-        let s = src.get(*ip..*ip + n).ok_or(Error::Format("LZO: dati troncati".into()))?;
+        let s = src.get(*ip..*ip + n).ok_or(Error::Format("LZO: truncated data".into()))?;
         out.extend_from_slice(s);
         *ip += n;
         Ok(())
     }
-    /// Lunghezza estesa: una serie di zeri vale 255 l'uno, poi un byte.
+    /// Extended length: a run of zeros is worth 255 each, then one byte.
     fn extend(src: &[u8], ip: &mut usize, bias: usize) -> Result<usize> {
         let mut t = 0;
         loop {
-            let b = *src.get(*ip).ok_or(Error::Format("LZO: dati troncati".into()))? as usize;
+            let b = *src.get(*ip).ok_or(Error::Format("LZO: truncated data".into()))? as usize;
             *ip += 1;
             if b != 0 {
                 return Ok(t + bias + b);
@@ -278,7 +278,7 @@ pub fn lzo1x_decompress(src: &[u8], expect: usize, out: &mut Vec<u8>) -> Result<
                 d += (get(ip)? >> 2) + (get(ip + 1)? << 6);
                 ip += 2;
                 if d == 0 {
-                    break; // fine del flusso
+                    break; // end of stream
                 }
                 copy(out, base, d + 0x4000, t + 2)?;
             } else {
@@ -299,12 +299,12 @@ pub fn lzo1x_decompress(src: &[u8], expect: usize, out: &mut Vec<u8>) -> Result<
         }
     }
     if out.len() - base != expect {
-        return bad(format!("LZO: {} byte invece di {expect}", out.len() - base));
+        return bad(format!("LZO: {} bytes instead of {expect}", out.len() - base));
     }
     Ok(())
 }
 
-/// CRC-32 (IEEE, come zlib): etichetta le classi degli oggetti e serve ai confronti.
+/// CRC-32 (IEEE, like zlib): it labels the object classes and is used for comparisons.
 pub fn crc32(data: &[u8]) -> u32 {
     crc32_update(0, data)
 }
@@ -334,7 +334,7 @@ mod tests {
 
     #[test]
     fn lzo_literal_only_stream() {
-        // Un blocco di soli letterali: byte iniziale 17 + n, i letterali, poi il fine flusso 11 00 00.
+        // A block of literals only: initial byte 17 + n, the literals, then the end of stream 11 00 00.
         let mut src = vec![17 + 5];
         src.extend_from_slice(b"ciao!");
         src.extend_from_slice(&[0x11, 0, 0]);

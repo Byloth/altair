@@ -1,8 +1,8 @@
-//! Direct3D 9 "registratore": accetta le chiamate del gioco, tiene lo stato minimo che il gioco
-//! rilegge, conta tutto e non disegna nulla. Serve a sapere quali metodi, formati e shader usa
-//! davvero il gioco, prima di scrivere il renderer su wgpu.
+//! Direct3D 9 "recorder": accepts the game's calls, keeps the minimal state the game reads
+//! back, counts everything and draws nothing. It serves to find out which methods, formats and
+//! shaders the game really uses, before writing the renderer on wgpu.
 //!
-//! `ALTAIR_FRAMES=N` ferma il gioco dopo N `Present` e stampa il censimento.
+//! `ALTAIR_FRAMES=N` stops the game after N `Present` calls and prints the census.
 
 use crate::com::{self, Method};
 use crate::user32::SCREEN;
@@ -29,11 +29,11 @@ pub struct D3d {
     device: u32,
     pub backbuffer: u32,
     depth: u32,
-    /// superficie -> (texture madre, livello, faccia)
+    /// surface -> (parent texture, level, face)
     pub surface_parent: HashMap<u32, (u32, u32, u32)>,
-    /// texture -> 1 cubo, 2 volume
+    /// texture -> 1 cube, 2 volume
     pub tex_kind: HashMap<u32, u8>,
-    /// flussi di vertici: (buffer, offset, passo)
+    /// vertex streams: (buffer, offset, stride)
     pub streams: [(u32, u32, u32); 4],
     pub indices: u32,
     pub vs_f: Vec<f32>,
@@ -42,33 +42,33 @@ pub struct D3d {
     pub ps_i: Vec<i32>,
     pub vs_b: u32,
     pub ps_b: u32,
-    /// (campionatore, tipo di stato) -> valore
+    /// (sampler, state type) -> value
     pub sampler_states: HashMap<(u32, u32), u32>,
-    /// Buffer riscritti e non ancora ricaricati sulla GPU: intervallo toccato (inizio, fine),
-    /// se tutti i `Lock` erano `NOOVERWRITE` (non toccano dati già usati da un draw), se uno
-    /// era `DISCARD` (il contenuto precedente non serve più).
+    /// Buffers rewritten and not yet re-uploaded to the GPU: range touched (start, end),
+    /// whether all the `Lock`s were `NOOVERWRITE` (they do not touch data already used by a
+    /// draw), whether one was `DISCARD` (the previous contents are no longer needed).
     pub dirty_buffers: std::cell::RefCell<HashMap<u32, (u32, u32, bool, bool)>>,
-    /// Combinazioni di flag viste nei `Lock` dei buffer → volte.
+    /// Flag combinations seen in buffer `Lock`s → times.
     pub lock_flags: BTreeMap<u32, u64>,
     pub res: HashMap<u32, Res>,
-    /// Tabelle delle costanti D3DX: oggetto -> (indirizzo guest del CTAB, dimensione).
+    /// D3DX constant tables: object -> (guest address of the CTAB, size).
     ctabs: HashMap<u32, (u32, u32)>,
     pub render_targets: [u32; 4],
     pub depth_target: u32,
     pub viewport: [u32; 6],
-    /// Rettangolo di ritaglio (`SetScissorRect`): sinistra, alto, destra, basso.
+    /// Scissor rectangle (`SetScissorRect`): left, top, right, bottom.
     pub scissor: [u32; 4],
-    /// Risorse arrivate a zero riferimenti, in attesa di essere liberate; quante liberate finora.
+    /// Resources that reached zero references, waiting to be freed; how many freed so far.
     pub dead: std::collections::HashSet<u32>,
     pub freed: u64,
-    /// Misure di ritmo (vedi `dev_present`).
+    /// Pace measurements (see `dev_present`).
     pub stats_since: Option<std::time::Instant>,
-    /// Istante, fotogramma e draw dell'ultima misura mostrata nel titolo.
+    /// Instant, frame and draws of the last measurement shown in the title.
     pub stats_frame: u64,
     pub stats_draws: u64,
     pub gfx_time: std::time::Duration,
     pub last_stats: String,
-    /// `StretchRect` con rettangoli parziali visti: (rettangolo, dimensione della superficie) → volte.
+    /// `StretchRect` calls with partial rectangles seen: (rectangle, surface size) → times.
     pub partial_rects: HashMap<(u32, u32, u32, u32, u32, u32), u64>,
     pub render_states: HashMap<u32, u32>,
     pub textures: HashMap<u32, u32>,
@@ -80,7 +80,7 @@ pub struct D3d {
     draws_at_last_present: u64,
     max_draws_per_frame: u64,
     primitives: u64,
-    // Censimento
+    // Census
     texture_formats: BTreeMap<(String, u32), u64>,
     rt_formats: BTreeMap<(String, u32), u64>,
     shader_versions: BTreeMap<String, u64>,
@@ -137,7 +137,7 @@ fn fmt_name(f: u32) -> String {
     format!("{f:#x}")
 }
 
-/// (byte per pixel, oppure 0 se a blocchi 4x4; byte per blocco)
+/// (bytes per pixel, or 0 if in 4x4 blocks; bytes per block)
 fn fmt_layout(f: u32) -> (u32, u32) {
     match &f.to_le_bytes() {
         b"DXT1" | b"ATI1" => (0, 8),
@@ -153,7 +153,7 @@ fn fmt_layout(f: u32) -> (u32, u32) {
     }
 }
 
-/// (pitch, dimensione in byte) di un livello.
+/// (pitch, size in bytes) of a level.
 fn level_size(f: u32, w: u32, h: u32) -> (u32, u32) {
     let (bpp, block) = fmt_layout(f);
     if bpp == 0 {
@@ -164,7 +164,7 @@ fn level_size(f: u32, w: u32, h: u32) -> (u32, u32) {
     }
 }
 
-/// Esegue `f` con il renderer, se c'è, e lo stato Direct3D in sola lettura.
+/// Runs `f` with the renderer, if there is one, and the Direct3D state read-only.
 fn with_gfx(rt: &mut Runtime, f: impl FnOnce(&mut crate::gfx::Gfx, &D3d, crate::machine::Mem)) {
     if let Some(mut g) = rt.gfx.take() {
         let start = std::time::Instant::now();
@@ -187,7 +187,7 @@ pub fn direct3d_create9(rt: &mut Runtime, c: &mut Call) -> u32 {
     let obj = com::create(rt, "IDirect3D9", DIRECT3D, 0);
     rt.d3d.d3d = obj;
     rt.d3d.limit = std::env::var("ALTAIR_FRAMES").ok().and_then(|v| v.parse().ok());
-    eprintln!("[d3d] Direct3DCreate9(SDK {}) → registratore", c.arg(0));
+    eprintln!("[d3d] Direct3DCreate9(SDK {}) → recorder", c.arg(0));
     obj
 }
 
@@ -203,7 +203,7 @@ fn d3d_get_adapter_identifier(rt: &mut Runtime, c: &mut Call) -> u32 {
     let p = c.arg(3);
     rt.mem.fill(p, 1100, 0);
     rt.mem.write_cstr(p, b"altair.dll");
-    rt.mem.write_cstr(p + 512, b"Altair Direct3D 9 (registratore)");
+    rt.mem.write_cstr(p + 512, b"Altair Direct3D 9 (recorder)");
     rt.mem.write_cstr(p + 1024, b"\\\\.\\DISPLAY1");
     rt.mem.w32(p + 1064, 0x10de); // VendorId: NVIDIA
     rt.mem.w32(p + 1068, 0x0191); // DeviceId: GeForce 8800 GTX
@@ -227,8 +227,8 @@ fn d3d_get_adapter_display_mode(rt: &mut Runtime, c: &mut Call) -> u32 {
 }
 fn d3d_check_device_format(rt: &mut Runtime, c: &mut Call) -> u32 {
     *rt.d3d.format_checks.entry((c.arg(4), c.arg(5), c.arg(6))).or_default() += 1;
-    // Tra i formati con codice a quattro lettere si accettano solo i DXT: gli altri sono trucchi
-    // di singoli produttori (R2VB, INTZ, NULL…) che il gioco usa solo se li trova.
+    // Among the formats with a four-letter code only the DXT ones are accepted: the others are
+    // tricks of individual vendors (R2VB, INTZ, NULL…) that the game uses only if it finds them.
     let f = c.arg(6);
     if f > 0xffff && !matches!(&f.to_le_bytes(), b"DXT1" | b"DXT2" | b"DXT3" | b"DXT4" | b"DXT5") {
         return NOT_AVAILABLE;
@@ -237,7 +237,7 @@ fn d3d_check_device_format(rt: &mut Runtime, c: &mut Call) -> u32 {
 }
 fn d3d_check_multisample(rt: &mut Runtime, c: &mut Call) -> u32 {
     if c.arg(5) > 1 {
-        return NOT_AVAILABLE; // niente MSAA nel registratore
+        return NOT_AVAILABLE; // no MSAA in the recorder
     }
     if c.arg(6) != 0 {
         rt.mem.w32(c.arg(6), 1);
@@ -340,12 +340,12 @@ fn d3d_create_device(rt: &mut Runtime, c: &mut Call) -> u32 {
         (w, h) = SCREEN;
     }
     eprintln!(
-        "[d3d] CreateDevice: back buffer {w}x{h} {} ×{}, MSAA {}, swap {}, finestra {}, depth automatico {} ({}), flag comportamento {:#x}, intervallo {:#x}",
+        "[d3d] CreateDevice: back buffer {w}x{h} {} ×{}, MSAA {}, swap {}, windowed {}, auto depth {} ({}), behaviour flags {:#x}, interval {:#x}",
         fmt_name(m.r32(pp + 8)),
         m.r32(pp + 12),
         m.r32(pp + 16),
         m.r32(pp + 24),
-        if m.r32(pp + 32) != 0 { "sì" } else { "schermo intero" },
+        if m.r32(pp + 32) != 0 { "yes" } else { "fullscreen" },
         m.r32(pp + 36) != 0,
         fmt_name(m.r32(pp + 40)),
         c.arg(4),
@@ -365,11 +365,11 @@ fn d3d_create_device(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.d3d.ps_f = vec![0.0; 1024];
     rt.d3d.vs_i = vec![0; 64];
     rt.d3d.ps_i = vec![0; 64];
-    // ALTAIR_GFX=0 torna al solo registratore, senza disegnare.
+    // ALTAIR_GFX=0 goes back to the recorder only, without drawing.
     if std::env::var("ALTAIR_GFX").map_or(true, |v| v != "0") {
         rt.gfx = crate::gfx::Gfx::new();
         if rt.gfx.is_none() {
-            eprintln!("[gfx] nessun adattatore grafico: si prosegue senza disegnare");
+            eprintln!("[gfx] no graphics adapter: carrying on without drawing");
         }
     }
     m.w32(c.arg(6), dev);
@@ -436,20 +436,20 @@ fn dev_present(rt: &mut Runtime, _: &mut Call) -> u32 {
     d.max_draws_per_frame = d.max_draws_per_frame.max(in_frame);
     d.draws_at_last_present = d.draws;
     if d.frames == 1 || d.frames % 500 == 0 {
-        eprintln!("[d3d] Present n. {} ({in_frame} draw in questo fotogramma)", d.frames);
+        eprintln!("[d3d] Present no. {} ({in_frame} draws in this frame)", d.frames);
     }
     let frame = d.frames;
     crate::profile::watch_current_thread();
     crate::overlay::frame(in_frame);
     with_gfx(rt, |g, d, _| g.present(d, frame));
     sweep(rt);
-    // Ogni cinque secondi, il ritmo: fotogrammi al secondo, tempo passato nel renderer, invii.
+    // Every five seconds, the pace: frames per second, time spent in the renderer, submits.
     let d = &mut rt.d3d;
     let since = d.stats_since.get_or_insert_with(std::time::Instant::now).elapsed();
     if since.as_secs() >= 5 {
         let frames = (d.frames - d.stats_frame).max(1);
         let gfx_ms = d.gfx_time.as_secs_f64() * 1000.0 / frames as f64;
-        // Tempo di questo thread negli shim (renderer compreso): il resto del fotogramma è il gioco.
+        // Time of this thread in the shims (renderer included): the rest of the frame is the game.
         let shim_ms = crate::win32::take_shim_ms() / frames as f64;
         let draws = (d.draws - d.stats_draws) / frames;
         let mut gpu = (0, 0);
@@ -459,12 +459,12 @@ fn dev_present(rt: &mut Runtime, _: &mut Call) -> u32 {
             prof = g.take_profile().iter().map(|ms| format!("{:.1}", ms / frames as f64)).collect::<Vec<_>>().join("/");
             let (end, finish) = g.take_submit_split();
             let _ = (end, finish);
-            prof += &format!("; thread di invio {:.1} ms", g.take_submit_ms() / frames as f64);
+            prof += &format!("; submit thread {:.1} ms", g.take_submit_ms() / frames as f64);
         }
         let d = &mut rt.d3d;
-        d.last_stats = format!("{:.1} fps, {draws} draw, {gfx_ms:.1} ms nel renderer, {shim_ms:.1} negli shim, {} invii e {} KB di buffer per fotogramma; fasi {prof}", frames as f64 / since.as_secs_f64(), gpu.0 / frames, gpu.1 / frames / 1024);
+        d.last_stats = format!("{:.1} fps, {draws} draws, {gfx_ms:.1} ms in the renderer, {shim_ms:.1} in shims, {} submits and {} KB of buffers per frame; phases {prof}", frames as f64 / since.as_secs_f64(), gpu.0 / frames, gpu.1 / frames / 1024);
         if std::env::var_os("ALTAIR_STATS").is_some() {
-            eprintln!("[d3d] fotogramma {}: {}", d.frames, d.last_stats);
+            eprintln!("[d3d] frame {}: {}", d.frames, d.last_stats);
         }
         d.stats_since = Some(std::time::Instant::now());
         d.stats_frame = d.frames;
@@ -475,23 +475,23 @@ fn dev_present(rt: &mut Runtime, _: &mut Call) -> u32 {
     let d = &mut rt.d3d;
     if d.limit.is_some_and(|n| d.frames >= n) {
         report(rt);
-        eprintln!("\nlimite di ALTAIR_FRAMES raggiunto: esco");
+        eprintln!("\nALTAIR_FRAMES limit reached: exiting");
         std::process::exit(0);
     }
-    // Senza vsync il gioco girerebbe a vuoto: un fotogramma dura almeno un millisecondo.
+    // Without vsync the game would spin freely: a frame lasts at least one millisecond.
     if rt.gfx.is_none() {
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
     D3D_OK
 }
 
-/// Canale di comando per pilotare il gioco mentre gira: `ALTAIR_CTL=cartella`. A ogni
-/// fotogramma il runtime legge e cancella `cartella/cmd`, una riga per comando:
-/// `key DIK [fotogrammi]`, `text TESTO`, `mouse DX DY [ROTELLA]`, `button N [fotogrammi]`,
-/// `move X Y`, `click X Y`, `shot FILE.png`, `stats`, `quit`. Dopo ogni lotto scrive in
-/// `cartella/stato` il numero del fotogramma, così chi comanda sa che è stato eseguito.
+/// Control channel to drive the game while it runs: `ALTAIR_CTL=dir`. At every
+/// frame the runtime reads and deletes `dir/cmd`, one line per command:
+/// `key DIK [frames]`, `text TEXT`, `mouse DX DY [WHEEL]`, `button N [frames]`,
+/// `move X Y`, `click X Y`, `shot FILE.png`, `stats`, `quit`. After each batch it writes the
+/// frame number to `dir/status`, so whoever is driving knows it has been executed.
 fn control(rt: &mut Runtime, frame: u64) {
-    // Rilascio dei pulsanti del mouse premuti da un comando.
+    // Release of the mouse buttons pressed by a command.
     if !rt.button_script.is_empty() || !rt.button_timed.is_empty() {
         let mut s = crate::window::state();
         let now = std::time::Instant::now();
@@ -517,7 +517,7 @@ fn control(rt: &mut Runtime, frame: u64) {
     for line in text.lines() {
         let mut words = line.split_whitespace();
         match words.next() {
-            // La durata è in fotogrammi, oppure in tempo reale con il suffisso `ms` (`key 17 3000ms`).
+            // The duration is in frames, or in real time with the `ms` suffix (`key 17 3000ms`).
             Some("key") => {
                 let Some(key) = words.next().and_then(|v| v.parse::<u8>().ok()) else { continue };
                 let hold = words.next().unwrap_or("10");
@@ -526,7 +526,7 @@ fn control(rt: &mut Runtime, frame: u64) {
                     None => rt.key_script.push((frame + 1, frame + 1 + hold.parse().unwrap_or(10), key)),
                 }
             }
-            // Il mouse passa per lo stesso stato della finestra: stessa strada di quello vero.
+            // The mouse goes through the same window state: the same route as the real one.
             Some("mouse") => {
                 let v: Vec<i32> = words.filter_map(|w| w.parse().ok()).collect();
                 if v.len() >= 2 {
@@ -572,14 +572,14 @@ fn control(rt: &mut Runtime, frame: u64) {
                 let file = dir.join(name);
                 let mut saved = None;
                 with_gfx(rt, |g, d, _| saved = g.save(d, d.backbuffer, &file));
-                eprintln!("[ctl] fotogramma {frame}: {} {:?}", file.display(), saved);
+                eprintln!("[ctl] frame {frame}: {} {:?}", file.display(), saved);
             }
-            Some("fps") => eprintln!("[ctl] pannello di diagnostica {}", if crate::overlay::toggle() { "acceso" } else { "spento" }),
-            // Indagine: dove sta in memoria un testo UTF-16, con i 32 byte che lo precedono.
+            Some("fps") => eprintln!("[ctl] diagnostics panel {}", if crate::overlay::toggle() { "on" } else { "off" }),
+            // Investigation: where a UTF-16 text sits in memory, with the 32 bytes that precede it.
             Some("find") => {
                 let text = line.trim_start().strip_prefix("find").unwrap_or("").trim();
                 let hits = rt.find_utf16(text);
-                eprintln!("[ctl] \"{text}\": {} occorrenze", hits.len());
+                eprintln!("[ctl] \"{text}\": {} occurrences", hits.len());
                 for &a in hits.iter().take(40) {
                     let before = rt.mem.bytes(a.saturating_sub(32), 32).iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ");
                     let tail: String = char::decode_utf16(rt.mem.bytes(a, 96).chunks(2).map(|p| u16::from_le_bytes([p[0], p[1]]))).map(|r| r.unwrap_or('?')).take_while(|&ch| ch != '\0').collect();
@@ -588,34 +588,34 @@ fn control(rt: &mut Runtime, frame: u64) {
                     eprintln!("[ctl]   {a:#010x}: {before} | {tail} | {after}");
                 }
             }
-            // Indagine: una sequenza di byte in esadecimale (per esempio un puntatore), con contorno.
+            // Investigation: a byte sequence in hexadecimal (for example a pointer), with its surroundings.
             Some("findhex") => {
                 let hex: String = words.collect();
                 let needle: Vec<u8> = (0..hex.len() / 2).filter_map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok()).collect();
                 let hits = rt.find_bytes(&needle);
-                eprintln!("[ctl] {hex}: {} occorrenze", hits.len());
+                eprintln!("[ctl] {hex}: {} occurrences", hits.len());
                 for &a in hits.iter().take(24) {
                     let dump = |from: u32, n: u32| rt.mem.bytes(from, n).chunks(4).map(|w| format!("{:08x}", u32::from_le_bytes([w[0], w[1], w[2], w[3]]))).collect::<Vec<_>>().join(" ");
                     eprintln!("[ctl]   {a:#010x}: {} | {}", dump(a.saturating_sub(32), 32), dump(a, 32));
                 }
             }
-            Some("hooks") => eprintln!("[ctl] fotogramma {frame}, agganci: {}", crate::hooks::report()),
-            Some("stats") => eprintln!("[ctl] fotogramma {frame}: {}", rt.d3d.last_stats),
-            // `profile reset` azzera i campioni, `profile` stampa il resoconto (ALTAIR_PROFILE=1).
+            Some("hooks") => eprintln!("[ctl] frame {frame}, hooks: {}", crate::hooks::report()),
+            Some("stats") => eprintln!("[ctl] frame {frame}: {}", rt.d3d.last_stats),
+            // `profile reset` clears the samples, `profile` prints the report (ALTAIR_PROFILE=1).
             Some("profile") => match words.next() {
                 Some("reset") => crate::profile::reset(),
                 _ => crate::profile::report(),
             },
             Some("quit") => {
                 report(rt);
-                eprintln!("\n[ctl] quit al fotogramma {frame}");
+                eprintln!("\n[ctl] quit at frame {frame}");
                 std::process::exit(0);
             }
-            Some(other) => eprintln!("[ctl] comando sconosciuto: {other}"),
+            Some(other) => eprintln!("[ctl] unknown command: {other}"),
             None => {}
         }
     }
-    let _ = std::fs::write(dir.join("stato"), format!("{frame} ({}) video={}\n", rt.d3d.last_stats, crate::bink::playing()));
+    let _ = std::fs::write(dir.join("status"), format!("{frame} ({}) video={}\n", rt.d3d.last_stats, crate::bink::playing()));
 }
 
 fn dev_get_back_buffer(rt: &mut Runtime, c: &mut Call) -> u32 {
@@ -646,7 +646,7 @@ fn dev_create_cube_texture(rt: &mut Runtime, c: &mut Call) -> u32 {
     let (edge, levels, usage, format, pool) = (c.arg(1), c.arg(2), c.arg(3), c.arg(4), c.arg(5));
     let obj = com::create(rt, "IDirect3DCubeTexture9", CUBE_TEXTURE, 0);
     rt.d3d.tex_kind.insert(obj, 1);
-    *rt.d3d.texture_formats.entry((format!("{} (cubo)", fmt_name(format)), usage)).or_default() += 1;
+    *rt.d3d.texture_formats.entry((format!("{} (cube)", fmt_name(format)), usage)).or_default() += 1;
     rt.d3d.res.insert(obj, Res::Texture { w: edge, h: edge, depth: 1, levels: levels.max(1), format, usage, pool, surfaces: HashMap::new() });
     rt.mem.w32(c.arg(6), obj);
     D3D_OK
@@ -670,14 +670,14 @@ fn dev_create_index_buffer(rt: &mut Runtime, c: &mut Call) -> u32 {
 }
 fn dev_create_render_target(rt: &mut Runtime, c: &mut Call) -> u32 {
     let (w, h, format) = (c.arg(1), c.arg(2), c.arg(3));
-    *rt.d3d.rt_formats.entry((format!("{} (superficie)", fmt_name(format)), 1)).or_default() += 1;
+    *rt.d3d.rt_formats.entry((format!("{} (surface)", fmt_name(format)), 1)).or_default() += 1;
     let s = new_surface(rt, w, h, format, 1);
     rt.mem.w32(c.arg(7), s);
     D3D_OK
 }
 fn dev_create_depth_stencil(rt: &mut Runtime, c: &mut Call) -> u32 {
     let (w, h, format) = (c.arg(1), c.arg(2), c.arg(3));
-    *rt.d3d.rt_formats.entry((format!("{} (superficie)", fmt_name(format)), 2)).or_default() += 1;
+    *rt.d3d.rt_formats.entry((format!("{} (surface)", fmt_name(format)), 2)).or_default() += 1;
     let s = new_surface(rt, w, h, format, 2);
     rt.mem.w32(c.arg(7), s);
     D3D_OK
@@ -691,7 +691,7 @@ fn dev_set_render_target(rt: &mut Runtime, c: &mut Call) -> u32 {
     if let Some(slot) = rt.d3d.render_targets.get_mut(c.arg(1) as usize) {
         *slot = c.arg(2);
     }
-    // Cambiare il target 0 riporta il viewport a tutta la sua superficie.
+    // Changing target 0 resets the viewport to its whole surface.
     if c.arg(1) == 0 {
         if let Some(&Res::Surface { w, h, .. }) = rt.d3d.res.get(&c.arg(2)) {
             rt.d3d.viewport = [0, 0, w, h, 0f32.to_bits(), 1f32.to_bits()];
@@ -804,7 +804,7 @@ fn dev_clear(rt: &mut Runtime, c: &mut Call) -> u32 {
 }
 fn dev_stretch_rect(rt: &mut Runtime, c: &mut Call) -> u32 {
     let (src, dst) = (c.arg(1), c.arg(3));
-    // I rettangoli parziali non sono gestiti: si contano, per sapere se servono.
+    // Partial rectangles are not handled: they are counted, to find out whether they are needed.
     for (surface, rect) in [(src, c.arg(2)), (dst, c.arg(4))] {
         if rect == 0 {
             continue;
@@ -819,8 +819,8 @@ fn dev_stretch_rect(rt: &mut Runtime, c: &mut Call) -> u32 {
     with_gfx(rt, |g, d, _| g.blit(d, src, dst));
     D3D_OK
 }
-/// `ColorFill(superficie, rettangolo, colore)`: riempie l'intera superficie; con un rettangolo
-/// viene solo contato.
+/// `ColorFill(surface, rectangle, colour)`: fills the whole surface; with a rectangle
+/// it is only counted.
 fn dev_color_fill(rt: &mut Runtime, c: &mut Call) -> u32 {
     let (surface, rect, color) = (c.arg(1), c.arg(2), c.arg(3));
     if rect != 0 {
@@ -896,7 +896,7 @@ fn dev_set_indices(rt: &mut Runtime, c: &mut Call) -> u32 {
 }
 
 fn dev_create_vertex_declaration(rt: &mut Runtime, c: &mut Call) -> u32 {
-    // D3DVERTEXELEMENT9: Stream u16, Offset u16, Type u8, Method u8, Usage u8, UsageIndex u8; fine: Stream 0xFF.
+    // D3DVERTEXELEMENT9: Stream u16, Offset u16, Type u8, Method u8, Usage u8, UsageIndex u8; end: Stream 0xFF.
     let mut p = c.arg(1);
     let mut elements = Vec::new();
     while rt.mem.r16(p) != 0xff && elements.len() < 8 * 64 {
@@ -912,7 +912,7 @@ fn dev_create_vertex_declaration(rt: &mut Runtime, c: &mut Call) -> u32 {
     D3D_OK
 }
 
-/// Lunghezza in byte di uno shader D3D9: token fino a END (0x0000FFFF), saltando i commenti.
+/// Length in bytes of a D3D9 shader: tokens up to END (0x0000FFFF), skipping comments.
 pub fn shader_len(rt: &Runtime, p: u32) -> u32 {
     let mut n = 1;
     loop {
@@ -928,7 +928,7 @@ fn create_shader(rt: &mut Runtime, c: &mut Call, iface: &'static str) -> u32 {
     let v = u32::from_le_bytes(code[..4].try_into().unwrap());
     let name = format!("{}_{}_{}", if v >> 16 == 0xfffe { "vs" } else { "ps" }, (v >> 8) & 0xff, v & 0xff);
     *rt.d3d.shader_versions.entry(name).or_default() += 1;
-    // ALTAIR_DUMP_SHADERS=cartella: salva ogni shader distinto (contenuto del gioco: va in private/).
+    // ALTAIR_DUMP_SHADERS=dir: saves every distinct shader (game content: it goes in private/).
     if let Some(dir) = std::env::var_os("ALTAIR_DUMP_SHADERS") {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         for b in &code {
@@ -981,7 +981,7 @@ fn dev_get_vertex_declaration(rt: &mut Runtime, c: &mut Call) -> u32 {
 }
 fn dev_create_query(rt: &mut Runtime, c: &mut Call) -> u32 {
     if c.arg(2) == 0 {
-        return D3D_OK; // solo la domanda "è supportata?"
+        return D3D_OK; // only the question "is it supported?"
     }
     let obj = com::create(rt, "IDirect3DQuery9", QUERY, 0);
     rt.d3d.res.insert(obj, Res::Query { kind: c.arg(1) });
@@ -1113,16 +1113,16 @@ static DEVICE: &[Method] = &[
     ("CreateQuery", 3, Some(L(dev_create_query))),
 ];
 
-// --- risorse --------------------------------------------------------------------------------
+// --- resources ------------------------------------------------------------------------------
 
 fn res_get_device(rt: &mut Runtime, c: &mut Call) -> u32 {
     let o = rt.d3d.device;
     out_obj(rt, c.arg(1), o)
 }
 
-/// `Release` di una risorsa (texture, superficie, buffer, query): a zero finisce tra quelle da
-/// liberare. La liberazione avviene a fine fotogramma, e solo se il device non la usa più:
-/// Direct3D tiene vive le risorse ancora legate, anche se il gioco le ha rilasciate.
+/// `Release` of a resource (texture, surface, buffer, query): at zero it ends up among those
+/// to be freed. Freeing happens at the end of the frame, and only if the device no longer uses
+/// it: Direct3D keeps still-bound resources alive, even if the game has released them.
 fn res_release(rt: &mut Runtime, c: &mut Call) -> u32 {
     let n = rt.mem.r32(c.arg(0) + 4).saturating_sub(1);
     rt.mem.w32(c.arg(0) + 4, n);
@@ -1132,9 +1132,9 @@ fn res_release(rt: &mut Runtime, c: &mut Call) -> u32 {
     n
 }
 
-/// Libera le risorse rilasciate dal gioco e non più legate al device: memoria guest, voci
-/// delle tabelle, oggetti wgpu. Senza, una partita lunga esaurirebbe l'heap guest e la memoria
-/// della GPU (il gioco crea e rilascia buffer e texture in continuazione).
+/// Frees the resources released by the game and no longer bound to the device: guest memory,
+/// table entries, wgpu objects. Without it, a long session would exhaust the guest heap and
+/// the GPU's memory (the game creates and releases buffers and textures all the time).
 fn sweep(rt: &mut Runtime) {
     if rt.d3d.dead.is_empty() {
         return;
@@ -1147,18 +1147,18 @@ fn sweep(rt: &mut Runtime) {
     let mut alive = Vec::new();
     for &obj in &d.dead {
         if count(obj) != 0 {
-            alive.push(obj); // ripresa prima di essere liberata
+            alive.push(obj); // taken back before being freed
             continue;
         }
         let busy = match d.res.get(&obj) {
             Some(Res::Buffer { .. }) => d.streams.iter().any(|s| s.0 == obj) || d.indices == obj,
-            // I livelli di una texture nascono con un riferimento nostro: oltre quello, li tiene il gioco.
+            // A texture's levels are born with one reference of ours: beyond that, the game holds them.
             Some(Res::Texture { surfaces, .. }) => d.textures.values().any(|t| *t == obj) || surfaces.values().any(|s| count(*s) > 1 || is_target(s)),
-            // Back buffer e depth impliciti non si liberano; i livelli seguono la loro texture.
+            // The implicit back buffer and depth are not freed; levels follow their texture.
             Some(Res::Surface { .. }) => obj == d.backbuffer || obj == d.depth || d.surface_parent.contains_key(&obj) || is_target(&obj),
             Some(Res::Query { .. }) => false,
             _ => {
-                alive.push(obj); // shader, dichiarazioni e il resto restano
+                alive.push(obj); // shaders, declarations and the rest stay
                 continue;
             }
         };
@@ -1241,7 +1241,7 @@ fn tex_get_level_desc(rt: &mut Runtime, c: &mut Call) -> u32 {
     write_surface_desc(rt, c.arg(2), format, usage, pool, lw, lh);
     D3D_OK
 }
-/// La superficie di un livello (o di una faccia di cubo): creata alla prima richiesta.
+/// The surface of a level (or of a cube face): created on first request.
 fn tex_surface(rt: &mut Runtime, tex: u32, key: u32, level: u32) -> u32 {
     let Some(&Res::Texture { w, h, format, usage, .. }) = rt.d3d.res.get(&tex) else { return 0 };
     if let Some(Res::Texture { surfaces, .. }) = rt.d3d.res.get(&tex) {
@@ -1265,7 +1265,7 @@ fn cube_get_surface(rt: &mut Runtime, c: &mut Call) -> u32 {
     let s = tex_surface(rt, c.arg(0), c.arg(1) << 8 | c.arg(2), c.arg(2));
     out_obj(rt, c.arg(3), s)
 }
-/// Blocca una superficie: la memoria esiste solo tra Lock e Unlock, perché nessuno la legge.
+/// Locks a surface: the memory exists only between Lock and Unlock, because nobody reads it.
 fn lock_surface(rt: &mut Runtime, s: u32, locked: u32, depth: u32) -> u32 {
     let Some(&Res::Surface { w, h, format, mem, .. }) = rt.d3d.res.get(&s) else { return INVALID_CALL };
     let (pitch, size) = level_size(format, w, h);
@@ -1410,7 +1410,7 @@ fn buf_lock(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.mem.w32(c.arg(3), mem + offset);
     *rt.d3d.lock_flags.entry(flags).or_default() += 1;
     if flags & 0x10 == 0 {
-        // Non D3DLOCK_READONLY: l'intervallo va ricaricato. La dimensione 0 vuol dire "fino in fondo".
+        // Not D3DLOCK_READONLY: the range must be re-uploaded. Size 0 means "to the end".
         let end = if len == 0 { size } else { offset.saturating_add(len).min(size) };
         let (append, discard) = (flags & 0x1000 != 0, flags & 0x2000 != 0);
         let mut all = rt.d3d.dirty_buffers.borrow_mut();
@@ -1435,7 +1435,7 @@ fn buf_get_desc(rt: &mut Runtime, c: &mut Call) -> u32 {
     D3D_OK
 }
 fn buf_unlock(_: &mut Runtime, _: &mut Call) -> u32 {
-    D3D_OK // l'intervallo da ricaricare è già stato segnato da `Lock`
+    D3D_OK // the range to re-upload has already been marked by `Lock`
 }
 concat_methods!(BUFFER, 14, [
     ("Lock", 5, Some(L(buf_lock))),
@@ -1477,7 +1477,7 @@ static SHADER: &[Method] = &[
     ("GetFunction", 3, Some(L(shader_get_function))),
 ];
 
-/// Le query rispondono subito: "evento concluso", oppure "pixel visibili" per l'occlusione.
+/// Queries answer immediately: "event finished", or "visible pixels" for occlusion.
 fn query_get_data(rt: &mut Runtime, c: &mut Call) -> u32 {
     let kind = match rt.d3d.res.get(&c.arg(0)) {
         Some(Res::Query { kind }) => *kind,
@@ -1512,13 +1512,13 @@ static STATE_BLOCK: &[Method] = &[
 
 // --- D3DX -----------------------------------------------------------------------------------
 
-/// `D3DXCheckTextureRequirements`: accetta dimensioni e formato così come sono.
+/// `D3DXCheckTextureRequirements`: accepts size and format as they are.
 fn d3dx_check_texture_requirements(_: &mut Runtime, _: &mut Call) -> u32 {
     D3D_OK
 }
 
-/// Cerca la tabella delle costanti (commento `CTAB`) in uno shader. Ritorna l'indirizzo guest
-/// della struttura D3DXSHADER_CONSTANTTABLE e la sua dimensione.
+/// Looks for the constant table (`CTAB` comment) in a shader. Returns the guest address
+/// of the D3DXSHADER_CONSTANTTABLE structure and its size.
 fn find_ctab(rt: &Runtime, shader: u32) -> Option<(u32, u32)> {
     let mut n = 1;
     loop {
@@ -1538,8 +1538,8 @@ fn find_ctab(rt: &Runtime, shader: u32) -> Option<(u32, u32)> {
     }
 }
 
-/// `D3DXGetShaderConstantTable`: il gioco la usa per sapere in quale registro sta ogni costante
-/// di uno shader. I nomi restano dove sono, dentro lo shader in memoria guest.
+/// `D3DXGetShaderConstantTable`: the game uses it to find out which register each constant
+/// of a shader lives in. The names stay where they are, inside the shader in guest memory.
 fn d3dx_get_shader_constant_table(rt: &mut Runtime, c: &mut Call) -> u32 {
     let Some((ctab, size)) = find_ctab(rt, c.arg(0)) else {
         rt.mem.w32(c.arg(1), 0);
@@ -1556,7 +1556,7 @@ const HANDLE_BASE: u32 = 0x0c7a_b000;
 fn ctab_of(rt: &Runtime, c: &Call) -> (u32, u32) {
     rt.d3d.ctabs.get(&c.arg(0)).copied().unwrap_or((0, 0))
 }
-/// Indice della costante indicata da un handle, che può anche essere il suo nome.
+/// Index of the constant denoted by a handle, which can also be its name.
 fn ctab_index(rt: &Runtime, ctab: u32, handle: u32) -> Option<u32> {
     let count = rt.mem.r32(ctab + 12);
     if (HANDLE_BASE..HANDLE_BASE + count).contains(&handle) {
@@ -1586,7 +1586,7 @@ fn ctab_get_desc(rt: &mut Runtime, c: &mut Call) -> u32 {
 fn ctab_get_constant(rt: &mut Runtime, c: &mut Call) -> u32 {
     let (ctab, _) = ctab_of(rt, c);
     if c.arg(1) != 0 || c.arg(2) >= rt.mem.r32(ctab + 12) {
-        return 0; // i membri delle strutture non sono gestiti
+        return 0; // structure members are not handled
     }
     HANDLE_BASE + c.arg(2)
 }
@@ -1667,7 +1667,7 @@ pub static SHIMS: &[(&str, u32, Shim)] = &[
     ("D3DXCheckTextureRequirements", 7, L(d3dx_check_texture_requirements)),
 ];
 
-// --- censimento -----------------------------------------------------------------------------
+// --- census ---------------------------------------------------------------------------------
 
 pub fn report(rt: &Runtime) {
     let d = &rt.d3d;
@@ -1677,21 +1677,21 @@ pub fn report(rt: &Runtime) {
     if let Some(g) = &rt.gfx {
         g.report();
     }
-    eprintln!("\n===== censimento Direct3D 9 =====");
-    eprintln!("risorse liberate: {}; ancora in tabella: {}; in attesa: {}", d.freed, d.res.len(), d.dead.len());
-    eprintln!("flag dei Lock sui buffer: {}", d.lock_flags.iter().map(|(f, n)| format!("{f:#x} × {n}")).collect::<Vec<_>>().join(", "));
+    eprintln!("\n===== Direct3D 9 census =====");
+    eprintln!("resources freed: {}; still in the table: {}; pending: {}", d.freed, d.res.len(), d.dead.len());
+    eprintln!("buffer Lock flags: {}", d.lock_flags.iter().map(|(f, n)| format!("{f:#x} × {n}")).collect::<Vec<_>>().join(", "));
     for (k, n) in &d.partial_rects {
         if k.0 == u32::MAX {
-            eprintln!("ColorFill con rettangolo (non eseguito), colore {:#010x}: {n} volte", k.2);
+            eprintln!("ColorFill with a rectangle (not executed), colour {:#010x}: {n} times", k.2);
         } else {
-            eprintln!("StretchRect con rettangolo parziale {:?} su superficie {}x{}: {n} volte", (k.0, k.1, k.2, k.3), k.4, k.5);
+            eprintln!("StretchRect with partial rectangle {:?} on a {}x{} surface: {n} times", (k.0, k.1, k.2, k.3), k.4, k.5);
         }
     }
-    eprintln!("fotogrammi (Present): {}; draw: {} (massimo {} in un fotogramma); primitive: {}", d.frames, d.draws, d.max_draws_per_frame, d.primitives);
+    eprintln!("frames (Present): {}; draws: {} (at most {} in one frame); primitives: {}", d.frames, d.draws, d.max_draws_per_frame, d.primitives);
     let all = crate::win32::call_counts();
     let mut calls: Vec<(&String, &u64)> = all.iter().map(|(k, n)| (k, n)).filter(|(k, _)| k.starts_with("IDirect3D") || k.starts_with("ID3DX") || k.contains("D3DX")).collect();
     calls.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
-    eprintln!("metodi chiamati ({} distinti):", calls.len());
+    eprintln!("methods called ({} distinct):", calls.len());
     for (k, n) in &calls {
         eprintln!("  {n:>9}  {k}");
     }
@@ -1703,14 +1703,14 @@ pub fn report(rt: &Runtime) {
             }
         }
     };
-    show("texture create, per formato", &d.texture_formats);
-    show("render target e depth, per formato", &d.rt_formats);
-    eprintln!("shader creati: {:?}", d.shader_versions);
-    eprintln!("render state impostati (id → volte): {:?}", d.render_state_ids);
-    eprintln!("sampler state impostati (id → volte): {:?}", d.sampler_state_ids);
-    eprintln!("elementi di dichiarazione dei vertici (usage, tipo) → volte: {:?}", d.decl_usages);
-    eprintln!("CheckDeviceFormat (usage, tipo di risorsa, formato) → volte:");
+    show("textures created, by format", &d.texture_formats);
+    show("render targets and depth, by format", &d.rt_formats);
+    eprintln!("shaders created: {:?}", d.shader_versions);
+    eprintln!("render states set (id → times): {:?}", d.render_state_ids);
+    eprintln!("sampler states set (id → times): {:?}", d.sampler_state_ids);
+    eprintln!("vertex declaration elements (usage, type) → times: {:?}", d.decl_usages);
+    eprintln!("CheckDeviceFormat (usage, resource type, format) → times:");
     for ((usage, rtype, f), n) in &d.format_checks {
-        eprintln!("  {n:>4}  usage {usage:#x} risorsa {rtype} {}", fmt_name(*f));
+        eprintln!("  {n:>4}  usage {usage:#x} resource {rtype} {}", fmt_name(*f));
     }
 }

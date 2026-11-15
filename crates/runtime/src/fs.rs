@@ -1,8 +1,8 @@
-//! File system: percorsi di Windows sul file system dell'host, e le API sui file.
+//! File system: Windows paths on the host file system, and the file APIs.
 //!
-//! `C:\AC1\…` è la cartella del gioco, in sola lettura. Tutto il resto di `C:\` vive in una
-//! cartella scrivibile del progetto (`run/c/`): profili, salvataggi, impostazioni.
-//! I nomi sono confrontati senza distinguere maiuscole e minuscole, come su Windows.
+//! `C:\AC1\…` is the game folder, read-only. Everything else under `C:\` lives in a
+//! writable folder of the project (`run/c/`): profiles, saves, settings.
+//! Names are compared case-insensitively, as on Windows.
 
 use crate::win32::{Call, Runtime};
 use std::collections::HashMap;
@@ -28,7 +28,7 @@ impl FsState {
         FsState { game_dir, c_root, cwd: GAME_DIR.into(), files: HashMap::new(), finds: HashMap::new(), quiet: std::env::var_os("ALTAIR_QUIET_FS").is_some() }
     }
 
-    /// Percorso guest assoluto e normalizzato, come lista di componenti dopo `C:`.
+    /// Absolute, normalised guest path, as a list of components after `C:`.
     fn components(&self, guest: &str) -> Option<Vec<String>> {
         let g = guest.replace('/', "\\");
         let full = if g.len() >= 2 && g.as_bytes()[1] == b':' {
@@ -54,7 +54,7 @@ impl FsState {
         Some(out)
     }
 
-    /// Percorso host di un percorso guest e se è scrivibile.
+    /// Host path of a guest path and whether it is writable.
     pub fn resolve(&self, guest: &str) -> Option<(PathBuf, bool)> {
         let comps = self.components(guest)?;
         let in_game = comps.first().is_some_and(|c| c.eq_ignore_ascii_case("AC1"));
@@ -110,7 +110,7 @@ pub fn create_file_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     let write = access & 0x4000_0000 != 0 || matches!(disposition, 1 | 2 | 5);
     let Some((path, writable)) = rt.fs.resolve(&name) else { return fail(c, 3) };
     if write && !writable {
-        eprintln!("[file] RIFIUTATA la scrittura nella cartella del gioco: {name}");
+        eprintln!("[file] REFUSED a write into the game folder: {name}");
         return fail(c, 5);
     }
     let mut o = OpenOptions::new();
@@ -136,14 +136,14 @@ pub fn create_file_a(rt: &mut Runtime, c: &mut Call) -> u32 {
         Ok(f) => {
             let h = rt.fresh_handle();
             if !rt.fs.quiet {
-                eprintln!("[file] apre {name}{}", if write { " (scrittura)" } else { "" });
+                eprintln!("[file] opens {name}{}", if write { " (write)" } else { "" });
             }
             rt.fs.files.insert(h, f);
             h
         }
         Err(e) => {
             if !rt.fs.quiet {
-                eprintln!("[file] non trovato: {name} ({})", e.kind());
+                eprintln!("[file] not found: {name} ({})", e.kind());
             }
             fail(c, 2)
         }
@@ -158,11 +158,11 @@ pub fn read_file(rt: &mut Runtime, c: &mut Call) -> u32 {
         return 0;
     };
     if ov != 0 {
-        // Lettura "sovrapposta": la eseguiamo subito, alla posizione indicata.
+        // "Overlapped" read: we perform it right away, at the given position.
         let pos = mem.r32(ov + 8) as u64 | (mem.r32(ov + 12) as u64) << 32;
         let _ = f.seek(SeekFrom::Start(pos));
     }
-    // SAFETY: il buffer è memoria guest valida per `n` byte.
+    // SAFETY: the buffer is guest memory valid for `n` bytes.
     let dst = unsafe { std::slice::from_raw_parts_mut(mem.ptr(buf), n as usize) };
     let mut got = 0;
     while got < dst.len() {
@@ -175,8 +175,8 @@ pub fn read_file(rt: &mut Runtime, c: &mut Call) -> u32 {
         mem.w32(done, got as u32);
     }
     if ov != 0 {
-        // OVERLAPPED: Internal (stato), InternalHigh (byte trasferiti), Offset, OffsetHigh, hEvent.
-        // La lettura è già completa: si segnala subito l'evento che il chiamante aspetta.
+        // OVERLAPPED: Internal (status), InternalHigh (bytes transferred), Offset, OffsetHigh, hEvent.
+        // The read is already complete: the event the caller is waiting for is signalled right away.
         mem.w32(ov, 0);
         mem.w32(ov + 4, got as u32);
         if let Some(ev) = rt.object(mem.r32(ov + 16)) {
@@ -251,7 +251,7 @@ pub fn set_end_of_file(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.fs.files.get_mut(&c.arg(0)).is_some_and(|f| f.stream_position().is_ok_and(|p| f.set_len(p).is_ok())) as u32
 }
 
-/// Chiude un handle di file o di ricerca, se lo è. True se lo era.
+/// Closes a file or search handle, if it is one. True if it was.
 pub fn close(rt: &mut Runtime, h: u32) -> bool {
     rt.fs.files.remove(&h).is_some() | rt.fs.finds.remove(&h).is_some()
 }
@@ -273,7 +273,7 @@ pub fn create_directory_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     }
 }
 
-/// `SHCreateDirectoryExA(hwnd, path, sa)`: 0 = riuscita.
+/// `SHCreateDirectoryExA(hwnd, path, sa)`: 0 = success.
 pub fn sh_create_directory_ex_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     let name = rt.mem.cstr(c.arg(1));
     match rt.fs.resolve(&name) {
@@ -319,7 +319,7 @@ pub fn get_full_path_name_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     full.len() as u32
 }
 
-/// Cartelle speciali (`CSIDL_*`), tutte sotto `C:\Users\Player`.
+/// Special folders (`CSIDL_*`), all under `C:\Users\Player`.
 pub fn sh_get_special_folder_path_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     let path = match c.arg(2) & 0xff {
         0x05 => "C:\\Users\\Player\\Documents",
@@ -328,7 +328,7 @@ pub fn sh_get_special_folder_path_a(rt: &mut Runtime, c: &mut Call) -> u32 {
         0x23 => "C:\\ProgramData",
         0x28 => "C:\\Users\\Player",
         other => {
-            eprintln!("SHGetSpecialFolderPathA: CSIDL {other:#x} non previsto, uso Documents");
+            eprintln!("SHGetSpecialFolderPathA: unexpected CSIDL {other:#x}, using Documents");
             "C:\\Users\\Player\\Documents"
         }
     };
@@ -370,7 +370,7 @@ pub fn find_first_file_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     entries.sort();
     entries.reverse();
     if !rt.fs.quiet {
-        eprintln!("[file] cerca {pattern}: {} risultati", entries.len());
+        eprintln!("[file] searches {pattern}: {} results", entries.len());
     }
     let Some(first) = entries.pop() else { return fail(c, 2) };
     write_find_data(rt, c.arg(1), &first);

@@ -1,5 +1,5 @@
-//! USER32 senza schermo: una finestra che esiste solo sulla carta. Il gioco la crea, ne legge
-//! le dimensioni e non riceve mai messaggi. La finestra vera arriva con la grafica (Fase 3).
+//! USER32 without a screen: a window that exists only on paper. The game creates it, reads
+//! its size and never receives messages. The real window comes with the graphics (Phase 3).
 
 use crate::win32::{Call, Runtime, Shim, Shim::L};
 
@@ -24,14 +24,14 @@ fn get_system_metrics(_: &mut Runtime, c: &mut Call) -> u32 {
     }
 }
 fn register_class_ex_a(rt: &mut Runtime, c: &mut Call) -> u32 {
-    // WNDCLASSEXA: lpfnWndProc a +8, lpszClassName a +40.
+    // WNDCLASSEXA: lpfnWndProc at +8, lpszClassName at +40.
     let p = c.arg(0);
     rt.wndproc = rt.mem.r32(p + 8);
-    eprintln!("[finestra] classe \"{}\", procedura {:#010x}", rt.mem.cstr(rt.mem.r32(p + 40)), rt.wndproc);
+    eprintln!("[window] class \"{}\", procedure {:#010x}", rt.mem.cstr(rt.mem.r32(p + 40)), rt.wndproc);
     0xc001
 }
 fn create_window_ex_a(rt: &mut Runtime, c: &mut Call) -> u32 {
-    eprintln!("[finestra] CreateWindowExA \"{}\" {}x{}", rt.mem.cstr(c.arg(2)), c.arg(6) as i32, c.arg(7) as i32);
+    eprintln!("[window] CreateWindowExA \"{}\" {}x{}", rt.mem.cstr(c.arg(2)), c.arg(6) as i32, c.arg(7) as i32);
     rt.window_thread = rt.mem.r32(c.teb() + 0x24);
     rt.text_script = parse_text();
     HWND
@@ -64,13 +64,13 @@ fn message_box_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     1 // IDOK
 }
 fn post_quit_message(_: &mut Runtime, c: &mut Call) -> u32 {
-    eprintln!("[finestra] PostQuitMessage({})", c.arg(0));
+    eprintln!("[window] PostQuitMessage({})", c.arg(0));
     0
 }
 
-/// `ALTAIR_TEXT="2000:Matteo"`: dal fotogramma 2000 batte il testo, un carattere ogni 12
-/// fotogrammi, come messaggi della finestra (`WM_KEYDOWN`, `WM_CHAR`, `WM_KEYUP`). Più testi
-/// si separano con `|`.
+/// `ALTAIR_TEXT="2000:Desmond"`: from frame 2000 it types the text, one character every 12
+/// frames, as window messages (`WM_KEYDOWN`, `WM_CHAR`, `WM_KEYUP`). Multiple texts
+/// are separated with `|`.
 pub fn parse_text() -> Vec<(u64, char)> {
     let Ok(spec) = std::env::var("ALTAIR_TEXT") else { return Vec::new() };
     let mut out = Vec::new();
@@ -84,7 +84,7 @@ pub fn parse_text() -> Vec<(u64, char)> {
     out
 }
 
-/// Il gioco svuota la coda dei messaggi a ogni fotogramma, dal thread che possiede la finestra.
+/// The game drains the message queue every frame, from the thread that owns the window.
 fn peek_message_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     if rt.wndproc == 0 || rt.mem.r32(c.teb() + 0x24) != rt.window_thread {
         return 0;
@@ -92,7 +92,7 @@ fn peek_message_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     let frame = rt.d3d.frames;
     if frame != rt.text_frame {
         rt.text_frame = frame;
-        // Le frecce del copione arrivano anche come messaggi: gli elenchi dei menu le leggono da lì.
+        // The script's arrow keys also arrive as messages: the menu lists read them from there.
         for &(from, to, dik) in &rt.key_script {
             let vk = match dik {
                 200 => 38,
@@ -110,20 +110,20 @@ fn peek_message_a(rt: &mut Runtime, c: &mut Call) -> u32 {
         let due: Vec<char> = rt.text_script.iter().filter(|(f, _)| *f == frame).map(|(_, ch)| *ch).collect();
         for ch in due {
             let vk = ch.to_ascii_uppercase() as u32;
-            // Niente WM_CHAR: la procedura della finestra ricava il carattere da sé, con ToUnicode.
+            // No WM_CHAR: the window procedure derives the character by itself, with ToUnicode.
             rt.messages.extend([(0x100, vk, 1), (0x101, vk, 0xc000_0001)]);
             rt.typed.push_back((vk, ch));
         }
     }
-    // Tastiera e mouse veri, dalla finestra.
+    // Real keyboard and mouse, from the window.
     {
         use crate::window::Event;
         let events: Vec<Event> = crate::window::state().events.drain(..).collect();
         for e in events {
             if crate::window::log_enabled() {
                 match &e {
-                    Event::Key { vk, down, ch, .. } => eprintln!("[input] messaggio: {} VK {vk}, carattere {ch:?}", if *down { "WM_KEYDOWN" } else { "WM_KEYUP" }),
-                    Event::Button { index, down } => eprintln!("[input] messaggio: pulsante {index} {}", if *down { "giù" } else { "su" }),
+                    Event::Key { vk, down, ch, .. } => eprintln!("[input] message: {} VK {vk}, character {ch:?}", if *down { "WM_KEYDOWN" } else { "WM_KEYUP" }),
+                    Event::Button { index, down } => eprintln!("[input] message: button {index} {}", if *down { "down" } else { "up" }),
                     Event::MouseMove(..) => {}
                 }
             }
@@ -141,7 +141,7 @@ fn peek_message_a(rt: &mut Runtime, c: &mut Call) -> u32 {
                 Event::MouseMove(x, y) => rt.messages.push_back((0x200, 0, x | y << 16)),
                 Event::Button { index, down } => {
                     let (x, y) = crate::window::state().cursor;
-                    // WM_LBUTTONDOWN 0x201, WM_RBUTTONDOWN 0x204, WM_MBUTTONDOWN 0x207; il rilascio è il successivo.
+                    // WM_LBUTTONDOWN 0x201, WM_RBUTTONDOWN 0x204, WM_MBUTTONDOWN 0x207; the release is the next one.
                     rt.messages.push_back((0x201 + 3 * index as u32 + !down as u32, 0, x | y << 16));
                 }
             }
@@ -155,11 +155,11 @@ fn peek_message_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     1
 }
 
-/// `ToUnicode(vk, scan, stato, buffer, capienza, flag)`: il carattere del tasto premuto. Qui i
-/// tasti arrivano solo dal copione, quindi il carattere è quello in attesa.
+/// `ToUnicode(vk, scan, state, buffer, capacity, flags)`: the character of the pressed key. Here
+/// keys only come from the script, so the character is the one waiting.
 fn to_unicode(rt: &mut Runtime, c: &mut Call) -> u32 {
     let vk = c.arg(0);
-    // Il carattere in attesa per questo tasto; quelli più vecchi, mai chiesti, si buttano.
+    // The character waiting for this key; older ones, never asked for, are discarded.
     let Some(i) = rt.typed.iter().position(|(v, _)| *v == vk) else { return 0 };
     let (_, ch) = rt.typed.drain(..=i).last().unwrap();
     if c.arg(4) < 1 {
@@ -169,7 +169,7 @@ fn to_unicode(rt: &mut Runtime, c: &mut Call) -> u32 {
     1
 }
 
-/// Consegna un messaggio alla procedura della finestra, che è codice del gioco.
+/// Delivers a message to the window procedure, which is game code.
 pub fn dispatch_message_a(c: &mut Call) -> u32 {
     let p = c.arg(0);
     let args = [c.mem.r32(p), c.mem.r32(p + 4), c.mem.r32(p + 8), c.mem.r32(p + 12)];
@@ -180,7 +180,7 @@ pub fn dispatch_message_a(c: &mut Call) -> u32 {
     crate::win32::call_guest(c, wndproc, &args)
 }
 
-/// Un solo monitor, grande quanto lo schermo dichiarato. La callback è codice guest.
+/// A single monitor, as large as the declared screen. The callback is guest code.
 pub fn enum_display_monitors(c: &mut Call) -> u32 {
     let rect = c.ctx.esp - 0x40;
     for (i, v) in [0, 0, SCREEN.0, SCREEN.1].iter().enumerate() {

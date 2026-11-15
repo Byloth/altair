@@ -1,23 +1,23 @@
-//! I caratteri dell'Animus, letti dai dati del gioco dell'utente.
+//! The Animus fonts, read from the user's game data.
 //!
-//! Il pannello di diagnostica (`overlay.rs`) vuole lo stesso carattere dell'interfaccia
-//! dell'Animus. Quel carattere è di Ubisoft e non può stare nel repository: lo si legge
-//! all'avvio da `DataPC.forge`, nella cartella del gioco, come fa il gioco stesso. Se la lettura
-//! non riesce (archivio diverso, formato inatteso) il pannello ripiega sui caratteri 5×7 suoi.
+//! The diagnostics panel (`overlay.rs`) wants the same font as the Animus interface.
+//! That font belongs to Ubisoft and cannot be in the repository: it is read
+//! at startup from `DataPC.forge`, in the game folder, as the game itself does. If reading
+//! fails (different archive, unexpected format) the panel falls back on its own 5×7 glyphs.
 //!
-//! Formati, verificati su `DataPC.forge` (dettagli in `docs/analisi/forge.md`):
-//! - `MagmaMftFile`: dopo la stringa `PixmapFont`, `u16` numero di glifi e un record da 30
-//!   byte per glifo: codice, larghezza, altezza, spostamento x e y dalla linea di base (con
-//!   segno), avanzamento, quattro `f32` (u0, v0, u1, v1 nell'atlante), `u16` a zero;
-//! - `TextureMap`: larghezza e altezza dopo nome, id e classe; i dati, DXT3, 76 byte più in là,
-//!   con le righe dal basso verso l'alto. Il glifo sta tutto nel canale alfa.
+//! Formats, verified on `DataPC.forge` (details in `docs/analysis/forge.md`):
+//! - `MagmaMftFile`: after the string `PixmapFont`, a `u16` glyph count and a 30-byte
+//!   record per glyph: code, width, height, x and y offset from the baseline
+//!   (signed), advance, four `f32` (u0, v0, u1, v1 in the atlas), a `u16` set to zero;
+//! - `TextureMap`: width and height after name, id and class; the data, DXT3, 76 bytes further on,
+//!   with the rows from bottom to top. The glyph is entirely in the alpha channel.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-/// La voce dell'archivio che contiene caratteri e relative immagini.
+/// The archive entry that contains the fonts and their images.
 const ENTRY: &str = "Game Bootstrap Settings";
-/// Oggetti: (carattere, immagine). Testo corrente e titoli.
+/// Objects: (font, image). Body text and titles.
 const TEXT: (u32, u32) = (0x4eba_10ab, 0x4719_5956); // "AnimusText PC"
 const TITLE: (u32, u32) = (0x87e5_99f1, 0x87e5_99ec); // "Animus Title"
 
@@ -26,23 +26,23 @@ pub struct Glyph {
     pub w: f32,
     pub h: f32,
     pub dx: f32,
-    /// Di quanto il bordo alto sta sopra la linea di base.
+    /// How far the top edge is above the baseline.
     pub dy: f32,
     pub advance: f32,
-    /// Nell'atlante comune, in coordinate di texture.
+    /// In the shared atlas, in texture coordinates.
     pub uv: [f32; 4],
 }
 
 pub struct Face {
     pub glyphs: HashMap<char, Glyph>,
-    /// Altezza delle maiuscole, in pixel dell'atlante.
+    /// Capital height, in atlas pixels.
     pub cap: f32,
 }
 
 pub struct Fonts {
     pub text: Face,
     pub title: Face,
-    /// Atlante comune, un byte di copertura per pixel.
+    /// Shared atlas, one byte of coverage per pixel.
     pub atlas: Vec<u8>,
     pub size: (u32, u32),
 }
@@ -54,18 +54,18 @@ pub fn set_game_dir(dir: &std::path::Path) {
     let _ = GAME_DIR.set(dir.to_path_buf());
 }
 
-/// I caratteri, letti alla prima richiesta.
+/// The fonts, read on first request.
 pub fn get() -> Option<&'static Fonts> {
     FONTS
         .get_or_init(|| {
             let start = std::time::Instant::now();
-            match GAME_DIR.get().ok_or("cartella del gioco sconosciuta".to_string()).and_then(|d| load(d)) {
+            match GAME_DIR.get().ok_or("unknown game folder".to_string()).and_then(|d| load(d)) {
                 Ok(f) => {
-                    eprintln!("[pannello] caratteri dell'Animus letti da DataPC.forge in {} ms ({}x{})", start.elapsed().as_millis(), f.size.0, f.size.1);
+                    eprintln!("[overlay] Animus fonts read from DataPC.forge in {} ms ({}x{})", start.elapsed().as_millis(), f.size.0, f.size.1);
                     Some(f)
                 }
                 Err(e) => {
-                    eprintln!("[pannello] caratteri dell'Animus non disponibili ({e}): si usano quelli a punti");
+                    eprintln!("[overlay] Animus fonts not available ({e}): using the dot-matrix ones");
                     None
                 }
             }
@@ -80,7 +80,7 @@ fn u32_at(b: &[u8], i: usize) -> Option<u32> {
     Some(u32::from_le_bytes(b.get(i..i + 4)?.try_into().ok()?))
 }
 
-/// L'immagine di un `TextureMap` DXT3: (larghezza, altezza, alfa per pixel, dall'alto).
+/// The image of a DXT3 `TextureMap`: (width, height, alpha per pixel, from the top).
 fn texture(obj: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let base = 12 + u32_at(obj, 8)? as usize + 1 + 8;
     let (w, h, len) = (u32_at(obj, base)?, u32_at(obj, base + 4)?, u32_at(obj, base + 71)? as usize);
@@ -93,7 +93,7 @@ fn texture(obj: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
         let (bx, by) = (i as u32 % (w / 4) * 4, i as u32 / (w / 4) * 4);
         let bits = u64::from_le_bytes(block[..8].try_into().ok()?);
         for p in 0..16u32 {
-            // Le righe del file vanno dal basso verso l'alto.
+            // The rows of the file go from bottom to top.
             let (x, y) = (bx + p % 4, h - 1 - (by + p / 4));
             alpha[(y * w + x) as usize] = ((bits >> (4 * p)) & 15) as u8 * 17;
         }
@@ -101,7 +101,7 @@ fn texture(obj: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     Some((w, h, alpha))
 }
 
-/// I glifi di un `MagmaMftFile`, con le coordinate ancora relative alla propria immagine.
+/// The glyphs of a `MagmaMftFile`, with coordinates still relative to their own image.
 fn glyphs(obj: &[u8]) -> Option<HashMap<char, Glyph>> {
     let mark = obj.windows(10).position(|w| w == b"PixmapFont")? + 10;
     let count = u16_at(obj, mark)? as usize;
@@ -126,29 +126,29 @@ fn load(dir: &std::path::Path) -> Result<Fonts, String> {
             break;
         }
     }
-    let entry = found.ok_or("voce dei caratteri non trovata")?;
+    let entry = found.ok_or("font entry not found")?;
     let sections = forge.sections(&entry).map_err(|e| e.to_string())?;
     if sections.len() != 2 {
-        return Err("voce con un numero inatteso di sezioni".into());
+        return Err("entry with an unexpected number of sections".into());
     }
     let index = forge.decompress(&sections[0]).map_err(|e| e.to_string())?;
     let data = forge.decompress(&sections[1]).map_err(|e| e.to_string())?;
-    let count = u16_at(&index, 0).ok_or("indice vuoto")? as usize;
+    let count = u16_at(&index, 0).ok_or("empty index")? as usize;
     let mut objects = HashMap::new();
     let mut pos = 0usize;
     for i in 0..count {
-        let (id, size) = (u32_at(&index, 2 + 8 * i).ok_or("indice corto")?, u32_at(&index, 6 + 8 * i).ok_or("indice corto")? as usize);
-        objects.insert(id, data.get(pos..pos + size).ok_or("oggetto oltre la fine dei dati")?);
+        let (id, size) = (u32_at(&index, 2 + 8 * i).ok_or("short index")?, u32_at(&index, 6 + 8 * i).ok_or("short index")? as usize);
+        objects.insert(id, data.get(pos..pos + size).ok_or("object past the end of the data")?);
         pos += size;
     }
     let part = |ids: (u32, u32)| -> Result<(HashMap<char, Glyph>, (u32, u32, Vec<u8>)), String> {
-        let g = glyphs(objects.get(&ids.0).ok_or("carattere non trovato")?).ok_or("tabella dei glifi non riconosciuta")?;
-        let t = texture(objects.get(&ids.1).ok_or("immagine del carattere non trovata")?).ok_or("immagine del carattere non riconosciuta")?;
+        let g = glyphs(objects.get(&ids.0).ok_or("font not found")?).ok_or("glyph table not recognised")?;
+        let t = texture(objects.get(&ids.1).ok_or("font image not found")?).ok_or("font image not recognised")?;
         Ok((g, t))
     };
     let (mut text, (tw, th, ta)) = part(TEXT)?;
     let (mut title, (lw, lh, la)) = part(TITLE)?;
-    // Un atlante solo: i titoli sopra, il testo sotto.
+    // A single atlas: the titles on top, the text below.
     let (w, h) = (tw.max(lw), th + lh);
     let mut atlas = vec![0u8; (w * h) as usize];
     for y in 0..lh {
@@ -165,6 +165,6 @@ fn load(dir: &std::path::Path) -> Result<Fonts, String> {
     };
     remap(&mut title, lw, lh, 0);
     remap(&mut text, tw, th, lh);
-    let cap = |g: &HashMap<char, Glyph>| g.get(&'H').map(|g| g.dy).filter(|&c| c > 4.0).ok_or("carattere senza la H");
+    let cap = |g: &HashMap<char, Glyph>| g.get(&'H').map(|g| g.dy).filter(|&c| c > 4.0).ok_or("font without the H");
     Ok(Fonts { text: Face { cap: cap(&text)?, glyphs: text }, title: Face { cap: cap(&title)?, glyphs: title }, atlas, size: (w, h) })
 }

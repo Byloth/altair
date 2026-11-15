@@ -1,17 +1,17 @@
-//! Ciò che cambia tra i sistemi su cui gira il runtime: caricare la libreria con il codice
-//! tradotto, proteggere la memoria guest e accorgersi degli accessi sbagliati, restituire
-//! memoria, uscire subito, far uscire il suono. Tutto il resto del runtime è uguale su Linux
-//! e su Windows.
+//! What changes between the systems the runtime runs on: loading the library with the
+//! translated code, protecting guest memory and noticing bad accesses, giving memory back,
+//! exiting immediately, getting sound out. The rest of the runtime is the same on Linux
+//! and on Windows.
 
 use std::ffi::c_void;
 
-/// Frequenza dell'uscita audio: 48 kHz, stereo, 16 bit.
+/// Audio output rate: 48 kHz, stereo, 16 bit.
 pub const AUDIO_RATE: u32 = 48_000;
 
-/// Chiamata quando il codice tocca memoria che non può toccare; l'indirizzo è quello host.
-/// Stampa ciò che sa e dice se l'accesso riguardava la memoria guest: in quel caso il processo
-/// esce. Su Windows un accesso non valido altrove può essere affare di qualcun altro (un driver
-/// che lo gestisce da sé) e lo si lascia proseguire per la sua strada.
+/// Called when the code touches memory it must not touch; the address is the host one.
+/// It prints what it knows and says whether the access concerned guest memory: in that case the
+/// process exits. On Windows an invalid access elsewhere may be someone else's business (a driver
+/// that handles it by itself) and it is left to go its own way.
 pub type FaultReport = fn(addr: usize) -> bool;
 
 #[cfg(unix)]
@@ -24,7 +24,7 @@ mod imp {
     impl Library {
         pub fn open(path: &str) -> Result<Library, String> {
             let c = CString::new(path).map_err(|e| e.to_string())?;
-            // SAFETY: carica una libreria condivisa; il costruttore non ha altri effetti.
+            // SAFETY: loads a shared library; the constructor has no other effects.
             let lib = unsafe { libc::dlopen(c.as_ptr(), libc::RTLD_NOW) };
             if lib.is_null() {
                 return Err(format!("dlopen: {}", unsafe { CStr::from_ptr(libc::dlerror()) }.to_string_lossy()));
@@ -40,23 +40,23 @@ mod imp {
     static REPORT: std::sync::OnceLock<FaultReport> = std::sync::OnceLock::new();
 
     extern "C" fn on_fault(_: libc::c_int, info: *mut libc::siginfo_t, context: *mut c_void) {
-        // Non è codice "sicuro per i segnali" (stampa, può prendere un lock), ma il processo
-        // sta morendo comunque e quello che stampa è l'unica traccia utile.
+        // This is not "signal-safe" code (it prints, it may take a lock), but the process
+        // is dying anyway and what it prints is the only useful trace.
         let addr = unsafe { (*info).si_addr() } as usize;
-        // Dove stava eseguendo: per il codice tradotto il simbolo è la funzione guest (f_XXXXXXXX).
+        // Where it was executing: for translated code the symbol is the guest function (f_XXXXXXXX).
         #[cfg(target_arch = "x86_64")]
         unsafe {
             let rip = (*(context as *mut libc::ucontext_t)).uc_mcontext.gregs[libc::REG_RIP as usize] as usize;
             let mut sym: libc::Dl_info = std::mem::zeroed();
             if libc::dladdr(rip as *const c_void, &mut sym) != 0 && !sym.dli_sname.is_null() {
-                eprintln!("\naccesso non valido dentro {} (+{:#x})", CStr::from_ptr(sym.dli_sname).to_string_lossy(), rip - sym.dli_saddr as usize);
+                eprintln!("\ninvalid access inside {} (+{:#x})", CStr::from_ptr(sym.dli_sname).to_string_lossy(), rip - sym.dli_saddr as usize);
             }
         }
         #[cfg(not(target_arch = "x86_64"))]
         let _ = context;
-        // Indagine (`ALTAIR_TRAP_CONTINUE=1`): la pagina torna scrivibile e l'esecuzione
-        // prosegue. Con una pagina resa di sola lettura apposta, il registro elenca così, una
-        // dopo l'altra, le funzioni che ci scrivono.
+        // Investigation (`ALTAIR_TRAP_CONTINUE=1`): the page becomes writable again and
+        // execution continues. With a page made read-only on purpose, the log thus lists, one
+        // after the other, the functions that write to it.
         if addr >= 0x1_0000 && std::env::var_os("ALTAIR_TRAP_CONTINUE").is_some() {
             unsafe { libc::mprotect((addr & !0xfff) as *mut c_void, 0x1000, libc::PROT_READ | libc::PROT_WRITE) };
             return;
@@ -80,8 +80,8 @@ mod imp {
         }
     }
 
-    /// Rende di sola lettura le pagine che contengono la zona: la prossima scrittura finisce nel
-    /// gestore degli accessi non validi, che dice quale funzione l'ha fatta. Solo per indagini.
+    /// Makes the pages containing the region read-only: the next write ends up in the
+    /// invalid-access handler, which says which function made it. For investigations only.
     pub fn write_trap(ptr: *mut u8, len: usize) {
         let start = ptr as usize & !0xfff;
         let end = (ptr as usize + len + 0xfff) & !0xfff;
@@ -89,7 +89,7 @@ mod imp {
     }
 
     pub fn discard(ptr: *mut u8, len: usize) {
-        // SAFETY: la zona appartiene allo spazio guest; MADV_DONTNEED la riporta a zero.
+        // SAFETY: the region belongs to the guest space; MADV_DONTNEED resets it to zero.
         unsafe { libc::madvise(ptr.cast(), len, libc::MADV_DONTNEED) };
     }
 
@@ -97,10 +97,10 @@ mod imp {
         unsafe { libc::_exit(code) }
     }
 
-    /// Su Linux i timer sono già fini.
+    /// On Linux the timers are already fine-grained.
     pub fn fine_timers() {}
 
-    /// PulseAudio attraverso `libpulse-simple`, caricata a tempo di esecuzione.
+    /// PulseAudio through `libpulse-simple`, loaded at run time.
     pub struct AudioOut {
         handle: *mut c_void,
         write: unsafe extern "C" fn(*mut c_void, *const u8, usize, *mut i32) -> i32,
@@ -111,7 +111,7 @@ mod imp {
             unsafe {
                 let lib = libc::dlopen(c"libpulse-simple.so.0".as_ptr(), libc::RTLD_NOW);
                 if lib.is_null() {
-                    eprintln!("[audio] libpulse-simple non trovata: mixer muto");
+                    eprintln!("[audio] libpulse-simple not found: mixer muted");
                     return None;
                 }
                 let new = libc::dlsym(lib, c"pa_simple_new".as_ptr());
@@ -123,23 +123,23 @@ mod imp {
                 let new: New = std::mem::transmute(new);
                 // pa_sample_spec { format, rate, channels }: S16LE (3), 48 kHz, stereo.
                 let spec = [3u32, AUDIO_RATE, 2];
-                // pa_buffer_attr { maxlength, tlength, prebuf, minreq, fragsize }. La coda è lunga
-                // (`ALTAIR_AUDIO_MS`, 200 ms): con 60 ms il sink di WSLg rallenta fino a un quinto
-                // del tempo reale, per tutti i programmi.
+                // pa_buffer_attr { maxlength, tlength, prebuf, minreq, fragsize }. The queue is long
+                // (`ALTAIR_AUDIO_MS`, 200 ms): with 60 ms the WSLg sink slows down to a fifth
+                // of real time, for every program.
                 let ms = std::env::var("ALTAIR_AUDIO_MS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(200).clamp(20, 2000);
                 let attr = [u32::MAX, AUDIO_RATE * 4 / 1000 * ms, u32::MAX, u32::MAX, u32::MAX];
                 let mut err = 0;
                 let handle = new(std::ptr::null(), c"altair".as_ptr(), 1, std::ptr::null(), c"Assassin's Creed".as_ptr(), spec.as_ptr(), std::ptr::null(), attr.as_ptr(), &mut err);
                 if handle.is_null() {
-                    eprintln!("[audio] PulseAudio non raggiungibile (errore {err}): mixer muto");
+                    eprintln!("[audio] PulseAudio unreachable (error {err}): mixer muted");
                     return None;
                 }
-                eprintln!("[audio] uscita su PulseAudio, 48 kHz stereo");
+                eprintln!("[audio] output on PulseAudio, 48 kHz stereo");
                 Some(AudioOut { handle, write: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*mut c_void, *const u8, usize, *mut i32) -> i32>(write) })
             }
         }
 
-        /// Scrive un blocco di campioni; aspetta se la coda del server è piena.
+        /// Writes a block of samples; waits if the server's queue is full.
         pub fn write(&mut self, pcm: &[u8]) {
             let mut err = 0;
             unsafe { (self.write)(self.handle, pcm.as_ptr(), pcm.len(), &mut err) };
@@ -167,12 +167,12 @@ mod imp {
 
     impl Library {
         pub fn open(path: &str) -> Result<Library, String> {
-            // Percorso assoluto: così la ricerca delle DLL di Windows non c'entra.
+            // Absolute path: this way the Windows DLL search does not come into play.
             let full = std::fs::canonicalize(path).map_err(|e| format!("{path}: {e}"))?;
             let wide: Vec<u16> = full.as_os_str().encode_wide().chain([0]).collect();
             let lib = unsafe { LoadLibraryW(wide.as_ptr()) };
             if lib.is_null() {
-                return Err(format!("LoadLibrary {}: errore {}", full.display(), unsafe { GetLastError() }));
+                return Err(format!("LoadLibrary {}: error {}", full.display(), unsafe { GetLastError() }));
             }
             Ok(Library(lib))
         }
@@ -182,8 +182,8 @@ mod imp {
         }
     }
 
-    /// EXCEPTION_RECORD: codice, flag, record collegato, indirizzo del codice, numero di
-    /// parametri, parametri. Per una violazione di accesso il secondo parametro è l'indirizzo.
+    /// EXCEPTION_RECORD: code, flags, linked record, code address, number of
+    /// parameters, parameters. For an access violation the second parameter is the address.
     #[repr(C)]
     struct ExceptionRecord {
         code: u32,
@@ -205,7 +205,7 @@ mod imp {
         const ACCESS_VIOLATION: u32 = 0xc000_0005;
         let record = unsafe { &*(*info).record };
         if record.code != ACCESS_VIOLATION {
-            return 0; // EXCEPTION_CONTINUE_SEARCH: non è affar nostro
+            return 0; // EXCEPTION_CONTINUE_SEARCH: not our business
         }
         match REPORT.get() {
             Some(report) if report(record.info[1]) => unsafe { ExitProcess(3) },
@@ -225,7 +225,7 @@ mod imp {
     }
 
     pub fn discard(ptr: *mut u8, len: usize) {
-        // Windows non ha un equivalente economico di MADV_DONTNEED che riazzeri: si azzera a mano.
+        // Windows has no cheap equivalent of MADV_DONTNEED that zeroes again: it is zeroed by hand.
         unsafe { std::ptr::write_bytes(ptr, 0, len) };
     }
 
@@ -238,14 +238,14 @@ mod imp {
         fn timeBeginPeriod(ms: u32) -> u32;
     }
 
-    /// Porta a 1 ms il passo dei timer di sistema, che altrimenti è di 15,6 ms: le attese
-    /// con scadenza dei thread del gioco (quello dell'audio riempie i buffer a segmenti di
-    /// 60 ms) arriverebbero in ritardo. È ciò che fa ogni gioco su Windows.
+    /// Brings the system timer step down to 1 ms, which is otherwise 15.6 ms: the timed
+    /// waits of the game's threads (the audio one fills the buffers in 60 ms segments)
+    /// would arrive late. It is what every game does on Windows.
     pub fn fine_timers() {
         unsafe { timeBeginPeriod(1) };
     }
 
-    // --- uscita audio: l'API waveOut, la più semplice che Windows offra -----------------------
+    // --- audio output: the waveOut API, the simplest one Windows offers ------------------------
 
     #[repr(C, packed)]
     struct WaveFormat {
@@ -279,8 +279,8 @@ mod imp {
         fn waveOutWrite(handle: *mut c_void, header: *mut WaveHeader, size: u32) -> u32;
     }
 
-    /// Una manciata di blocchi che girano: si scrive in uno libero, lo si consegna, e quando la
-    /// scheda l'ha suonato torna libero. Se sono tutti in coda si aspetta: è il freno.
+    /// A handful of blocks in rotation: one writes into a free one, hands it over, and when the
+    /// card has played it, it becomes free again. If they are all queued, one waits: that is the brake.
     pub struct AudioOut {
         handle: *mut c_void,
         blocks: Vec<(Box<WaveHeader>, Vec<u8>)>,
@@ -290,15 +290,15 @@ mod imp {
         pub fn open() -> Option<AudioOut> {
             let format = WaveFormat { tag: 1, channels: 2, rate: AUDIO_RATE, bytes_per_sec: AUDIO_RATE * 4, block: 4, bits: 16, extra: 0 };
             let mut handle = std::ptr::null_mut();
-            // WAVE_MAPPER: il dispositivo predefinito.
+            // WAVE_MAPPER: the default device.
             let err = unsafe { waveOutOpen(&mut handle, u32::MAX, &format, 0, 0, 0) };
             if err != 0 {
-                eprintln!("[audio] nessun dispositivo di uscita (waveOutOpen: errore {err}): mixer muto");
+                eprintln!("[audio] no output device (waveOutOpen: error {err}): mixer muted");
                 return None;
             }
-            // Venti blocchi da 10 ms: fino a 200 ms di coda.
+            // Twenty 10 ms blocks: up to 200 ms of queue.
             let blocks = (0..20).map(|_| (Box::new(WaveHeader { data: std::ptr::null_mut(), length: 0, recorded: 0, user: 0, flags: 0, loops: 0, next: std::ptr::null_mut(), reserved: 0 }), Vec::new())).collect();
-            eprintln!("[audio] uscita su waveOut, 48 kHz stereo");
+            eprintln!("[audio] output on waveOut, 48 kHz stereo");
             Some(AudioOut { handle, blocks })
         }
 
@@ -335,5 +335,5 @@ pub use imp::{discard, exit_now, fine_timers, guard, AudioOut, Library};
 #[cfg(unix)]
 pub use imp::write_trap;
 
-// I puntatori dentro sono handle del sistema, usati da un thread solo alla volta.
+// The pointers inside are system handles, used by one thread at a time.
 unsafe impl Send for AudioOut {}

@@ -1,11 +1,11 @@
-//! Tabelle del formato Bink 1: ordine di scansione dei coefficienti, i sedici codici di
-//! Huffman, i sedici ordini di riempimento dei blocchi "run", le matrici di quantizzazione.
+//! Tables of the Bink 1 format: coefficient scan order, the sixteen Huffman
+//! codes, the sixteen fill orders of the "run" blocks, the quantization matrices.
 //!
-//! Sono dati del formato, non codice: i valori sono quelli pubblicati nella documentazione di
-//! MultimediaWiki e in `libavcodec/binkdata.h` di FFmpeg (vedi `docs/fonti.md`). Il file è
-//! generato: non modificarlo a mano.
+//! They are data of the format, not code: the values are those published in the MultimediaWiki
+//! documentation and in FFmpeg's `libavcodec/binkdata.h` (see `docs/sources.md`). The file is
+//! generated: do not edit it by hand.
 
-/// Ordine in cui i coefficienti della DCT compaiono nel flusso.
+/// Order in which the DCT coefficients appear in the stream.
 pub const SCAN: [u8; 64] = [
     0, 1, 8, 9, 2, 3, 10, 11, 4, 5, 12, 13, 6, 7, 14, 15,
     20, 21, 28, 29, 22, 23, 30, 31, 16, 17, 24, 25, 32, 33, 40, 41,
@@ -13,7 +13,7 @@ pub const SCAN: [u8; 64] = [
     36, 37, 44, 45, 38, 39, 46, 47, 52, 53, 60, 61, 54, 55, 62, 63,
 ];
 
-/// Codici di Huffman dei sedici alberi (letti dal bit meno significativo) e loro lunghezze.
+/// Huffman codes of the sixteen trees (read from the least significant bit) and their lengths.
 pub const TREE_BITS: [[u8; 16]; 16] = [
     [
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
@@ -116,7 +116,7 @@ pub const TREE_LENS: [[u8; 16]; 16] = [
     ],
 ];
 
-/// Ordini di visita dei 64 pixel per i blocchi "run".
+/// Visiting orders of the 64 pixels for the "run" blocks.
 pub const PATTERNS: [[u8; 64]; 16] = [
     [
         0, 8, 16, 24, 32, 40, 48, 56, 57, 49, 41, 33, 25, 17, 9, 1,
@@ -216,7 +216,7 @@ pub const PATTERNS: [[u8; 64]; 16] = [
     ],
 ];
 
-/// Quantizzazione dei blocchi intra e inter, per indice di qualità.
+/// Quantization of the intra and inter blocks, by quality index.
 pub const INTRA_QUANT: [[i32; 64]; 16] = [
     [
         65536, 90901, 124989, 173365, 85627, 91511, 192998, 160332, 65536, 61146, 147714, 98203, 48768, 24862, 67644, 42322,

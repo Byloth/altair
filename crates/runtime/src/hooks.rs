@@ -1,14 +1,14 @@
-//! Agganci: funzioni del gioco tradotto che all'ingresso chiamano il runtime.
+//! Hooks: functions of the translated game that call the runtime on entry.
 //!
-//! L'elenco sta in `runtime/hooks.txt`: il traduttore mette in testa a quelle funzioni
-//! `if (altair_hook(c, indirizzo)) return;` e qui arriva la chiamata. Due usi:
-//! - **osservare**: ogni aggancio conta le chiamate (comando `hooks` del canale di comando) e,
-//!   con `ALTAIR_HOOK_LOG=1`, scrive nel registro le prime di ognuno con istante e argomenti;
-//! - **sostituire**: una voce di `REPLACEMENTS` può fare il lavoro al posto della funzione e
-//!   ritornare `true`, dopo aver lasciato registri e stack come dopo il `ret` originale.
+//! The list is in `runtime/hooks.txt`: the translator puts at the top of those functions
+//! `if (altair_hook(c, address)) return;` and the call arrives here. Two uses:
+//! - **observing**: every hook counts its calls (`hooks` command of the control channel) and,
+//!   with `ALTAIR_HOOK_LOG=1`, writes the first ones of each to the log with time and arguments;
+//! - **replacing**: an entry of `REPLACEMENTS` can do the work in place of the function and
+//!   return `true`, after leaving registers and stack as after the original `ret`.
 //!
-//! Gli agganci girano sui thread del gioco, senza il lock del runtime: niente stato condiviso
-//! che non sia atomico.
+//! Hooks run on the game's threads, without the runtime lock: no shared state
+//! that is not atomic.
 
 use crate::machine::Ctx;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -19,16 +19,16 @@ struct Hook {
     addr: u32,
     name: &'static str,
     calls: AtomicU64,
-    /// Chiamate già riferite dall'ultimo comando `hooks`.
+    /// Calls already reported by the last `hooks` command.
     seen: AtomicU64,
 }
 
-/// Chi interviene su una funzione, per indirizzo. Ritorna `true` solo se l'ha sostituita del
-/// tutto; chi si limita a ritoccare gli argomenti ritorna `false` e la funzione prosegue.
+/// Who steps in on a function, by address. Returns `true` only if it has replaced it
+/// entirely; one that merely tweaks the arguments returns `false` and the function carries on.
 const REPLACEMENTS: &[(u32, fn(&mut Ctx) -> bool)] = &[(0x8a_1920, animus_version)];
 
-/// Memoria guest nostra per i testi sostituiti: `SLOTS` caselle da `SLOT` byte, usate a giro
-/// (la funzione agganciata copia subito il testo, la casella serve solo per quell'istante).
+/// Guest memory of our own for the replaced texts: `SLOTS` slots of `SLOT` bytes, used in rotation
+/// (the hooked function copies the text right away, the slot is needed only for that instant).
 static SCRATCH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 static NEXT: AtomicU64 = AtomicU64::new(0);
 const SLOT: u32 = 512;
@@ -39,11 +39,11 @@ pub fn set_scratch(addr: u32) {
     SCRATCH.store(addr, Ordering::Relaxed);
 }
 
-/// La versione dell'Animus mostrata dal gioco. I testi dell'interfaccia passano tutti da
-/// `0x8A1920` (stringa di uscita, testo UTF-16 terminato da zero) appena letti dai dati: se il
-/// testo è "… Animus … 1.28", in qualunque lingua, alla funzione ne arriva una copia con la
-/// versione nostra. Il carattere dell'Animus copre solo Latin-1: niente lettere greche.
-/// `ALTAIR_ANIMUS_VERSION` la cambia; vuota, lascia l'originale.
+/// The Animus version shown by the game. The interface texts all go through
+/// `0x8A1920` (output string, zero-terminated UTF-16 text) as soon as they are read from the data:
+/// if the text is "… Animus … 1.28", in any language, the function receives a copy of it with
+/// our version. The Animus font only covers Latin-1: no Greek letters.
+/// `ALTAIR_ANIMUS_VERSION` changes it; empty, it leaves the original.
 fn animus_version(c: &mut Ctx) -> bool {
     const OLD: &str = "1.28";
     static NEW: OnceLock<Vec<u16>> = OnceLock::new();
@@ -110,7 +110,7 @@ fn log_limit() -> u64 {
     *LIMIT.get_or_init(|| std::env::var("ALTAIR_HOOK_LOG").ok().map(|v| v.parse().ok().filter(|&n| n > 1).unwrap_or(8)).unwrap_or(0))
 }
 
-/// La funzione registrata nella libreria tradotta (`altair_set_hook`).
+/// The function registered in the translated library (`altair_set_hook`).
 pub unsafe extern "C" fn dispatch(c: *mut Ctx, addr: u32) -> i32 {
     let c = unsafe { &mut *c };
     let t = table();
@@ -120,7 +120,7 @@ pub unsafe extern "C" fn dispatch(c: *mut Ctx, addr: u32) -> i32 {
             let mem = crate::machine::Mem(c.mem);
             let arg = |k: u32| mem.r32(c.esp.wrapping_add(4 + 4 * k));
             eprintln!(
-                "[aggancio] t={:.2} s {} ({addr:#x}) n. {n}: ecx {:#x}, argomenti {:#x} {:#x} {:#x}, chiamata da {:#x}, thread {}",
+                "[hook] t={:.2} s {} ({addr:#x}) no. {n}: ecx {:#x}, arguments {:#x} {:#x} {:#x}, called from {:#x}, thread {}",
                 start().elapsed().as_secs_f64(),
                 t[i].name,
                 c.ecx,
@@ -138,7 +138,7 @@ pub unsafe extern "C" fn dispatch(c: *mut Ctx, addr: u32) -> i32 {
     }
 }
 
-/// Resoconto per il comando `hooks`: chiamate totali e dall'ultimo resoconto.
+/// Report for the `hooks` command: total calls and calls since the last report.
 pub fn report() -> String {
     start();
     table()

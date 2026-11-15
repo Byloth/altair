@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Analisi statica minima di eseguibili PE32 (solo libreria standard).
+"""Minimal static analysis of PE32 executables (standard library only).
 
-Uso:
-    python3 -I tools/pe.py info    <exe>...        header, sezioni, DLL importate
-    python3 -I tools/pe.py imports <exe>           funzioni importate, per DLL
-    python3 -I tools/pe.py diff    <exe_a> <exe_b> differenze di import, build string, RTTI
-    python3 -I tools/pe.py rtti    <exe>           nomi RTTI (.?AV / .?AU), uno per riga
+Usage:
+    python3 -I tools/pe.py info    <exe>...        header, sections, imported DLLs
+    python3 -I tools/pe.py imports <exe>           imported functions, per DLL
+    python3 -I tools/pe.py diff    <exe_a> <exe_b> differences in imports, build strings, RTTI
+    python3 -I tools/pe.py rtti    <exe>           RTTI names (.?AV / .?AU), one per line
 
-Legge solo i file indicati: non scrive nulla accanto al gioco.
+It only reads the files given: it writes nothing next to the game.
 """
 import hashlib
 import re
@@ -24,12 +24,12 @@ class PE:
         d = self.data
         pe = struct.unpack_from('<I', d, 0x3c)[0]
         if d[pe:pe + 4] != b'PE\0\0':
-            raise ValueError(f'{path}: non è un PE')
+            raise ValueError(f'{path}: not a PE')
         self.machine, nsec, self.timestamp = struct.unpack_from('<HHI', d, pe + 4)
         opt_size, self.characteristics = struct.unpack_from('<HH', d, pe + 20)
         opt = pe + 24
         if struct.unpack_from('<H', d, opt)[0] != 0x10b:
-            raise ValueError(f'{path}: solo PE32 supportato')
+            raise ValueError(f'{path}: only PE32 is supported')
         self.linker = (d[opt + 2], d[opt + 3])
         self.entry = struct.unpack_from('<I', d, opt + 16)[0]
         self.image_base = struct.unpack_from('<I', d, opt + 28)[0]
@@ -44,7 +44,7 @@ class PE:
         for _, va, vsize, raw, rsize in self.sections:
             if va <= rva < va + max(vsize, rsize):
                 return rva - va + raw
-        raise ValueError(f'RVA {rva:#x} fuori dalle sezioni')
+        raise ValueError(f'RVA {rva:#x} outside the sections')
 
     def cstr(self, off):
         return self.data[off:self.data.index(b'\0', off)].decode(errors='replace')
@@ -53,7 +53,7 @@ class PE:
         return hashlib.sha1(self.data).hexdigest()
 
     def imports(self):
-        """{dll (minuscolo): set di nomi funzione o '#ordinale'}"""
+        """{dll (lowercase): set of function names or '#ordinal'}"""
         out = {}
         off = self.rva_to_off(self.data_dirs[1][0])
         while True:
@@ -83,18 +83,18 @@ def cmd_info(paths):
         reloc = pe.data_dirs[5]
         print(f'== {p}')
         print(f'sha1        {pe.sha1()}')
-        print(f'dimensione  {len(pe.data)} byte')
+        print(f'size        {len(pe.data)} bytes')
         print(f'timestamp   {ts}')
         print(f'linker      {pe.linker[0]}.{pe.linker[1]}')
         print(f'image base  {pe.image_base:#x}   entry {pe.image_base + pe.entry:#x}')
-        print(f'flag        {pe.characteristics:#06x}   rilocazioni {"no" if reloc == (0, 0) else reloc}')
-        print('sezioni:')
+        print(f'flags       {pe.characteristics:#06x}   relocations {"no" if reloc == (0, 0) else reloc}')
+        print('sections:')
         for name, va, vsize, raw, rsize in pe.sections:
             print(f'  {name:<8} va={pe.image_base + va:#010x} vsize={vsize:#09x} rsize={rsize:#09x}')
         imps = pe.imports()
-        print(f'import      {len(imps)} DLL, {sum(map(len, imps.values()))} funzioni')
+        print(f'imports     {len(imps)} DLLs, {sum(map(len, imps.values()))} functions')
         print('  ' + ', '.join(imps))
-        print(f'RTTI        {len(pe.rtti_names())} nomi di tipo')
+        print(f'RTTI        {len(pe.rtti_names())} type names')
         for b in pe.build_strings():
             print(f'build       {b}')
         print()
@@ -111,22 +111,22 @@ def cmd_diff(a_path, b_path):
     a, b = PE(a_path), PE(b_path)
     ia, ib = a.imports(), b.imports()
     print(f'A = {a_path}\nB = {b_path}\n')
-    print(f'funzioni importate: A={sum(map(len, ia.values()))} B={sum(map(len, ib.values()))}')
+    print(f'imported functions: A={sum(map(len, ia.values()))} B={sum(map(len, ib.values()))}')
     for dll in sorted(set(ia) | set(ib)):
         x, y = ia.get(dll, set()), ib.get(dll, set())
         if x != y:
             print(f'  {dll}: A={len(x)} B={len(y)}')
             for f in sorted(x - y):
-                print(f'    solo A  {f}')
+                print(f'    only A  {f}')
             for f in sorted(y - x):
-                print(f'    solo B  {f}')
-    print('\nbuild string:')
+                print(f'    only B  {f}')
+    print('\nbuild strings:')
     for b_ in a.build_strings():
         print(f'  A  {b_}')
     for b_ in b.build_strings():
         print(f'  B  {b_}')
     ra, rb = set(a.rtti_names()), set(b.rtti_names())
-    print(f'\nRTTI: A={len(ra)} B={len(rb)} comuni={len(ra & rb)} solo A={len(ra - rb)} solo B={len(rb - ra)}')
+    print(f'\nRTTI: A={len(ra)} B={len(rb)} common={len(ra & rb)} only A={len(ra - rb)} only B={len(rb - ra)}')
 
 
 def main(argv):

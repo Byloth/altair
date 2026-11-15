@@ -1,5 +1,5 @@
-//! Le DLL piccole e le parti di sistema che il gioco tocca appena: COM, registro, file INI,
-//! utente, data e ora, rete.
+//! The small DLLs and the parts of the system that the game barely touches: COM, registry, INI
+//! files, user, date and time, network.
 
 use crate::win32::{Call, Runtime, Shim, Shim::L};
 
@@ -13,24 +13,24 @@ fn one(_: &mut Runtime, _: &mut Call) -> u32 {
 // --- COM ------------------------------------------------------------------------------------
 use crate::com::guid;
 
-/// Nessuna classe COM è registrata: il chiamante riceve REGDB_E_CLASSNOTREG.
+/// No COM class is registered: the caller receives REGDB_E_CLASSNOTREG.
 fn co_create_instance(rt: &mut Runtime, c: &mut Call) -> u32 {
-    eprintln!("CoCreateInstance: classe {} interfaccia {} → non registrata (da {:#010x})", guid(rt, c.arg(0)), guid(rt, c.arg(3)), c.ret_addr());
+    eprintln!("CoCreateInstance: class {} interface {} → not registered (from {:#010x})", guid(rt, c.arg(0)), guid(rt, c.arg(3)), c.ret_addr());
     if c.arg(4) != 0 {
         rt.mem.w32(c.arg(4), 0);
     }
     0x8004_0154
 }
 
-// --- registro: esiste una sola chiave, quella che l'installatore di Steam scrive. ------------
-// `HKLM\SOFTWARE\Ubisoft\Assassin's Creed` con `Language` e `InstallDir`
-// (vedi `installscript.vdf` nella cartella del gioco). La lingua si sceglie con ALTAIR_LANG.
+// --- registry: only one key exists, the one the Steam installer writes. ----------------------
+// `HKLM\SOFTWARE\Ubisoft\Assassin's Creed` with `Language` and `InstallDir`
+// (see `installscript.vdf` in the game folder). The language is chosen with ALTAIR_LANG.
 const REG_KEY: u32 = 0x5245_4701;
 fn reg_open_key_ex_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     let name = rt.mem.cstr(c.arg(1));
     let found = name.trim_end_matches('\\').eq_ignore_ascii_case("SOFTWARE\\Ubisoft\\Assassin's Creed");
     if rt.trace {
-        eprintln!("    RegOpenKeyExA(\"{}\"): {}", name, if found { "presente" } else { "assente" });
+        eprintln!("    RegOpenKeyExA(\"{}\"): {}", name, if found { "present" } else { "absent" });
     }
     if !found {
         return 2; // ERROR_FILE_NOT_FOUND
@@ -69,7 +69,7 @@ fn reg_query_value_ex_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     status
 }
 
-// --- utente e macchina ----------------------------------------------------------------------
+// --- user and machine -----------------------------------------------------------------------
 fn write_name(rt: &mut Runtime, buf: u32, size_ptr: u32, name: &[u8]) -> u32 {
     if rt.mem.r32(size_ptr) <= name.len() as u32 {
         rt.mem.w32(size_ptr, name.len() as u32 + 1);
@@ -89,13 +89,13 @@ fn get_user_default_lcid(_: &mut Runtime, _: &mut Call) -> u32 {
     0x0409 // en-US
 }
 
-// --- data e ora -----------------------------------------------------------------------------
-/// SYSTEMTIME dal tempo Unix (UTC).
+// --- date and time --------------------------------------------------------------------------
+/// SYSTEMTIME from Unix time (UTC).
 fn write_system_time(rt: &mut Runtime, p: u32, unix_ms: u64) {
     let secs = unix_ms / 1000;
     let days = (secs / 86400) as i64;
     let rem = secs % 86400;
-    // Algoritmo civile di Howard Hinnant.
+    // Howard Hinnant's civil algorithm.
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);
@@ -123,7 +123,7 @@ fn file_time_to_system_time(rt: &mut Runtime, c: &mut Call) -> u32 {
     write_system_time(rt, c.arg(1), ft.saturating_sub(FILETIME_EPOCH) / 10_000);
     1
 }
-/// Il fuso orario è UTC: ora locale e ora di sistema coincidono.
+/// The time zone is UTC: local time and system time coincide.
 fn copy_file_time(rt: &mut Runtime, c: &mut Call) -> u32 {
     let v = rt.mem.bytes(c.arg(0), 8).to_vec();
     rt.mem.write(c.arg(1), &v);
@@ -134,8 +134,8 @@ fn get_time_zone_information(rt: &mut Runtime, c: &mut Call) -> u32 {
     0 // TIME_ZONE_ID_UNKNOWN
 }
 
-// --- file INI veri, nel disco scrivibile del gioco (`run/c/…`) ------------------------------
-/// Le righe di un file INI guest; vuoto se non esiste.
+// --- real INI files, on the game's writable disk (`run/c/…`) --------------------------------
+/// The lines of a guest INI file; empty if it does not exist.
 fn ini_lines(rt: &Runtime, file: u32) -> (Option<std::path::PathBuf>, Vec<String>) {
     let path = if file != 0 { rt.fs.resolve(&rt.mem.cstr(file)).map(|p| p.0) } else { None };
     let text = path.as_ref().and_then(|p| std::fs::read(p).ok()).unwrap_or_default();
@@ -144,7 +144,7 @@ fn ini_lines(rt: &Runtime, file: u32) -> (Option<std::path::PathBuf>, Vec<String
 fn section_name(line: &str) -> Option<&str> {
     line.trim().strip_prefix('[')?.strip_suffix(']')
 }
-/// Indici delle righe di una sezione (intestazione esclusa).
+/// Indices of the lines of a section (header excluded).
 fn section_range(lines: &[String], section: &str) -> Option<std::ops::Range<usize>> {
     let start = lines.iter().position(|l| section_name(l).is_some_and(|n| n.eq_ignore_ascii_case(section)))? + 1;
     let end = lines[start..].iter().position(|l| section_name(l).is_some()).map_or(lines.len(), |i| start + i);
@@ -168,11 +168,11 @@ fn ini_get(rt: &Runtime, section: u32, key: u32, file: u32) -> Option<String> {
 }
 fn get_private_profile_int_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     let Some(v) = ini_get(rt, c.arg(0), c.arg(1), c.arg(3)) else { return c.arg(2) };
-    // Come Windows: cifre iniziali, con segno; altrimenti zero.
+    // Like Windows: leading digits, with sign; otherwise zero.
     let digits: String = v.chars().enumerate().take_while(|(i, ch)| ch.is_ascii_digit() || (*i == 0 && *ch == '-')).map(|(_, ch)| ch).collect();
     digits.parse::<i64>().unwrap_or(0) as u32
 }
-/// Scrive nel buffer una serie di stringhe chiuse da zero, con uno zero finale in più.
+/// Writes into the buffer a series of zero-terminated strings, with one extra final zero.
 fn write_list(rt: &mut Runtime, buf: u32, size: u32, items: &[String]) -> u32 {
     let mut out = Vec::new();
     for item in items {
@@ -191,7 +191,7 @@ fn write_list(rt: &mut Runtime, buf: u32, size: u32, items: &[String]) -> u32 {
 fn get_private_profile_string_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     let (section, key, default, buf, size, file) = (c.arg(0), c.arg(1), c.arg(2), c.arg(3), c.arg(4), c.arg(5));
     if section != 0 && key == 0 {
-        // Senza chiave: l'elenco delle chiavi della sezione.
+        // Without a key: the list of the section's keys.
         let (_, lines) = ini_lines(rt, file);
         let keys: Vec<String> = section_range(&lines, &rt.mem.cstr(section)).map(|r| lines[r].iter().filter_map(|l| key_value(l)).map(|(k, _)| k.to_string()).collect()).unwrap_or_default();
         return write_list(rt, buf, size, &keys);
@@ -207,33 +207,33 @@ fn get_private_profile_string_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     }
     n as u32
 }
-/// `GetPrivateProfileSectionA(sezione, buffer, capienza, file)`: le righe `chiave=valore`.
+/// `GetPrivateProfileSectionA(section, buffer, capacity, file)`: the `key=value` lines.
 fn get_private_profile_section_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     let (_, lines) = ini_lines(rt, c.arg(3));
     let section = if c.arg(0) != 0 { rt.mem.cstr(c.arg(0)) } else { String::new() };
     let items: Vec<String> = section_range(&lines, &section).map(|r| lines[r].iter().filter_map(|l| key_value(l)).map(|(k, v)| format!("{k}={v}")).collect()).unwrap_or_default();
     write_list(rt, c.arg(1), c.arg(2), &items)
 }
-/// `GetPrivateProfileSectionNamesA(buffer, capienza, file)`.
+/// `GetPrivateProfileSectionNamesA(buffer, capacity, file)`.
 fn get_private_profile_section_names_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     let (_, lines) = ini_lines(rt, c.arg(2));
     let names: Vec<String> = lines.iter().filter_map(|l| section_name(l)).map(str::to_string).collect();
     write_list(rt, c.arg(0), c.arg(1), &names)
 }
-/// `WritePrivateProfileStringA(sezione, chiave, valore, file)`: valore nullo cancella la chiave.
+/// `WritePrivateProfileStringA(section, key, value, file)`: a null value deletes the key.
 fn write_private_profile_string_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     let (section, key, value, file) = (c.arg(0), c.arg(1), c.arg(2), c.arg(3));
     if section == 0 || key == 0 {
-        return 1; // cancellare un'intera sezione non serve al gioco
+        return 1; // deleting a whole section is not needed by the game
     }
     let (Some(path), mut lines) = ini_lines(rt, file) else { return 0 };
     if !rt.fs.resolve(&rt.mem.cstr(file)).is_some_and(|p| p.1) {
-        return 0; // cartella del gioco: sola lettura
+        return 0; // game folder: read-only
     }
     let (section, key) = (rt.mem.cstr(section), rt.mem.cstr(key));
     let value = (value != 0).then(|| rt.mem.cstr(value));
     if rt.trace {
-        eprintln!("    ini scrive [{section}] {key} = {value:?} in {}", path.display());
+        eprintln!("    ini writes [{section}] {key} = {value:?} in {}", path.display());
     }
     let range = match section_range(&lines, &section) {
         Some(r) => r,
@@ -257,7 +257,7 @@ fn write_private_profile_string_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     std::fs::write(&path, lines.join("\r\n") + "\r\n").is_ok() as u32
 }
 
-// --- rete: non disponibile ------------------------------------------------------------------
+// --- network: not available -----------------------------------------------------------------
 fn wsa_startup(_: &mut Runtime, _: &mut Call) -> u32 {
     10091 // WSASYSNOTREADY
 }
@@ -271,23 +271,23 @@ fn get_adapters_info(_: &mut Runtime, _: &mut Call) -> u32 {
     232 // ERROR_NO_DATA
 }
 
-// --- audio: nessun dispositivo (arriva in Fase 3) -------------------------------------------
+// --- audio: no device (comes in Phase 3) ----------------------------------------------------
 fn ds_no_driver(_: &mut Runtime, c: &mut Call) -> u32 {
-    eprintln!("[audio] DirectSound non disponibile (richiesto da {:#010x})", c.ret_addr());
+    eprintln!("[audio] DirectSound not available (requested from {:#010x})", c.ret_addr());
     0x8878_0078 // DSERR_NODRIVER
 }
 fn bad_device(_: &mut Runtime, _: &mut Call) -> u32 {
     2 // MMSYSERR_BADDEVICEID
 }
 
-// --- numeri casuali di sistema --------------------------------------------------------------
+// --- system random numbers ------------------------------------------------------------------
 fn crypt_acquire_context_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.mem.w32(c.arg(0), 0x0c0c_0001);
     1
 }
 fn crypt_gen_random(rt: &mut Runtime, c: &mut Call) -> u32 {
     let (n, buf) = (c.arg(1), c.arg(2));
-    // SAFETY: il buffer è memoria guest valida per `n` byte.
+    // SAFETY: the buffer is guest memory valid for `n` bytes.
     let dst = unsafe { std::slice::from_raw_parts_mut(rt.mem.ptr(buf), n as usize) };
     let ok = std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, dst)).is_ok();
     ok as u32
@@ -300,11 +300,11 @@ fn bswap16(_: &mut Runtime, c: &mut Call) -> u32 {
     (c.arg(0) as u16).swap_bytes() as u32
 }
 fn inet_addr(rt: &mut Runtime, c: &mut Call) -> u32 {
-    eprintln!("[rete] il gioco chiede l'indirizzo \"{}\": rete non disponibile", rt.mem.cstr(c.arg(0)));
+    eprintln!("[net] the game asks for the address \"{}\": network not available", rt.mem.cstr(c.arg(0)));
     0xffff_ffff // INADDR_NONE
 }
 fn gethostbyname(rt: &mut Runtime, c: &mut Call) -> u32 {
-    eprintln!("[rete] il gioco cerca l'host \"{}\": rete non disponibile", rt.mem.cstr(c.arg(0)));
+    eprintln!("[net] the game looks up the host \"{}\": network not available", rt.mem.cstr(c.arg(0)));
     0
 }
 

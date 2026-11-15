@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Ritaglia e ingrandisce una zona di un PNG (RGBA a 8 bit), per guardare da vicino un dettaglio.
+"""Crops and enlarges a region of a PNG (8-bit RGBA), to look at a detail up close.
 
-Uso: python3 -I tools/ritaglio.py IN.png OUT.png X Y LARGHEZZA ALTEZZA [INGRANDIMENTO]
-X negativa: contata dal bordo destro. Solo libreria standard.
+Usage: python3 -I tools/crop.py IN.png OUT.png X Y WIDTH HEIGHT [SCALE]
+Negative X: counted from the right edge. Standard library only.
 """
 import struct
 import sys

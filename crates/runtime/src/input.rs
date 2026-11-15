@@ -1,5 +1,5 @@
-//! DirectInput 8 e XInput senza dispositivi veri: una tastiera e un mouse che non vengono mai
-//! toccati, nessun joystick, nessun controller. L'input vero arriva in Fase 3.
+//! DirectInput 8 and XInput without real devices: a keyboard and a mouse that are never
+//! touched, no joystick, no controller. Real input comes in Phase 3.
 
 use crate::com::{self, Method};
 use crate::win32::{Call, Runtime, Shim, Shim::L};
@@ -7,36 +7,36 @@ use crate::win32::{Call, Runtime, Shim, Shim::L};
 pub fn direct_input8_create(rt: &mut Runtime, c: &mut Call) -> u32 {
     let obj = com::create(rt, "IDirectInput8", DINPUT, 0);
     rt.mem.w32(c.arg(3), obj);
-    eprintln!("[input] DirectInput creato (interfaccia {})", com::guid(rt, c.arg(2)));
+    eprintln!("[input] DirectInput created (interface {})", com::guid(rt, c.arg(2)));
     0
 }
 
 fn di_create_device(rt: &mut Runtime, c: &mut Call) -> u32 {
     let which = com::guid(rt, c.arg(1));
     let name = match which.as_str() {
-        "6F1D2B61-D5A0-11CF-BFC7-444553540000" => "tastiera",
+        "6F1D2B61-D5A0-11CF-BFC7-444553540000" => "keyboard",
         "6F1D2B60-D5A0-11CF-BFC7-444553540000" => "mouse",
         _ => {
-            eprintln!("[input] CreateDevice di un dispositivo sconosciuto {which}: rifiutato");
+            eprintln!("[input] CreateDevice of an unknown device {which}: refused");
             return 0x8004_0154; // DIERR_DEVICENOTREG
         }
     };
     let obj = com::create(rt, "IDirectInputDevice8", DEVICE, 0);
     rt.mem.w32(c.arg(2), obj);
-    if name == "tastiera" {
+    if name == "keyboard" {
         rt.keyboard = obj;
         rt.key_script = parse_keys();
     }
     if name == "mouse" {
         rt.mouse = obj;
     }
-    eprintln!("[input] dispositivo: {name}");
+    eprintln!("[input] device: {name}");
     0
 }
 
-/// `ALTAIR_KEYS="900:28,1200:30:5"`: al fotogramma 900 preme il tasto 28 (codici DIK di
-/// DirectInput: 28 Invio, 1 Esc, 57 Spazio, 200/208/203/205 frecce) per 10 fotogrammi, o per
-/// quanti indicati dopo il secondo `:`.
+/// `ALTAIR_KEYS="900:28,1200:30:5"`: at frame 900 it presses key 28 (DirectInput DIK
+/// codes: 28 Enter, 1 Esc, 57 Space, 200/208/203/205 arrows) for 10 frames, or for
+/// as many as given after the second `:`.
 fn parse_keys() -> Vec<(u64, u64, u8)> {
     let Ok(spec) = std::env::var("ALTAIR_KEYS") else { return Vec::new() };
     spec.split(',')
@@ -49,7 +49,7 @@ fn parse_keys() -> Vec<(u64, u64, u8)> {
         .collect()
 }
 
-/// Stato immediato: i tasti del copione per la tastiera, altrimenti nulla; mouse fermo.
+/// Immediate state: the script's keys for the keyboard, otherwise nothing; mouse still.
 fn dev_get_device_state(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.mem.fill(c.arg(2), c.arg(1), 0);
     if c.arg(0) == rt.keyboard && c.arg(1) >= 256 {
@@ -64,7 +64,7 @@ fn dev_get_device_state(rt: &mut Runtime, c: &mut Call) -> u32 {
         for &(_, key) in &rt.key_timed {
             rt.mem.w8(c.arg(2) + key as u32, 0x80);
         }
-        // Tasti veri (finestra) o simulati dal canale di comando: stessa tabella.
+        // Real keys (window) or keys simulated by the control channel: same table.
         let keys = crate::window::state().keys;
         for (i, k) in keys.iter().enumerate().filter(|(_, k)| **k != 0) {
             rt.mem.w8(c.arg(2) + i as u32, *k);
@@ -72,12 +72,12 @@ fn dev_get_device_state(rt: &mut Runtime, c: &mut Call) -> u32 {
         if crate::window::log_enabled() {
             let down: Vec<u32> = (0..256).filter(|i| rt.mem.r8(c.arg(2) + i) != 0).collect();
             if down != rt.input_seen.0 {
-                eprintln!("[input] DirectInput tastiera: premuti {down:?}");
+                eprintln!("[input] DirectInput keyboard: pressed {down:?}");
                 rt.input_seen.0 = down;
             }
         }
     }
-    // DIMOUSESTATE (16 byte) o DIMOUSESTATE2 (20): spostamento dall'ultima lettura e pulsanti.
+    // DIMOUSESTATE (16 bytes) or DIMOUSESTATE2 (20): movement since the last read and buttons.
     if c.arg(0) == rt.mouse && c.arg(1) >= 16 {
         let mut s = crate::window::state();
         let (dx, dy, dz) = std::mem::take(&mut s.motion);
@@ -90,14 +90,14 @@ fn dev_get_device_state(rt: &mut Runtime, c: &mut Call) -> u32 {
         if crate::window::log_enabled() {
             let now = (s.buttons, (dx, dy, dz) != (0, 0, 0));
             if now != rt.input_seen.1 {
-                eprintln!("[input] DirectInput mouse: spostamento ({dx}, {dy}, {dz}), pulsanti {:?}", s.buttons);
+                eprintln!("[input] DirectInput mouse: movement ({dx}, {dy}, {dz}), buttons {:?}", s.buttons);
                 rt.input_seen.1 = now;
             }
         }
     }
     0
 }
-/// Nome di un tasto per codice DIK, come lo mostrerebbe una tastiera italiana.
+/// Name of a key by DIK code, as an Italian keyboard would show it.
 fn key_name(dik: u32) -> Option<String> {
     const LETTERS: [(u32, &str); 4] = [(16, "QWERTYUIOP"), (30, "ASDFGHJKL"), (44, "ZXCVBNM"), (2, "1234567890")];
     for (first, row) in LETTERS {
@@ -122,13 +122,13 @@ fn key_name(dik: u32) -> Option<String> {
     Some(name.to_string())
 }
 
-/// `EnumObjects(callback, contesto, flag)`: per il mouse tre assi relativi e otto pulsanti
-/// (come `c_dfDIMouse2`), per la tastiera i tasti con il loro nome. La callback è codice del
-/// gioco (`0x009091C0`): copia il nome di ogni pulsante e di ogni tasto in una tabella, da cui
-/// prende ciò che scrive nei messaggi ("Premi senza rilasciare (Mouse destro)").
+/// `EnumObjects(callback, context, flags)`: for the mouse three relative axes and eight buttons
+/// (like `c_dfDIMouse2`), for the keyboard the keys with their names. The callback is game
+/// code (`0x009091C0`): it copies the name of every button and every key into a table, from
+/// which it takes what it writes in its messages ("Premi senza rilasciare (Mouse destro)").
 ///
-/// Il gioco crea `IDirectInput8W`: la struttura è `DIDEVICEOBJECTINSTANCEW`, con il nome in
-/// UTF-16.
+/// The game creates `IDirectInput8W`: the structure is `DIDEVICEOBJECTINSTANCEW`, with the name
+/// in UTF-16.
 fn dev_enum_objects(c: &mut Call) -> u32 {
     let (dev, callback, context) = (c.arg(0), c.arg(1), c.arg(2));
     let (mouse, keyboard) = crate::win32::with_runtime(|rt| (dev == rt.mouse, dev == rt.keyboard));
@@ -178,7 +178,7 @@ fn dev_enum_objects(c: &mut Call) -> u32 {
     0
 }
 
-/// Dati bufferizzati: nessun evento.
+/// Buffered data: no events.
 fn dev_get_device_data(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.mem.w32(c.arg(3), 0);
     0
@@ -191,7 +191,7 @@ fn dev_get_capabilities(rt: &mut Runtime, c: &mut Call) -> u32 {
     0
 }
 fn unsupported(_: &mut Runtime, _: &mut Call) -> u32 {
-    0x8000_4001 // E_NOTIMPL: per esempio gli effetti di vibrazione
+    0x8000_4001 // E_NOTIMPL: for example the vibration effects
 }
 
 static DINPUT: &[Method] = &[
@@ -199,7 +199,7 @@ static DINPUT: &[Method] = &[
     ("AddRef", 1, Some(L(com::add_ref))),
     ("Release", 1, Some(L(com::release))),
     ("CreateDevice", 4, Some(L(di_create_device))),
-    ("EnumDevices", 5, Some(L(com::ok))), // nessun dispositivo da elencare
+    ("EnumDevices", 5, Some(L(com::ok))), // no devices to enumerate
     ("GetDeviceStatus", 2, Some(L(com::ok))),
     ("RunControlPanel", 3, None),
     ("Initialize", 3, Some(L(com::ok))),

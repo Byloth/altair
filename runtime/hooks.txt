@@ -1,14 +1,14 @@
-# Agganci: funzioni del gioco che all'ingresso passano dal runtime (vedi altair.h, altair_hook).
-# Un indirizzo per riga, poi un nome a piacere: lo usa il registro (comando `hooks` del canale di
-# comando, ALTAIR_HOOK_LOG=1). Chi le sostituisce davvero sta in crates/runtime/src/hooks.rs.
-# Dopo una modifica: tools/build-image.sh (ricompila solo i file toccati).
+# Hooks: game functions that go through the runtime on entry (see altair.h, altair_hook).
+# One address per line, then a name of your choice: the log uses it (`hooks` command of the control
+# channel, ALTAIR_HOOK_LOG=1). What actually replaces them is in crates/runtime/src/hooks.rs.
+# After a change: tools/build-image.sh (recompiles only the files touched).
 
-# L'interfaccia (magma) costruisce una stringa da un testo UTF-16 appena letto dai dati:
-# cdecl (stringa di uscita, testo). Il runtime ci cambia la versione dell'Animus.
-008a1920 magma::stringa_da_testo
+# The interface (magma) builds a string from a UTF-16 text just read from the data:
+# cdecl (output string, text). The runtime changes the Animus version in it.
+008a1920 magma::string_from_text
 
-# Interferenze dell'Animus: indagine del 2026-11-15, spenti: per riaccenderli togliere il cancelletto.
-#00ad91b0 Glitcher::disegna
+# Animus glitches: investigation of 2026-11-15, switched off: to turn them back on remove the hash sign.
+#00ad91b0 Glitcher::draw
 #00cbd200 GlitchCameraClip::slot11
 #00cbd3c0 GlitchCameraClip::slot12
 #00cbdba0 GlitchCameraClip::slot10
@@ -18,14 +18,14 @@
 #00cbb430 GlitchCameraClip::slot8
 #00cbaad0 GlitchCameraClip::slot26
 #00cbab00 GlitchCameraClip::slot27
-#00cbac50 GlitchCameraClip::dopo_cambio_camera
+#00cbac50 GlitchCameraClip::after_camera_switch
 #00c50080 MissCinematicGlitchConditionClip::slot26
 #00c4fe50 MissCinematicGlitchConditionClip::slot8
 #00c50130 MissCinematicGlitchConditionClip::slot2
-#00cbcf40 GlitchCameraClip::costruttore_a
-#00cbd620 GlitchCameraClip::costruttore_b
-#00c4fef0 MissCinematicGlitchConditionClip::costruttore_a
-#00c50000 MissCinematicGlitchConditionClip::costruttore_b
+#00cbcf40 GlitchCameraClip::constructor_a
+#00cbd620 GlitchCameraClip::constructor_b
+#00c4fef0 MissCinematicGlitchConditionClip::constructor_a
+#00c50000 MissCinematicGlitchConditionClip::constructor_b
 #005ef1e0 SoundNotifyConditionClip::slot2
 #005ef0f0 SoundNotifyConditionClip::slot8
 #005ef120 SoundNotifyConditionClip::slot26

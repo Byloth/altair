@@ -1,18 +1,18 @@
-# Output generato (C tradotto, oggetti, binari): mai pubblicato
+# Generated output (translated C, objects, binaries): never published
 build/
 target/
 
-# Repository di riferimento clonati (scimitar-recomp GPL-2.0, EaglePatch senza licenza)
+# Cloned reference repositories (scimitar-recomp GPL-2.0, EaglePatch unlicensed)
 ref/
 
-# Ambienti e strumenti locali (venv Python, Ghidra, toolchain scaricate)
+# Local environments and tools (Python venv, Ghidra, downloaded toolchains)
 .venv/
 opt/
 
-# Materiale derivato da binari Ubisoft (nomi da AC2 Mac, dump, progetti Ghidra)
+# Material derived from Ubisoft binaries (names from AC2 Mac, dumps, Ghidra projects)
 private/
 
-# Nessun file del gioco, nemmeno per sbaglio
+# No game files, not even by mistake
 *.exe
 *.dll
 *.forge
@@ -22,5 +22,5 @@ private/
 __pycache__/
 *.pyc
 
-# Cartella scrivibile del gioco in esecuzione (profili, salvataggi)
+# Writable folder of the running game (profiles, saves)
 run/

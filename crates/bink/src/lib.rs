@@ -1,11 +1,11 @@
-//! Decodificatore Bink 1 (video e audio), scritto per i filmati di Assassin's Creed (2007):
-//! file `BIKi`, senza canale alfa, audio "Bink audio DCT".
+//! Bink 1 decoder (video and audio), written for the videos of Assassin's Creed (2007):
+//! `BIKi` files, no alpha channel, "Bink audio DCT" audio.
 //!
-//! È una riscrittura a partire dalla descrizione pubblica del formato (MultimediaWiki) e
-//! dalla lettura, come specifica, del decodificatore di FFmpeg; nessuna riga ne è copiata.
-//! FFmpeg è anche l'oracolo: `tools/binktest.py` confronta ogni fotogramma con il suo.
+//! It is a rewrite based on the public description of the format (MultimediaWiki) and
+//! on reading FFmpeg's decoder as a specification; not a single line is copied from it.
+//! FFmpeg is also the oracle: `tools/binktest.py` compares every frame with its own.
 //!
-//! Nessuna dipendenza, nessun `unsafe`: deve poter girare anche nel browser.
+//! No dependencies, no `unsafe`: it must be able to run in the browser too.
 
 mod audio;
 mod bits;
@@ -20,9 +20,9 @@ pub use video::{Frame, VideoDecoder};
 #[derive(Debug)]
 pub enum Error {
     Io(std::io::Error),
-    /// Il file non è un Bink che sappiamo leggere.
+    /// The file is not a Bink we know how to read.
     Unsupported(String),
-    /// Dati non validi dentro un fotogramma.
+    /// Invalid data inside a frame.
     Invalid(&'static str),
 }
 impl From<std::io::Error> for Error {
@@ -35,7 +35,7 @@ impl std::fmt::Display for Error {
         match self {
             Error::Io(e) => write!(f, "{e}"),
             Error::Unsupported(m) => write!(f, "{m}"),
-            Error::Invalid(m) => write!(f, "dati Bink non validi: {m}"),
+            Error::Invalid(m) => write!(f, "invalid Bink data: {m}"),
         }
     }
 }

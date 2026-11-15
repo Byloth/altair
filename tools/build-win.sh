@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Compila per Windows, da WSL, tutto ciò che serve a tools/gioca.ps1:
-#   build/win/altair_ac1.dll                                   il gioco tradotto
-#   target/x86_64-pc-windows-gnullvm/release/altair-run.exe    il runtime
-# Servono: LLVM-MinGW installato su Windows (winget install MartinStorsjo.LLVM-MinGW.UCRT),
-# che da qui si legge soltanto, e la libreria standard di Rust per Windows in opt/rust-win/
-# (scaricata da static.rust-lang.org; vedi docs/ambiente.md).
-# Uso: tools/build-win.sh
+# Builds for Windows, from WSL, everything tools/play.ps1 needs:
+#   build/win/altair_ac1.dll                                   the translated game
+#   target/x86_64-pc-windows-gnullvm/release/altair-run.exe    the runtime
+# Required: LLVM-MinGW installed on Windows (winget install MartinStorsjo.LLVM-MinGW.UCRT),
+# which from here is only read, and the Rust standard library for Windows in opt/rust-win/
+# (downloaded from static.rust-lang.org; see docs/environment.md).
+# Usage: tools/build-win.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [[ -f "$HOME/.bash_exports" ]] && source "$HOME/.bash_exports"
-[ -d opt/rust-win/sysroot ] || { echo "manca opt/rust-win/sysroot: vedi docs/ambiente.md" >&2; exit 1; }
+[ -d opt/rust-win/sysroot ] || { echo "opt/rust-win/sysroot is missing: see docs/environment.md" >&2; exit 1; }
 tools/build-image-win.sh
-# L'icona: estratta dall'eseguibile originale del gioco (come il codice, resta in build/) e
-# collegata nel nostro come risorsa n. 1; la finestra la prende da lì (window.rs).
+# The icon: extracted from the game's original executable (like the code, it stays in build/) and
+# linked into ours as resource no. 1; the window takes it from there (window.rs).
 AC1="${AC1:-/mnt/e/Giochi/Steam/steamapps/common/Assassins Creed}"
 cargo build --release -p altair-recomp 2>&1 | grep -E '^error' || true
 target/release/altair icon "$AC1/AssassinsCreed_Dx9.exe" --out build/win/altair.ico

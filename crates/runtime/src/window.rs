@@ -1,12 +1,12 @@
-//! La finestra vera (`ALTAIR_WINDOW=1`): winit sul thread principale, che altrimenti aspetta
-//! soltanto. Il renderer ci presenta sopra il back buffer; tastiera e mouse arrivano al gioco
-//! per le sue due strade, lo stato di DirectInput e i messaggi della finestra.
+//! The real window (`ALTAIR_WINDOW=1`): winit on the main thread, which otherwise only
+//! waits. The renderer presents the back buffer onto it; keyboard and mouse reach the game
+//! through its two routes, the DirectInput state and the window messages.
 //!
-//! F10 cattura o libera il puntatore del mouse; F8 mostra o nasconde il pannello di diagnostica
-//! (fotogrammi al secondo, in sovrimpressione: vedi `overlay.rs`).
+//! F10 grabs or releases the mouse pointer; F8 shows or hides the diagnostics panel
+//! (frames per second, as an overlay: see `overlay.rs`).
 //!
-//! Qui non si tocca il runtime: gli eventi si accumulano in `State`, e gli shim li leggono
-//! quando il gioco li chiede.
+//! The runtime is not touched here: events pile up in `State`, and the shims read them
+//! when the game asks for them.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard, OnceLock};
@@ -19,20 +19,20 @@ use winit::window::{Window, WindowId};
 use crate::user32::SCREEN;
 
 pub enum Event {
-    /// Tasto: codice virtuale di Windows, scancode, premuto o rilasciato, carattere prodotto.
+    /// Key: Windows virtual-key code, scancode, pressed or released, character produced.
     Key { vk: u32, scan: u32, down: bool, ch: Option<char> },
-    /// Puntatore, in coordinate dello schermo del gioco.
+    /// Pointer, in the game's screen coordinates.
     MouseMove(u32, u32),
-    /// Pulsante del mouse: 0 sinistro, 1 destro, 2 centrale.
+    /// Mouse button: 0 left, 1 right, 2 middle.
     Button { index: usize, down: bool },
 }
 
 pub struct State {
-    /// Tasti premuti, indicizzati dai codici DIK di DirectInput (0x80 = premuto).
+    /// Pressed keys, indexed by DirectInput DIK codes (0x80 = pressed).
     pub keys: [u8; 256],
     pub events: VecDeque<Event>,
     pub cursor: (u32, u32),
-    /// Movimento accumulato dall'ultima lettura: x, y, rotella.
+    /// Motion accumulated since the last read: x, y, wheel.
     pub motion: (i32, i32, i32),
     pub buttons: [bool; 8],
     raw_motion: bool,
@@ -42,11 +42,11 @@ pub struct State {
 
 const TITLE: &str = "AC1 Recompiled - Altaïr";
 static WINDOW: OnceLock<Arc<Window>> = OnceLock::new();
-/// Istanza wgpu e superficie della finestra, create dal thread della finestra e in attesa che
-/// il renderer le prenda.
+/// wgpu instance and window surface, created by the window thread and waiting for the
+/// renderer to take them.
 static GRAPHICS: Mutex<Option<(wgpu::Instance, wgpu::Surface<'static>)>> = Mutex::new(None);
 
-/// Consegna al renderer l'istanza e la superficie della finestra (una volta sola).
+/// Hands the instance and the window surface over to the renderer (once only).
 pub fn take_graphics() -> Option<(wgpu::Instance, wgpu::Surface<'static>)> {
     GRAPHICS.lock().unwrap_or_else(|e| e.into_inner()).take()
 }
@@ -59,8 +59,8 @@ pub fn enabled() -> bool {
     std::env::var("ALTAIR_WINDOW").is_ok_and(|v| v == "1")
 }
 
-/// `ALTAIR_INPUT_LOG=1`: una riga per ogni evento di tastiera e mouse, a ogni passaggio
-/// (finestra → stato → DirectInput o messaggi), per capire dove se ne perde uno.
+/// `ALTAIR_INPUT_LOG=1`: one line for every keyboard and mouse event, at every stage
+/// (window → state → DirectInput or messages), to find out where one gets lost.
 pub fn log_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var("ALTAIR_INPUT_LOG").is_ok_and(|v| v == "1"))
@@ -70,7 +70,7 @@ pub fn state() -> MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// La finestra, aspettando fino a dieci secondi che il thread principale l'abbia creata.
+/// The window, waiting up to ten seconds for the main thread to have created it.
 pub fn window() -> Option<Arc<Window>> {
     if !enabled() {
         return None;
@@ -84,11 +84,11 @@ pub fn window() -> Option<Arc<Window>> {
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    eprintln!("[finestra] la finestra non è comparsa: si prosegue fuori schermo");
+    eprintln!("[window] the window did not appear: continuing off-screen");
     None
 }
 
-/// Tasto fisico → (codice DIK, codice virtuale di Windows).
+/// Physical key → (DIK code, Windows virtual-key code).
 fn map(code: KeyCode) -> Option<(u8, u32)> {
     use KeyCode::*;
     Some(match code {
@@ -124,8 +124,8 @@ impl ApplicationHandler for App {
             return;
         }
         let attrs = Window::default_attributes().with_title(TITLE).with_inner_size(winit::dpi::PhysicalSize::new(SCREEN.0, SCREEN.1));
-        // Su Windows l'icona è la risorsa n. 1 dell'eseguibile: `tools/build-win.sh` la estrae
-        // dall'eseguibile originale del gioco e la collega (non sta nel repository).
+        // On Windows the icon is resource no. 1 of the executable: `tools/build-win.sh` extracts
+        // it from the game's original executable and links it in (it is not in the repository).
         #[cfg(windows)]
         let attrs = {
             use winit::platform::windows::{IconExtWindows, WindowAttributesExtWindows};
@@ -136,19 +136,19 @@ impl ApplicationHandler for App {
         };
         match el.create_window(attrs) {
             Ok(w) => {
-                eprintln!("[finestra] finestra aperta, {}x{}", SCREEN.0, SCREEN.1);
+                eprintln!("[window] window opened, {}x{}", SCREEN.0, SCREEN.1);
                 let w = Arc::new(w);
-                // La superficie di disegno si crea qui, sul thread che possiede la finestra: su
-                // Windows da un altro thread l'handle non è disponibile. Il renderer, che nasce
-                // sul thread del gioco, riceve l'istanza wgpu e la superficie già pronte.
+                // The drawing surface is created here, on the thread that owns the window: on
+                // Windows the handle is not available from another thread. The renderer, which is
+                // born on the game's thread, receives the wgpu instance and the surface ready-made.
                 let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor { backends: wgpu::Backends::all(), ..Default::default() });
                 match instance.create_surface(w.clone()) {
                     Ok(surface) => *GRAPHICS.lock().unwrap_or_else(|e| e.into_inner()) = Some((instance, surface)),
-                    Err(e) => eprintln!("[finestra] superficie non creabile ({e}): il gioco disegnerà fuori schermo"),
+                    Err(e) => eprintln!("[window] cannot create the surface ({e}): the game will draw off-screen"),
                 }
                 let _ = WINDOW.set(w);
             }
-            Err(e) => eprintln!("[finestra] impossibile aprire la finestra: {e}"),
+            Err(e) => eprintln!("[window] cannot open the window: {e}"),
         }
     }
 
@@ -156,14 +156,14 @@ impl ApplicationHandler for App {
         let mut s = state();
         match event {
             WindowEvent::CloseRequested => {
-                eprintln!("[finestra] chiusa dall'utente: esco");
-                // Uscita secca: smontare wgpu e la finestra da qui, con il gioco che gira, non serve.
+                eprintln!("[window] closed by the user: exiting");
+                // Abrupt exit: tearing down wgpu and the window from here, with the game running, is pointless.
                 crate::host::exit_now(0)
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 let PhysicalKey::Code(code) = event.physical_key else { return };
-                // F10 non va al gioco: cattura o libera il puntatore. Catturato, il mouse muove la
-                // visuale senza fermarsi ai bordi della finestra; libero, serve per i menu.
+                // F10 does not go to the game: it grabs or releases the pointer. Grabbed, the mouse moves
+                // the view without stopping at the window edges; released, it is used for the menus.
                 if code == KeyCode::F10 {
                     if event.state == ElementState::Pressed && !event.repeat {
                         s.grabbed = !s.grabbed;
@@ -171,12 +171,12 @@ impl ApplicationHandler for App {
                             use winit::window::CursorGrabMode::{Confined, Locked, None};
                             let ok = if s.grabbed { w.set_cursor_grab(Locked).or_else(|_| w.set_cursor_grab(Confined)).is_ok() } else { w.set_cursor_grab(None).is_ok() };
                             w.set_cursor_visible(!s.grabbed);
-                            eprintln!("[finestra] puntatore {}{}", if s.grabbed { "catturato (F10 per liberarlo)" } else { "libero" }, if ok { "" } else { " (il compositore ha rifiutato la cattura)" });
+                            eprintln!("[window] pointer {}{}", if s.grabbed { "grabbed (F10 to release it)" } else { "released" }, if ok { "" } else { " (the compositor refused the grab)" });
                         }
                     }
                     return;
                 }
-                // F8 non va al gioco: accende o spegne il pannello di diagnostica (overlay.rs).
+                // F8 does not go to the game: it turns the diagnostics panel on or off (overlay.rs).
                 if code == KeyCode::F8 {
                     if event.state == ElementState::Pressed && !event.repeat {
                         crate::overlay::toggle();
@@ -188,7 +188,7 @@ impl ApplicationHandler for App {
                 s.keys[dik as usize] = if down { 0x80 } else { 0 };
                 let ch = if down { event.text.as_ref().and_then(|t| t.chars().next()).filter(|c| !c.is_control()) } else { None };
                 if log_enabled() && !event.repeat {
-                    eprintln!("[input] finestra: tasto {code:?} {} → DIK {dik}, VK {vk}, carattere {ch:?}", if down { "giù" } else { "su" });
+                    eprintln!("[input] window: key {code:?} {} → DIK {dik}, VK {vk}, character {ch:?}", if down { "down" } else { "up" });
                 }
                 s.events.push_back(Event::Key { vk, scan: (dik & 0x7f) as u32, down, ch });
             }
@@ -200,7 +200,7 @@ impl ApplicationHandler for App {
                     }
                 }
                 s.last_cursor = Some((position.x, position.y));
-                // La finestra può essere ridimensionata: il gioco ragiona sempre sul suo schermo.
+                // The window can be resized: the game always reasons in terms of its own screen.
                 let size = WINDOW.get().map(|w| w.inner_size()).filter(|z| z.width > 0 && z.height > 0);
                 let (w, h) = size.map_or((SCREEN.0 as f64, SCREEN.1 as f64), |z| (z.width as f64, z.height as f64));
                 let x = (position.x * SCREEN.0 as f64 / w).clamp(0.0, SCREEN.0 as f64 - 1.0) as u32;
@@ -219,7 +219,7 @@ impl ApplicationHandler for App {
                 };
                 let down = st == ElementState::Pressed;
                 if log_enabled() {
-                    eprintln!("[input] finestra: pulsante {index} {} in {:?}", if down { "giù" } else { "su" }, s.cursor);
+                    eprintln!("[input] window: button {index} {} at {:?}", if down { "down" } else { "up" }, s.cursor);
                 }
                 s.buttons[index] = down;
                 if index < 3 {
@@ -233,14 +233,14 @@ impl ApplicationHandler for App {
                 };
             }
             WindowEvent::Focused(false) => {
-                // Senza fuoco i rilasci non arrivano: nessun tasto resta premuto.
+                // Without focus the releases do not arrive: no key stays pressed.
                 s.keys = [0; 256];
                 s.buttons = [false; 8];
             }
             _ => {}
         }
         if s.events.len() > 4096 {
-            s.events.drain(..2048); // il gioco non sta leggendo (caricamento): non si accumula
+            s.events.drain(..2048); // the game is not reading (loading): do not pile up
         }
     }
 
@@ -254,9 +254,9 @@ impl ApplicationHandler for App {
     }
 }
 
-/// Il ciclo degli eventi: occupa il thread principale fino alla fine del processo. Se il
-/// server grafico non c'è o winit non riesce a usarlo (su X11 gli serve `libxkbcommon-x11`,
-/// che in WSL può mancare; su Wayland no), il gioco prosegue fuori schermo.
+/// The event loop: it occupies the main thread until the end of the process. If the
+/// display server is missing or winit cannot use it (on X11 it needs `libxkbcommon-x11`,
+/// which may be missing in WSL; on Wayland it does not), the game continues off-screen.
 pub fn run() -> ! {
     let outcome = std::panic::catch_unwind(|| match EventLoop::new() {
         Ok(el) => el.run_app(&mut App).map_err(|e| e.to_string()),
@@ -264,8 +264,8 @@ pub fn run() -> ! {
     });
     match outcome {
         Ok(Ok(())) => std::process::exit(0),
-        Ok(Err(e)) => eprintln!("[finestra] nessuna finestra ({e}): si prosegue fuori schermo"),
-        Err(_) => eprintln!("[finestra] winit non riesce ad aprire la finestra: si prosegue fuori schermo"),
+        Ok(Err(e)) => eprintln!("[window] no window ({e}): continuing off-screen"),
+        Err(_) => eprintln!("[window] winit cannot open the window: continuing off-screen"),
     }
     FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
     loop {

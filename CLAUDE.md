@@ -1,79 +1,84 @@
 # AC1 Recompiled - Altaïr (`altair`)
 
-Ricompilazione statica di Assassin's Creed (2007), build Steam DX9, verso nativo e browser.
-Piano completo, per chi legge da fuori: documento "AC1 Recompiled - Altaïr: piano di progetto"
-(https://claude.ai/artifact/SoPWUhJZPJ45oWk3t4r8bu). Qui dentro vive il lavoro operativo.
+Static recompilation of Assassin's Creed (2007), Steam DX9 build, targeting native and browser.
+Full plan, for outside readers: the document "AC1 Recompiled - Altaïr: piano di progetto"
+(https://claude.ai/artifact/SoPWUhJZPJ45oWk3t4r8bu; that online document is in Italian). The
+operational work lives in here.
 
-**Nomi.** "AC1 Recompiled - Altaïr" è il nome completo del progetto (con la dieresi); `altair`, senza
-dieresi, è il nome tecnico:
-binario `altair`, crate `altair-*`, prefisso `altair_` nel codice generato, cartella `altair`.
-Un eventuale ricompilatore per un altro gioco prenderebbe il nome del suo protagonista.
-Fino al 2026-11-15 il nome tecnico era `acrek` e la cartella `ac-rek`: i commit più vecchi li
-citano ancora.
+**Names.** "AC1 Recompiled - Altaïr" is the full name of the project (with the diaeresis); `altair`, without
+the diaeresis, is the technical name:
+binary `altair`, crates `altair-*`, prefix `altair_` in the generated code, folder `altair`.
+A possible recompiler for another game would take the name of its protagonist.
+Until 2026-11-15 the technical name was `acrek` and the folder `ac-rek`: older commits still
+mention them.
 
-## Regola principale: si scrive tutto qui
+## Main rule: everything gets written here
 
-Ogni scoperta, misura, decisione o ipotesi va annotata in questa directory **nello stesso
-momento in cui la si fa**, non a fine sessione.
+Every discovery, measurement, decision or hypothesis is recorded in this directory **at the
+very moment it is made**, not at the end of the session.
 
-- Fatti verificati sui binari → `docs/analisi/` (un file per argomento).
-- Decisioni e motivazioni → `docs/decisioni.md` (nuova voce in cima, con data).
-- Domande ancora aperte → `docs/domande-aperte.md`; quando trovano risposta, spostale
-  nel file di analisi giusto e lascia un rimando.
-- Cosa si è fatto in ogni sessione → `docs/diario.md`.
-- Avanzamento → spunta le caselle in `docs/PIANO.md`.
-- Link e materiale esterno → `docs/fonti.md`.
+- Verified facts about the binaries → `docs/analysis/` (one file per topic).
+- Decisions and reasons → `docs/decisions.md` (new entry at the top, with the date).
+- Questions still open → `docs/open-questions.md`; when they are answered, move them
+  to the right analysis file and leave a pointer.
+- What was done in each session → `docs/journal.md`.
+- Progress → tick the boxes in `docs/PLAN.md`.
+- Links and external material → `docs/sources.md`.
 
-Distingui sempre ciò che è **verificato qui** (con lo strumento o il comando che lo prova) da
-ciò che viene da **fonti esterne** o è un'**ipotesi**. Scrivi in italiano.
+Always distinguish what is **verified here** (with the tool or command that proves it) from
+what comes from **external sources** or is a **hypothesis**.
 
-## Percorsi
+Everything in the repository (docs, comments, messages, commit messages) is written in
+English. Until 2026-11-15 the repository was in Italian, so older commit messages are in
+Italian.
 
-**Tutto il lavoro sta dentro questa directory**, anche ciò che non va committato: in quel
-caso lo si mette in una cartella ignorata da `.gitignore`.
+## Paths
 
-| Cartella | Contenuto | In git |
+**All work stays inside this directory**, including what must not be committed: in that
+case it goes in a folder ignored by `.gitignore`.
+
+| Folder | Contents | In git |
 |---|---|---|
-| `ref/` | Repository di riferimento clonati (scimitar-recomp, EaglePatch). Si leggono, non si copiano | no |
-| `private/` | Materiale derivato da binari Ubisoft (nomi, dump, progetto Ghidra) | no |
-| `build/` | Output generato (C tradotto, oggetti) | no |
-| `.venv/`, `opt/` | venv Python, strumenti scaricati (es. Ghidra) | no |
-| `run/` | Il disco `C:` scrivibile del gioco in esecuzione (profili, salvataggi) | no |
+| `ref/` | Cloned reference repositories (scimitar-recomp, EaglePatch). To be read, not copied | no |
+| `private/` | Material derived from Ubisoft binaries (names, dumps, Ghidra project) | no |
+| `build/` | Generated output (translated C, objects) | no |
+| `.venv/`, `opt/` | Python venv, downloaded tools (e.g. Ghidra) | no |
+| `run/` | The writable `C:` drive of the running game (profiles, saves) | no |
 
-- Gioco (Windows): `E:\Giochi\Steam\steamapps\common\Assassins Creed`
-- Da WSL: `/mnt/e/Giochi/Steam/steamapps/common/Assassins Creed` → nei comandi usa `$AC1`
+- Game (Windows): `E:\Giochi\Steam\steamapps\common\Assassins Creed`
+- From WSL: `/mnt/e/Giochi/Steam/steamapps/common/Assassins Creed` → in commands use `$AC1`
   (`export AC1="/mnt/e/Giochi/Steam/steamapps/common/Assassins Creed"`).
-- Eseguibile di riferimento: `AssassinsCreed_Dx9.exe`, SHA-1 `a9ea476e70f076709cca59a802e26ec894432120`.
+- Reference executable: `AssassinsCreed_Dx9.exe`, SHA-1 `a9ea476e70f076709cca59a802e26ec894432120`.
 
-La cartella del gioco è **solo in lettura**: non scriverci, non copiarne file qui.
+The game folder is **read-only**: do not write to it, do not copy files from it here.
 
-## Regole legali (dal piano, non negoziabili)
+## Legal rules (from the plan, non-negotiable)
 
-1. Nessun asset e nessun eseguibile Ubisoft nel repository. Niente dump, estratti o hexdump lunghi.
-2. Il codice C generato resta in `build/` (ignorato), mai pubblicato.
-3. Nomi ricavati da binari Ubisoft (es. AC2 Mac) solo in `private/` (ignorato).
-4. Niente codice GPL copiato (scimitar-recomp): si legge come specifica, si riscrive.
-5. Niente codice di EaglePatch (senza licenza): solo conoscenza.
+1. No Ubisoft assets and no Ubisoft executables in the repository. No dumps, extracts or long hexdumps.
+2. The generated C code stays in `build/` (ignored), never published.
+3. Names obtained from Ubisoft binaries (e.g. AC2 Mac) only in `private/` (ignored).
+4. No copied GPL code (scimitar-recomp): it is read as a specification and rewritten.
+5. No EaglePatch code (unlicensed): knowledge only.
 
-Nei documenti vanno bene indirizzi, hash, nomi di funzioni/classi, conteggi e brevi citazioni
-necessarie a spiegare una scoperta.
+Addresses, hashes, function/class names, counts and short quotations needed to explain a
+discovery are fine in the documents.
 
-## Strumenti
+## Tools
 
 ```sh
-source ~/.bash_exports                     # cargo non è nel PATH delle shell non interattive
-cargo build --release                      # produce target/release/altair
+source ~/.bash_exports                     # cargo is not in the PATH of non-interactive shells
+cargo build --release                      # produces target/release/altair
 .venv/bin/python tools/harness.py "$AC1/AssassinsCreed_Dx9.exe" selftest
-.venv/bin/python tools/difftest.py "$AC1/AssassinsCreed_Dx9.exe"   # da rifare dopo ogni modifica al traduttore
-python3 -I tools/binktest.py "$AC1/videos"    # da rifare dopo ogni modifica a crates/bink (oracolo: ffmpeg)
-tools/build-image.sh                       # rigenera e ricompila l'immagine tradotta (incrementale)
-tools/run.sh [--trace]                     # avvia il gioco tradotto; si ferma al primo import mancante
-tools/gioca.sh                             # lo stesso, in una finestra con tastiera, mouse e audio
-tools/avvia.sh --partita; tools/ctl.sh "shot a.png"   # in background, pilotato da comandi (run/ctl/)
+.venv/bin/python tools/difftest.py "$AC1/AssassinsCreed_Dx9.exe"   # rerun after every change to the translator
+python3 -I tools/binktest.py "$AC1/videos"    # rerun after every change to crates/bink (oracle: ffmpeg)
+tools/build-image.sh                       # regenerates and recompiles the translated image (incremental)
+tools/run.sh [--trace]                     # starts the translated game; stops at the first missing import
+tools/play.sh                              # the same, in a window with keyboard, mouse and audio
+tools/start.sh --game; tools/ctl.sh "shot a.png"   # in the background, driven by commands (run/ctl/)
 ```
 
-Ogni istruzione nuova nel traduttore va accompagnata da uno scenario nel test differenziale.
+Every new instruction in the translator must come with a scenario in the differential test.
 
-- Python solo con `python3 -I` e libreria standard, salvo dipendenze dichiarate in `tools/README.md`.
-- Ogni strumento nuovo va in `tools/` e documentato in `tools/README.md`.
-- Stack previsto: Rust (ricompilatore e runtime, `iced-x86`, `wgpu`), C generato compilato con clang.
+- Python only with `python3 -I` and the standard library, except for dependencies declared in `tools/README.md`.
+- Every new tool goes in `tools/` and is documented in `tools/README.md`.
+- Planned stack: Rust (recompiler and runtime, `iced-x86`, `wgpu`), generated C compiled with clang.

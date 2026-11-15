@@ -1,19 +1,19 @@
-/* x87 per il codice generato.
+/* x87 for the generated code.
  *
- * I registri sono `long double`, che sugli host x86 è il formato esteso a 80 bit dell'x87: il
- * compilatore traduce le operazioni nelle stesse istruzioni dell'originale. Precisione e
- * arrotondamento seguono il guest perché, durante l'esecuzione guest, la parola di controllo
- * x87 dell'host è quella del guest (altair_set_fpcw). Va compilato senza -ffast-math.
+ * The registers are `long double`, which on x86 hosts is the x87's 80-bit extended format: the
+ * compiler translates the operations into the same instructions as the original. Precision and
+ * rounding follow the guest because, during guest execution, the host's x87 control word
+ * is the guest's one (altair_set_fpcw). It must be compiled without -ffast-math.
  *
- * Non modellati: i tag dei registri (uno stack vuoto si legge come il valore rimasto nel
- * registro) e i flag di eccezione nella parola di stato (sempre zero). Le funzioni
- * trascendenti passano dalla libm in long double: vicine all'hardware, non identiche.
- * Su host senza formato a 80 bit (ARM, wasm) servirà un'implementazione software.
+ * Not modelled: the register tags (an empty stack reads as the value left in the
+ * register) and the exception flags in the status word (always zero). The transcendental
+ * functions go through libm in long double: close to the hardware, not identical.
+ * On hosts without an 80-bit format (ARM, wasm) a software implementation will be needed.
  */
 #ifndef ALTAIR_X87_H
 #define ALTAIR_X87_H
 
-_Static_assert(sizeof(long double) == 16 && __LDBL_MANT_DIG__ == 64, "serve un host con long double a 80 bit");
+_Static_assert(sizeof(long double) == 16 && __LDBL_MANT_DIG__ == 64, "a host with an 80-bit long double is required");
 
 #define ST(i) (c->fpr[(c->fptop + (i)) & 7])
 static inline void fpush(Ctx *c, f80 v) { c->fptop = (c->fptop - 1) & 7; c->fpr[c->fptop] = v; }
@@ -24,24 +24,24 @@ static inline void wrf80(Ctx *c, u32 a, f80 v) { memcpy(c->mem + a, &v, 10); }
 static inline void wrf32(Ctx *c, u32 a, float v) { memcpy(c->mem + a, &v, 4); }
 static inline void wrf64(Ctx *c, u32 a, double v) { memcpy(c->mem + a, &v, 8); }
 
-/* Parola di stato come la legge `fnstsw`: codici di condizione più la cima dello stack. */
+/* Status word as `fnstsw` reads it: condition codes plus the top of the stack. */
 #define X87_SW() ((c->fpsw & ~0x3800u) | (c->fptop << 11))
-/* `fcom` e simili: C3 C2 C0 = 111 non ordinati, 001 minore, 100 uguale, 000 maggiore. */
+/* `fcom` and the like: C3 C2 C0 = 111 unordered, 001 less, 100 equal, 000 greater. */
 #define X87_COM(a, b) \
     c->fpsw = (c->fpsw & ~0x4500u) | (((a) != (a) || (b) != (b)) ? 0x4500u : (a) < (b) ? 0x100u : (a) == (b) ? 0x4000u : 0u);
 
-/* Conversione a intero come `fistp` (arrotondamento della parola di controllo) o `fisttp`
- * (troncamento). Fuori intervallo o NaN: l'"intero indefinito", il minimo negativo. */
-/* Arrotondamento a intero secondo il campo RC della parola di controllo del guest (`frndint`,
- * `fist`). Niente `rintl`: quando l'operando nasce da un double il compilatore lo riduce a
- * `rint`, che arrotonda secondo MXCSR e ignora la modalità x87; il `floor` del CRT (che mette
- * RC verso il basso e poi usa `frndint`) restituiva così 12 per 11,5. Qui si decide leggendo RC e si
- * arrotonda con operazioni che non dipendono da alcuna modalità. */
-/* Le versioni di libreria (`truncl`, `floorl`…) sono chiamate vere e lente: nella folla del
- * tutorial `truncl` da sola era il 27% del thread di rendering (il `_ftol` del CRT mette RC a
- * troncamento e fa `fistp`, migliaia di volte per fotogramma). Qui la conversione passa da un
- * intero a 64 bit, che il compilatore fa sul posto; fuori da quell'intervallo un valore a 80
- * bit è già intero (o infinito, o NaN) e resta com'è. */
+/* Conversion to integer like `fistp` (rounding from the control word) or `fisttp`
+ * (truncation). Out of range or NaN: the "integer indefinite", the most negative value. */
+/* Rounding to integer according to the RC field of the guest's control word (`frndint`,
+ * `fist`). No `rintl`: when the operand originates from a double the compiler reduces it to
+ * `rint`, which rounds according to MXCSR and ignores the x87 mode; the CRT's `floor` (which sets
+ * RC to round down and then uses `frndint`) thus returned 12 for 11.5. Here the decision is made by
+ * reading RC and the rounding uses operations that do not depend on any mode. */
+/* The library versions (`truncl`, `floorl`…) are real, slow calls: in the tutorial
+ * crowd `truncl` alone was 27% of the rendering thread (the CRT's `_ftol` sets RC to
+ * truncation and does `fistp`, thousands of times per frame). Here the conversion goes through a
+ * 64-bit integer, which the compiler does in place; outside that range an 80-bit
+ * value is already an integer (or infinite, or NaN) and stays as it is. */
 static inline f80 x87_trunc(f80 x) {
     if (x > -9223372036854775808.0L && x < 9223372036854775808.0L) {
         s64 i = (s64)x;
@@ -57,7 +57,7 @@ static inline f80 x87_rnd(Ctx *c, f80 x) {
     case 2: return t < x ? t + 1.0L : t;
     case 3: return t;
     }
-    /* Al più vicino, i mezzi al pari. Fuori dall'intervallo degli interi a 64 bit `t == x`. */
+    /* To nearest, halves to even. Outside the range of 64-bit integers `t == x`. */
     f80 d = x - t;
     if (d < 0) d = -d;
     if (d > 0.5L || (d == 0.5L && ((s64)t & 1))) {
@@ -81,8 +81,8 @@ static inline f80 x87_scale(f80 x, f80 n) {
     return scalbnl(x, t > 40000 ? 40000 : t < -40000 ? -40000 : (int)t);
 }
 
-/* `fprem` (troncato) e `fprem1` (al più vicino): resto in ST0, C2 = 0 (riduzione completa),
- * C0 C3 C1 = i tre bit bassi del quoziente. */
+/* `fprem` (truncated) and `fprem1` (to nearest): remainder in ST0, C2 = 0 (complete reduction),
+ * C0 C3 C1 = the three low bits of the quotient. */
 static inline void x87_prem(Ctx *c, int ieee) {
     f80 a = ST(0), b = ST(1);
     f80 r = ieee ? remainderl(a, b) : fmodl(a, b);
@@ -97,7 +97,7 @@ static inline void x87_prem(Ctx *c, int ieee) {
     c->fpsw = (c->fpsw & ~0x4700u) | cc;
 }
 
-/* `fxam`: classe di ST0 in C3 C2 C0, segno in C1. */
+/* `fxam`: class of ST0 in C3 C2 C0, sign in C1. */
 static inline void x87_xam(Ctx *c) {
     f80 v = ST(0);
     u16 se;
@@ -106,16 +106,16 @@ static inline void x87_xam(Ctx *c) {
     memcpy(&se, (u8 *)&v + 8, 2);
     u32 e = se & 0x7fff, cc;
     if (e == 0x7fff)
-        cc = (mant << 1) ? 0x100u : 0x500u; /* NaN, infinito */
+        cc = (mant << 1) ? 0x100u : 0x500u; /* NaN, infinity */
     else if (e == 0)
-        cc = mant ? 0x4400u : 0x4000u; /* denormale, zero */
+        cc = mant ? 0x4400u : 0x4000u; /* denormal, zero */
     else
-        cc = 0x400u; /* normale */
+        cc = 0x400u; /* normal */
     c->fpsw = (c->fpsw & ~0x4700u) | cc | ((se & 0x8000) ? 0x200u : 0);
 }
 
-/* MMX: i registri MM sono le mantisse dei registri x87 fisici. Ogni scrittura porta la cima
- * dello stack a 0 e l'esponente a tutti uno, come sull'hardware. */
+/* MMX: the MM registers are the mantissas of the physical x87 registers. Every write sets the top
+ * of the stack to 0 and the exponent to all ones, as on the hardware. */
 static inline u64 mmr(Ctx *c, int i) { u64 v; memcpy(&v, &c->fpr[i], 8); return v; }
 static inline void mmw(Ctx *c, int i, u64 v) {
     u16 e = 0xffff;
@@ -145,8 +145,8 @@ static inline u64 m_pshufw(u64 s, u32 imm) {
     return r.q[0];
 }
 
-/* Ambiente x87 a 32 bit (28 byte), per `fnstenv`/`fldenv` e in testa a `fnsave`/`frstor`.
- * I tag non sono modellati: si scrivono come "tutti vuoti". */
+/* 32-bit x87 environment (28 bytes), for `fnstenv`/`fldenv` and at the head of `fnsave`/`frstor`.
+ * The tags are not modelled: they are written as "all empty". */
 static inline void x87_env_store(Ctx *c, u32 a) {
     memset(c->mem + a, 0, 28);
     wr32(c, a, 0xffff0000u | c->fpcw);

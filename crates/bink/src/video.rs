@@ -1,17 +1,17 @@
-//! Il video Bink 1, revisioni da `f` a `i`.
+//! Bink 1 video, revisions `f` to `i`.
 //!
-//! Ogni piano (Y, poi Cr, poi Cb dalla revisione `h`) è diviso in blocchi 8×8, letti riga per
-//! riga. All'inizio di ogni riga di blocchi il flusso porta, per nove "fasci" di valori, quanti
-//! ne servono per quella riga: tipi di blocco, tipi dei blocchi 16×16, colori, motivi a due
-//! colori, spostamenti X e Y, componenti continue intra e inter, lunghezze di serie. Poi i
-//! blocchi consumano i valori dai fasci, e leggono dal flusso solo ciò che è loro proprio
-//! (coefficienti della DCT, residui).
+//! Each plane (Y, then Cr, then Cb from revision `h` on) is divided into 8×8 blocks, read row
+//! by row. At the start of each row of blocks the stream carries, for nine "bundles" of values,
+//! as many as that row needs: block types, 16×16 block types, colours, two-colour
+//! patterns, X and Y motion offsets, intra and inter DC components, run lengths. Then the
+//! blocks consume the values from the bundles, and read from the stream only what is their own
+//! (DCT coefficients, residues).
 
 use crate::bits::Bits;
 use crate::tables::{INTER_QUANT, INTRA_QUANT, PATTERNS, SCAN, TREE_BITS, TREE_LENS};
 use crate::{Error, Result};
 
-// Tipi di blocco.
+// Block types.
 const SKIP: i16 = 0;
 const SCALED: i16 = 1;
 const MOTION: i16 = 2;
@@ -23,7 +23,7 @@ const INTER: i16 = 7;
 const PATTERN: i16 = 8;
 const RAW: i16 = 9;
 
-// I fasci, nell'ordine in cui compaiono nel flusso.
+// The bundles, in the order in which they appear in the stream.
 const B_TYPES: usize = 0;
 const B_SUB_TYPES: usize = 1;
 const B_COLORS: usize = 2;
@@ -34,7 +34,7 @@ const B_INTRA_DC: usize = 6;
 const B_INTER_DC: usize = 7;
 const B_RUN: usize = 8;
 
-/// Uno dei sedici codici di Huffman fissi: per ogni prefisso di `bits` bit, (foglia, lunghezza).
+/// One of the sixteen fixed Huffman codes: for each prefix of `bits` bits, (leaf, length).
 struct Vlc {
     bits: u32,
     table: Vec<(u8, u8)>,
@@ -47,7 +47,7 @@ fn build_vlcs() -> Vec<Vlc> {
             let mut table = vec![(0u8, 0u8); 1 << bits];
             for leaf in 0..16 {
                 let (code, len) = (TREE_BITS[t][leaf] as usize, TREE_LENS[t][leaf] as u32);
-                // Il codice occupa i bit bassi: tutti i prefissi che finiscono con lui.
+                // The code occupies the low bits: all the prefixes that end with it.
                 for high in 0..1usize << (bits - len) {
                     table[code | high << len] = (leaf as u8, len as u8);
                 }
@@ -57,8 +57,8 @@ fn build_vlcs() -> Vec<Vlc> {
         .collect()
 }
 
-/// Un albero come lo descrive il flusso: quale dei sedici codici, e a quale simbolo
-/// corrisponde ogni foglia.
+/// A tree as the stream describes it: which of the sixteen codes, and which symbol
+/// each leaf corresponds to.
 #[derive(Clone, Copy)]
 struct Tree {
     vlc: usize,
@@ -71,7 +71,7 @@ impl Default for Tree {
     }
 }
 
-/// Fonde due liste consecutive di `size` elementi, scegliendo a ogni passo da quale prendere.
+/// Merges two consecutive lists of `size` elements, choosing at each step which one to take from.
 fn merge(gb: &mut Bits, dst: &mut [u8], src: &[u8], size: usize) {
     let (mut a, mut b, mut o) = (0, size, 0);
     while a < size && b < 2 * size {
@@ -98,14 +98,14 @@ fn merge(gb: &mut Bits, dst: &mut [u8], src: &[u8], size: usize) {
 
 fn read_tree(gb: &mut Bits) -> Result<Tree> {
     if gb.left() < 4 {
-        return Err(Error::Invalid("albero troncato"));
+        return Err(Error::Invalid("truncated tree"));
     }
     let mut tree = Tree { vlc: gb.get(4) as usize, ..Default::default() };
     if tree.vlc == 0 {
         return Ok(tree);
     }
     if gb.bit() {
-        // I primi simboli sono elencati; gli altri seguono in ordine crescente.
+        // The first symbols are listed; the others follow in ascending order.
         let mut len = gb.get(3) as usize;
         let mut seen = [false; 16];
         for i in 0..=len {
@@ -122,7 +122,7 @@ fn read_tree(gb: &mut Bits) -> Result<Tree> {
             }
         }
     } else {
-        // Una permutazione costruita fondendo liste via via più lunghe.
+        // A permutation built by merging progressively longer lists.
         let len = gb.get(2);
         let mut a: [u8; 16] = std::array::from_fn(|i| i as u8);
         let mut b = [0u8; 16];
@@ -138,23 +138,23 @@ fn read_tree(gb: &mut Bits) -> Result<Tree> {
     Ok(tree)
 }
 
-/// Un fascio: i valori già decodificati e non ancora consumati di un tipo di dato.
+/// A bundle: the values of one kind of data already decoded and not yet consumed.
 #[derive(Default)]
 struct Bundle {
-    /// Bit che codificano quanti valori arrivano a ogni riga.
+    /// Bits that encode how many values arrive at each row.
     len: u32,
     tree: Tree,
     data: Vec<i16>,
-    /// Prossimo valore da consumare.
+    /// Next value to consume.
     pos: usize,
-    /// Il flusso ha detto che per questo piano non ce ne sono più.
+    /// The stream has said there are no more of them for this plane.
     done: bool,
-    /// Capienza massima: oltre, il flusso è guasto.
+    /// Maximum capacity: beyond it, the stream is broken.
     cap: usize,
 }
 
 impl Bundle {
-    /// Quanti valori nuovi leggere, o `None` se non è il momento (ce ne sono ancora, o sono finiti).
+    /// How many new values to read, or `None` if it is not the time (there are still some, or they are finished).
     fn count(&mut self, gb: &mut Bits) -> Result<Option<usize>> {
         if self.done || self.data.len() > self.pos {
             return Ok(None);
@@ -165,26 +165,26 @@ impl Bundle {
             return Ok(None);
         }
         if self.data.len() + n > self.cap {
-            return Err(Error::Invalid("troppi valori in un fascio"));
+            return Err(Error::Invalid("too many values in a bundle"));
         }
         Ok(Some(n))
     }
 
     fn next(&mut self) -> Result<i16> {
-        let v = *self.data.get(self.pos).ok_or(Error::Invalid("fascio esaurito"))?;
+        let v = *self.data.get(self.pos).ok_or(Error::Invalid("bundle exhausted"))?;
         self.pos += 1;
         Ok(v)
     }
 }
 
-/// Un piano dell'immagine, con righe lunghe un multiplo di 8.
+/// A plane of the picture, with rows whose length is a multiple of 8.
 #[derive(Clone)]
 struct Plane {
     stride: usize,
     data: Vec<u8>,
 }
 
-/// Un fotogramma decodificato, in YUV 4:2:0.
+/// A decoded frame, in YUV 4:2:0.
 pub struct Frame<'a> {
     pub width: usize,
     pub height: usize,
@@ -192,18 +192,18 @@ pub struct Frame<'a> {
 }
 
 impl Frame<'_> {
-    /// Larghezza e altezza del piano `i` (0 = Y, 1 = Cb, 2 = Cr).
+    /// Width and height of plane `i` (0 = Y, 1 = Cb, 2 = Cr).
     pub fn plane_size(&self, i: usize) -> (usize, usize) {
         if i == 0 { (self.width, self.height) } else { ((self.width + 1) / 2, (self.height + 1) / 2) }
     }
 
-    /// Una riga del piano `i`.
+    /// A row of plane `i`.
     pub fn row(&self, i: usize, y: usize) -> &[u8] {
         let p = &self.planes[i];
         &p.data[y * p.stride..y * p.stride + self.plane_size(i).0]
     }
 
-    /// Aggiunge a `out` i tre piani in fila (Y, Cb, Cr), senza margini: il formato `yuv420p`.
+    /// Appends the three planes to `out` one after another (Y, Cb, Cr), without padding: the `yuv420p` format.
     pub fn write_yuv420(&self, out: &mut Vec<u8>) {
         for i in 0..3 {
             for y in 0..self.plane_size(i).1 {
@@ -219,7 +219,7 @@ pub struct VideoDecoder {
     revision: u8,
     vlcs: Vec<Vlc>,
     bundles: [Bundle; 9],
-    /// Alberi del nibble alto dei colori, scelti dal nibble alto precedente.
+    /// Trees of the colours' high nibble, chosen by the previous high nibble.
     col_high: [Tree; 16],
     col_last: usize,
     current: [Plane; 3],
@@ -227,7 +227,7 @@ pub struct VideoDecoder {
     has_previous: bool,
 }
 
-/// Parte intera del logaritmo in base 2.
+/// Integer part of the base-2 logarithm.
 fn log2(v: usize) -> u32 {
     usize::BITS - 1 - v.leading_zeros()
 }
@@ -255,12 +255,12 @@ impl VideoDecoder {
         }
     }
 
-    /// L'ultimo fotogramma decodificato.
+    /// The last decoded frame.
     pub fn current(&self) -> Frame<'_> {
         Frame { width: self.width, height: self.height, planes: &self.current }
     }
 
-    /// Decodifica il pacchetto video di un fotogramma.
+    /// Decodes the video packet of a frame.
     pub fn decode(&mut self, packet: &[u8]) -> Result<Frame<'_>> {
         std::mem::swap(&mut self.current, &mut self.previous);
         let mut gb = Bits::new(packet);
@@ -268,7 +268,7 @@ impl VideoDecoder {
             gb.skip(32);
         }
         let total = packet.len() * 8;
-        // Dalla revisione `h` il flusso porta Y, Cr, Cb; i nostri piani sono Y, Cb, Cr.
+        // From revision `h` on the stream carries Y, Cr, Cb; our planes are Y, Cb, Cr.
         let order = if self.revision >= b'h' { [0, 2, 1] } else { [0, 1, 2] };
         let mut decoded = 0;
         for (n, &plane) in order.iter().enumerate() {
@@ -278,7 +278,7 @@ impl VideoDecoder {
                 break;
             }
         }
-        // Un fotogramma può fermarsi prima (solo luminanza): i piani mancanti restano quelli di prima.
+        // A frame may stop early (luma only): the missing planes stay as they were.
         for &plane in &order[decoded..] {
             let (cur, prev) = (&mut self.current[plane], &self.previous[plane]);
             cur.data.copy_from_slice(&prev.data);
@@ -312,7 +312,7 @@ impl VideoDecoder {
         Ok(())
     }
 
-    /// Tipi di blocco: valori sotto 12, oppure ripetizioni dell'ultimo.
+    /// Block types: values below 12, or repetitions of the last one.
     fn read_block_types(&mut self, gb: &mut Bits, n: usize) -> Result<()> {
         const RLE: [usize; 4] = [4, 8, 12, 32];
         let Some(count) = self.bundles[n].count(gb)? else { return Ok(()) };
@@ -334,7 +334,7 @@ impl VideoDecoder {
             } else {
                 let run = RLE[(v - 12) as usize];
                 if end - b.data.len() < run {
-                    return Err(Error::Invalid("ripetizione di tipi oltre la riga"));
+                    return Err(Error::Invalid("block type repetition past the row"));
                 }
                 b.data.extend(std::iter::repeat(last).take(run));
             }
@@ -342,7 +342,7 @@ impl VideoDecoder {
         Ok(())
     }
 
-    /// Colori: nibble alto con un albero scelto dal nibble alto precedente, poi nibble basso.
+    /// Colours: high nibble with a tree chosen by the previous high nibble, then low nibble.
     fn read_colors(&mut self, gb: &mut Bits) -> Result<()> {
         let Some(count) = self.bundles[B_COLORS].count(gb)? else { return Ok(()) };
         let tree = self.bundles[B_COLORS].tree;
@@ -350,13 +350,13 @@ impl VideoDecoder {
         let mut i = 0;
         while i < count {
             if gb.left() < 2 {
-                return Err(Error::Invalid("colori troncati"));
+                return Err(Error::Invalid("truncated colours"));
             }
             let high_tree = self.col_high[self.col_last];
             self.col_last = self.huff(gb, &high_tree) as usize;
             let mut v = (self.col_last << 4) as i32 | self.huff(gb, &tree) as i32;
             if self.revision < b'i' {
-                // Fino alla revisione `h` il valore ha segno e modulo, attorno a 0x80.
+                // Up to revision `h` the value is sign and magnitude, around 0x80.
                 let sign = (v as i8 >> 7) as i32;
                 v = ((v & 0x7f) ^ sign) - sign + 0x80;
             }
@@ -376,7 +376,7 @@ impl VideoDecoder {
         let tree = self.bundles[B_PATTERN].tree;
         for _ in 0..count {
             if gb.left() < 2 {
-                return Err(Error::Invalid("motivi troncati"));
+                return Err(Error::Invalid("truncated patterns"));
             }
             let low = self.huff(gb, &tree) as i16;
             let high = self.huff(gb, &tree) as i16;
@@ -385,7 +385,7 @@ impl VideoDecoder {
         Ok(())
     }
 
-    /// Spostamenti: modulo con un albero, poi il segno se il modulo non è zero.
+    /// Motion offsets: magnitude with a tree, then the sign if the magnitude is not zero.
     fn read_motion_values(&mut self, gb: &mut Bits, n: usize) -> Result<()> {
         let Some(count) = self.bundles[n].count(gb)? else { return Ok(()) };
         let tree = self.bundles[n].tree;
@@ -407,7 +407,7 @@ impl VideoDecoder {
         Ok(())
     }
 
-    /// Componenti continue: la prima per esteso, le altre come differenze a gruppi di otto.
+    /// DC components: the first written out in full, the others as differences in groups of eight.
     fn read_dcs(&mut self, gb: &mut Bits, n: usize, signed: bool) -> Result<()> {
         const START_BITS: u32 = 11;
         let Some(count) = self.bundles[n].count(gb)? else { return Ok(()) };
@@ -429,7 +429,7 @@ impl VideoDecoder {
                     }
                     v += d;
                     if !(-32768..=32767).contains(&v) {
-                        return Err(Error::Invalid("componente continua fuori scala"));
+                        return Err(Error::Invalid("DC component out of range"));
                     }
                 }
                 b.data.push(v as i16);
@@ -459,7 +459,7 @@ impl VideoDecoder {
         let width = ((self.width >> chroma as usize).max(8) + 7) & !7;
         let stride = self.current[plane].stride;
 
-        // Quanti bit servono per dire "quanti valori in questa riga", per ogni fascio.
+        // How many bits are needed to say "how many values in this row", for each bundle.
         let common = log2((width >> 3) + 511) + 1;
         let lens = [common, log2((width >> 4) + 511) + 1, log2(bw * 64 + 511) + 1, log2((bw << 3) + 511) + 1, common, common, common, common, log2(bw * 48 + 511) + 1];
         for (n, len) in lens.iter().enumerate() {
@@ -467,7 +467,7 @@ impl VideoDecoder {
             self.read_bundle_header(gb, n)?;
         }
 
-        // Il riferimento più lontano ammesso: l'angolo dell'ultimo blocco.
+        // The farthest reference allowed: the corner of the last block.
         let ref_end = ((bw - 1) + stride * (bh - 1)) * 8;
         let mut dct = [0i32; 64];
         let mut small = [0u8; 64];
@@ -486,7 +486,7 @@ impl VideoDecoder {
             while bx < bw {
                 let at = by * 8 * stride + bx * 8;
                 let kind = self.bundles[B_TYPES].next()?;
-                // Un blocco 16×16 occupa quattro posti: sulle righe e colonne dispari è già fatto.
+                // A 16×16 block takes four slots: on odd rows and columns it is already done.
                 if (by & 1 != 0 || bx & 1 != 0) && kind == SCALED {
                     bx += 2;
                     continue;
@@ -514,10 +514,10 @@ impl VideoDecoder {
                                     *p = self.bundles[B_COLORS].next()? as u8;
                                 }
                             }
-                            _ => return Err(Error::Invalid("tipo di blocco 16×16 sconosciuto")),
+                            _ => return Err(Error::Invalid("unknown 16×16 block type")),
                         }
                         if sub != FILL {
-                            // Ogni pixel del blocco piccolo diventa un quadrato 2×2.
+                            // Each pixel of the small block becomes a 2×2 square.
                             let dst = &mut self.current[plane].data;
                             for y in 0..8 {
                                 for x in 0..8 {
@@ -589,17 +589,17 @@ impl VideoDecoder {
                             }
                         }
                     }
-                    _ => return Err(Error::Invalid("tipo di blocco sconosciuto")),
+                    _ => return Err(Error::Invalid("unknown block type")),
                 }
                 bx += 1;
             }
         }
-        // Il piano successivo comincia a un multiplo di 32 bit.
+        // The next plane starts at a multiple of 32 bits.
         gb.align32();
         Ok(())
     }
 
-    /// Copia un blocco 8×8 dal fotogramma precedente (o, al primo, da quello in costruzione).
+    /// Copies an 8×8 block from the previous frame (or, on the first one, from the one being built).
     fn copy_block(&mut self, plane: usize, at: usize, from: isize) -> Result<()> {
         let stride = self.current[plane].stride;
         let from = from as usize;
@@ -621,22 +621,22 @@ impl VideoDecoder {
         Ok(())
     }
 
-    /// Copia un blocco spostato di (x, y) presi dai fasci.
+    /// Copies a block displaced by (x, y) taken from the bundles.
     fn motion_block(&mut self, plane: usize, at: usize, ref_end: usize) -> Result<()> {
         let x = self.bundles[B_X_OFF].next()? as isize;
         let y = self.bundles[B_Y_OFF].next()? as isize;
         let from = at as isize + x + y * self.current[plane].stride as isize;
         if from < 0 || from as usize > ref_end {
-            return Err(Error::Invalid("spostamento fuori dall'immagine"));
+            return Err(Error::Invalid("motion offset outside the picture"));
         }
         self.copy_block(plane, at, from)
     }
 
-    /// Blocco a serie: i pixel si visitano in uno dei sedici ordini, a tratti di un colore solo
-    /// o di colori elencati.
+    /// Run block: the pixels are visited in one of the sixteen orders, in stretches of a single
+    /// colour or of listed colours.
     fn run_block(&mut self, gb: &mut Bits, dst: &mut [u8], stride: usize, at: usize) -> Result<()> {
         if gb.left() < 4 {
-            return Err(Error::Invalid("blocco a serie troncato"));
+            return Err(Error::Invalid("truncated run block"));
         }
         let scan = &PATTERNS[gb.get(4) as usize];
         let mut put = |i: usize, v: u8| {
@@ -647,7 +647,7 @@ impl VideoDecoder {
         loop {
             let run = self.bundles[B_RUN].next()? as usize + 1;
             if i + run > 64 {
-                return Err(Error::Invalid("serie oltre il blocco"));
+                return Err(Error::Invalid("run past the block"));
             }
             if gb.bit() {
                 let v = self.bundles[B_COLORS].next()? as u8;
@@ -670,7 +670,7 @@ impl VideoDecoder {
         Ok(())
     }
 
-    /// Blocco a due colori: otto righe di otto bit che scelgono tra i due.
+    /// Two-colour block: eight rows of eight bits that choose between the two.
     fn pattern_block(&mut self, dst: &mut [u8], stride: usize, at: usize) -> Result<()> {
         let col = [self.bundles[B_COLORS].next()? as u8, self.bundles[B_COLORS].next()? as u8];
         for y in 0..8 {
@@ -683,8 +683,8 @@ impl VideoDecoder {
         Ok(())
     }
 
-    /// Legge un blocco DCT: componente continua dal fascio, coefficienti dal flusso, poi la
-    /// quantizzazione inversa.
+    /// Reads a DCT block: DC component from the bundle, coefficients from the stream, then the
+    /// inverse quantization.
     fn read_dct(&mut self, gb: &mut Bits, block: &mut [i32; 64], dc: usize, quant: &[[i32; 64]; 16]) -> Result<()> {
         *block = [0; 64];
         block[0] = self.bundles[dc].next()? as i32;
@@ -701,12 +701,12 @@ impl VideoDecoder {
     }
 }
 
-/// Coefficienti di un blocco DCT, per piani di bit dal più alto. Due liste lavorano insieme:
-/// gruppi di coefficienti ancora da aprire e coefficienti singoli in attesa del loro bit.
-/// Ritorna quanti coefficienti sono stati letti e l'indice di quantizzazione.
+/// Coefficients of a DCT block, by bit planes from the highest. Two lists work together:
+/// groups of coefficients still to be opened and single coefficients waiting for their bit.
+/// Returns how many coefficients were read and the quantization index.
 fn read_dct_coeffs(gb: &mut Bits, block: &mut [i32; 64], coef_idx: &mut [usize; 64]) -> Result<(usize, usize)> {
     if gb.left() < 4 {
-        return Err(Error::Invalid("coefficienti troncati"));
+        return Err(Error::Invalid("truncated coefficients"));
     }
     let mut coef_list = [0usize; 128];
     let mut mode_list = [0u8; 128];
@@ -782,8 +782,8 @@ fn read_dct_coeffs(gb: &mut Bits, block: &mut [i32; 64], coef_idx: &mut [usize; 
     Ok((count, gb.get(4) as usize))
 }
 
-/// Residuo di un blocco con movimento: stessi elenchi dei coefficienti DCT, ma ogni piano di
-/// bit aggiunge una maschera ai valori già non nulli. `masks` limita quanti ne arrivano.
+/// Residue of a block with motion: same lists as the DCT coefficients, but each bit
+/// plane adds a mask to the values that are already non-zero. `masks` limits how many arrive.
 fn read_residue(gb: &mut Bits, block: &mut [i16; 64], mut masks: i32) {
     let mut coef_list = [0usize; 128];
     let mut mode_list = [0u8; 128];
@@ -875,7 +875,7 @@ fn read_residue(gb: &mut Bits, block: &mut [i16; 64], mut masks: i32) {
     }
 }
 
-// --- trasformata inversa: aritmetica intera, deve dare gli stessi byte del riferimento -------
+// --- inverse transform: integer arithmetic, must produce the same bytes as the reference -------
 
 const A1: i32 = 2896; // (1/√2) × 4096
 const A2: i32 = 2217;
@@ -887,7 +887,7 @@ fn mul(x: i32, y: i32) -> i32 {
     (x as u32).wrapping_mul(y as u32) as i32 >> 11
 }
 
-/// Una passata a otto punti su `s`, letti a passo `step` da `at`. Ritorna gli otto risultati.
+/// An eight-point pass over `s`, read with stride `step` from `at`. Returns the eight results.
 #[inline]
 fn transform(s: &[i32], at: usize, step: usize) -> [i32; 8] {
     let v = |i: usize| s[at + i * step];
@@ -916,7 +916,7 @@ fn transform(s: &[i32], at: usize, step: usize) -> [i32; 8] {
     ]
 }
 
-/// Le colonne: senza arrotondamento. Una colonna con solo la componente continua è costante.
+/// The columns: without rounding. A column with only the DC component is constant.
 fn columns(block: &[i32; 64]) -> [i32; 64] {
     let mut temp = [0i32; 64];
     for x in 0..8 {
@@ -938,7 +938,7 @@ fn round(v: i32) -> i32 {
     v.wrapping_add(0x7f) >> 8
 }
 
-/// Trasformata inversa sul posto.
+/// In-place inverse transform.
 fn idct(block: &mut [i32; 64]) {
     let temp = columns(block);
     for y in 0..8 {
@@ -948,7 +948,7 @@ fn idct(block: &mut [i32; 64]) {
     }
 }
 
-/// Trasformata inversa scritta come pixel (troncati a 8 bit, senza saturazione).
+/// Inverse transform written out as pixels (truncated to 8 bits, without saturation).
 fn idct_put(dst: &mut [u8], stride: usize, block: &mut [i32; 64]) {
     let temp = columns(block);
     for y in 0..8 {
@@ -965,12 +965,12 @@ mod tests {
     #[test]
     fn vlc_tables_are_complete_prefix_codes() {
         for (t, vlc) in build_vlcs().iter().enumerate() {
-            assert!(vlc.table.iter().all(|(_, len)| *len > 0), "albero {t}: prefisso senza foglia");
+            assert!(vlc.table.iter().all(|(_, len)| *len > 0), "tree {t}: prefix without a leaf");
             let mut seen = [false; 16];
             for (leaf, _) in &vlc.table {
                 seen[*leaf as usize] = true;
             }
-            assert!(seen.iter().all(|s| *s), "albero {t}: foglia irraggiungibile");
+            assert!(seen.iter().all(|s| *s), "tree {t}: unreachable leaf");
         }
     }
 
