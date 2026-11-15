@@ -1474,7 +1474,13 @@ pub const FLAGS_LINE: &str = "    u32 cf = 0, zf = 0, sf = 0, of = 0, pf = 0, af
 /// else may look at it: calls to other guest functions, indirect calls, `cpuid`, traps and
 /// returns. The macros are in `runtime/altair.h`.
 fn localize(text: &str) -> String {
+    // The XMM registers the function touches become locals too (`x0`…`x7`): the SSE templates
+    // otherwise read and write them in the context at every step, and SSE is most of the
+    // game's hot code. Only the ones in use, so that calls do not copy all eight.
+    let used: Vec<usize> = (0..8).filter(|i| text.contains(&format!("c->xmm[{i}]"))).collect();
+    let list = |f: &dyn Fn(usize) -> String| if used.is_empty() { "((void)0)".to_string() } else { format!("({})", used.iter().map(|&i| f(i)).collect::<Vec<_>>().join(", ")) };
     let mut out = String::with_capacity(text.len() + text.len() / 8);
+    out.push_str(&format!("#define X_SAVE() {}\n#define X_LOAD() {}\n", list(&|i| format!("c->xmm[{i}] = x{i}")), list(&|i| format!("x{i} = c->xmm[{i}]"))));
     for line in text.split_inclusive('\n') {
         // Disassembly comments and labels go through untouched.
         if line.starts_with("    /* ") || line.starts_with("L_") || line.starts_with("void ") {
@@ -1484,6 +1490,9 @@ fn localize(text: &str) -> String {
         let mut l = line.to_string();
         for r in ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"] {
             l = l.replace(&format!("c->{r}"), r);
+        }
+        for &i in &used {
+            l = l.replace(&format!("c->xmm[{i}]"), &format!("x{i}"));
         }
         for h in ["rd8", "rd16", "rd32", "rd64", "wr8", "wr16", "wr32", "wr64", "rdf32", "rdf64", "rdf80", "wrf32", "wrf64", "wrf80", "xld", "xst"] {
             l = l.replace(&format!("{h}(c, "), &format!("{h}_m(gm, "));
@@ -1518,12 +1527,15 @@ fn localize(text: &str) -> String {
         out.push_str(&l);
         if line == FLAGS_LINE {
             out.push_str("    R_LOCALS();\n");
+            if !used.is_empty() {
+                out.push_str(&format!("    Xmm {};\n", used.iter().map(|i| format!("x{i} = c->xmm[{i}]")).collect::<Vec<_>>().join(", ")));
+            }
         }
     }
     // Falling off the end (after a call that does not return, for instance) still leaves the
     // context up to date.
     match out.rfind("}\n") {
-        Some(i) => format!("{}    R_SAVE();\n{}", &out[..i], &out[i..]),
+        Some(i) => format!("{}    R_SAVE();\n{}#undef X_SAVE\n#undef X_LOAD\n", &out[..i], &out[i..]),
         None => out,
     }
 }

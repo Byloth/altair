@@ -8,7 +8,8 @@
 use crate::d3d9::{D3d, Res};
 use crate::machine::Mem;
 use altair_shader as sh;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+use crate::fastmap::HashMap;
 
 const CONSTS_SIZE: u64 = 256 * 16 + 16 * 16 + 16 + 16;
 const CONSTS_SLOT: u64 = 4608; // CONSTS_SIZE rounded up to the offset alignment (256)
@@ -495,15 +496,15 @@ impl Gfx {
             pass_key: ([0; 4], 0),
             pass_formats: ([None; 4], None),
             pass_size: (0, 0),
-            pending_clear: HashMap::new(),
-            pending_depth_clear: HashMap::new(),
-            textures: HashMap::new(),
-            buffers: HashMap::new(),
-            parsed: HashMap::new(),
-            modules: HashMap::new(),
-            pipelines: HashMap::new(),
+            pending_clear: HashMap::default(),
+            pending_depth_clear: HashMap::default(),
+            textures: HashMap::default(),
+            buffers: HashMap::default(),
+            parsed: HashMap::default(),
+            modules: HashMap::default(),
+            pipelines: HashMap::default(),
             last_pipeline: None,
-            samplers: HashMap::new(),
+            samplers: HashMap::default(),
             g0_layout,
             g0,
             ubuf,
@@ -511,7 +512,7 @@ impl Gfx {
             ubuf_off: 0,
             ubuf_cpu: Vec::new(),
             scratch_cpu: Vec::new(),
-            tex_layouts: HashMap::new(),
+            tex_layouts: HashMap::default(),
             scratch,
             scratch_off: 0,
             zero_vb,
@@ -520,14 +521,14 @@ impl Gfx {
             overlay: None,
             overlay_atlas: None,
             used: Default::default(),
-            shadow: HashMap::new(),
-            pool: HashMap::new(),
+            shadow: HashMap::default(),
+            pool: HashMap::default(),
             retiring: Vec::new(),
             retired: Default::default(),
             recent: Default::default(),
             avoid_busy: std::env::var("ALTAIR_BUSY").is_ok_and(|v| v == "1"),
             orphaned: 0,
-            pending: HashMap::new(),
+            pending: HashMap::default(),
             stale: Default::default(),
             flushes: 0,
             uploaded: 0,
@@ -535,7 +536,7 @@ impl Gfx {
             prof: Default::default(),
             prof_end: Default::default(),
             prof_finish: Default::default(),
-            groups: HashMap::new(),
+            groups: HashMap::default(),
             consts_at: [None; 2],
             surface,
             drawn: 0,
@@ -1550,7 +1551,7 @@ impl Gfx {
         let _gate = gate();
         if self.blit.is_none() {
             let m = self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: None, source: wgpu::ShaderSource::Wgsl(BLIT.into()) });
-            self.blit = Some((m, HashMap::new()));
+            self.blit = Some((m, HashMap::default()));
         }
         let (module, cache) = self.blit.as_mut().unwrap();
         let pipeline = cache.entry(df).or_insert_with(|| {
@@ -1624,7 +1625,7 @@ impl Gfx {
         }
         if self.overlay.is_none() {
             let m = self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: None, source: wgpu::ShaderSource::Wgsl(crate::overlay::SHADER.into()) });
-            self.overlay = Some((m, HashMap::new()));
+            self.overlay = Some((m, HashMap::default()));
         }
         let (module, cache) = self.overlay.as_mut().unwrap();
         let pipeline = cache.entry(df).or_insert_with(|| {

@@ -7,6 +7,7 @@ mod dsound;
 mod fs;
 mod animus_font;
 mod clock;
+mod fastmap;
 mod gfx;
 mod hooks;
 mod overlay;

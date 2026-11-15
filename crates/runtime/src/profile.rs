@@ -154,6 +154,13 @@ pub fn report() {
     for ((offset, inside), c) in callers.iter().take(30) {
         eprintln!("[profile]   {:5.1}%  {offset:#x}{}", pct(*c), if *inside { "  inside" } else { "" });
     }
+    // `ALTAIR_PROFILE_RAW=file`: every sample that fell in our executable, as a file offset, one
+    // per line, to aggregate by function offline (`addr2line -f -C -e target/release/altair-run`).
+    if let Some(path) = std::env::var_os("ALTAIR_PROFILE_RAW") {
+        let end = TEXT[1].load(Ordering::Relaxed);
+        let lines: String = (0..n).map(|i| SAMPLES[i].load(Ordering::Relaxed)).filter(|&rip| rip >= base && rip < end).map(|rip| format!("{:#x}\n", rip - base + file_offset)).collect();
+        let _ = std::fs::write(path, lines);
+    }
     let mut syms: Vec<_> = by_sym.into_iter().collect();
     syms.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
     eprintln!("[profile] most frequent symbols (or pages, where there are no symbols):");

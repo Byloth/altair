@@ -396,3 +396,11 @@ Request from the user while trying `tools/play.sh`.
 - Fast-forward fix: with F9 on, the user got stuck in the Animus brain scene. Sound buffers,
   `Sleep` and timed waits now follow the fast clock too (the game's sound engine was losing
   a voice line the scene waits for); sound is muted meanwhile → `analysis/runtime.md`.
+- **Rendering performance, second round** (the user: still 24-25 fps in the crowd on
+  Windows, GPU at 25%). The hot code is SSE, not x87 (58% against 6% of the hot
+  instructions): XMM registers in locals too. In the runtime: a cheap hasher for the
+  renderer's maps, per-call timing only on request, lock-free lookup of COM methods. Game
+  thread in the crowd: 25.5 fps this morning, 35.6 now (+40%) → `analysis/translator.md`.
+- `tools/start.sh` skips the intro videos and keeps the game clock at 8x until the tutorial
+  is loaded (the user's suggestions): the crowd benchmark takes three minutes instead of seven.
+  Profiler: `ALTAIR_PROFILE_TOP`, `ALTAIR_PROFILE_RAW` (raw samples, to aggregate by function).

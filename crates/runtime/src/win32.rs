@@ -12,7 +12,7 @@ use crate::{HEAP_END, HEAP_START, HOST_BASE, TEB, VIRTUAL_END, VIRTUAL_START};
 use altair_pe::Image;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Instant;
 
 const TLS_SLOTS: u32 = 0xe10; // TEB.TlsSlots
@@ -116,8 +116,8 @@ static TABLE: OnceLock<Vec<&'static Entry>> = OnceLock::new();
 
 /// How many times each host function has been called (only those called at least once).
 pub fn call_counts() -> Vec<(String, u64)> {
-    let dynamic = DYN.read().unwrap();
-    TABLE.get().into_iter().flatten().chain(dynamic.iter()).map(|e| (e.name.clone(), e.count.load(Ordering::Relaxed))).filter(|(_, n)| *n > 0).collect()
+    let dynamic = (0..DYN_LEN.load(Ordering::Acquire)).filter_map(dyn_entry);
+    TABLE.get().into_iter().flatten().copied().chain(dynamic).map(|e| (e.name.clone(), e.count.load(Ordering::Relaxed))).filter(|(_, n)| *n > 0).collect()
 }
 static RUN: OnceLock<RunFn> = OnceLock::new();
 pub type TrailFn = unsafe extern "C" fn(*mut u32, i32) -> i32;
@@ -128,13 +128,26 @@ static TRACE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new
 
 /// Host functions registered at runtime (the methods of COM objects), after the import trampolines.
 const DYN_BASE: u32 = HOST_BASE + 0x10_0000;
-static DYN: RwLock<Vec<&'static Entry>> = RwLock::new(Vec::new());
+/// Append-only and read without locks: every Direct3D call of the game looks its method up
+/// here (a read lock per call was 6% of the time the render thread spent in the runtime).
+const DYN_CAPACITY: usize = 1 << 16;
+static DYN: [std::sync::atomic::AtomicPtr<Entry>; DYN_CAPACITY] = [const { std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()) }; DYN_CAPACITY];
+static DYN_LEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static DYN_WRITE: Mutex<()> = Mutex::new(());
+
+fn dyn_entry(i: usize) -> Option<&'static Entry> {
+    // SAFETY: a non-null slot holds a leaked `Entry`, never freed or changed afterwards.
+    unsafe { DYN.get(i)?.load(Ordering::Acquire).as_ref() }
+}
 
 /// Registers a host function and returns its guest address. `shim` None = not implemented.
 pub fn register_host_fn(name: String, nargs: u32, shim: Option<Shim>) -> u32 {
-    let mut d = DYN.write().unwrap();
-    d.push(entry(name, shim.map(|s| (nargs, s))));
-    DYN_BASE + 16 * (d.len() as u32 - 1)
+    let _writer = DYN_WRITE.lock().unwrap_or_else(|e| e.into_inner());
+    let i = DYN_LEN.load(Ordering::Acquire);
+    assert!(i < DYN_CAPACITY, "too many host functions registered at runtime");
+    DYN[i].store(entry(name, shim.map(|s| (nargs, s))) as *const Entry as *mut Entry, Ordering::Release);
+    DYN_LEN.store(i + 1, Ordering::Release);
+    DYN_BASE + 16 * i as u32
 }
 
 /// (name, arguments and shim if implemented) for a host address.
@@ -143,7 +156,7 @@ fn lookup(addr: u32) -> Option<&'static Entry> {
         return None;
     }
     if addr >= DYN_BASE {
-        return DYN.read().unwrap().get(((addr - DYN_BASE) / 16) as usize).copied();
+        return dyn_entry(((addr - DYN_BASE) / 16) as usize);
     }
     TABLE.get()?.get(((addr - HOST_BASE) / 16) as usize).copied()
 }
@@ -300,6 +313,12 @@ pub fn call_guest(c: &mut Call, addr: u32, args: &[u32]) -> u32 {
 /// Cheap time counter (the TSC): `host_call` reads it twice per call.
 #[inline]
 fn ticks() -> u64 {
+    // Only on request (`ALTAIR_SHIM_TIME=1`): two reads of the TSC per call were 3.5% of the
+    // render thread in the tutorial crowd. Without it the statistics show 0.0 ms in shims.
+    static TIMED: OnceLock<bool> = OnceLock::new();
+    if !*TIMED.get_or_init(|| std::env::var("ALTAIR_SHIM_TIME").is_ok_and(|v| v == "1")) {
+        return 0;
+    }
     #[cfg(target_arch = "x86_64")]
     unsafe {
         core::arch::x86_64::_rdtsc()

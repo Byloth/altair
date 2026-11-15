@@ -318,10 +318,20 @@ identical, 0 different. Measured with `tools/bench-crowd.sh` (game thread only, 
 | Hash table for indirect calls (`find` in `runtime/altair.c`) | 26.6 | 25.3 ms |
 | The same, built with `-march=x86-64-v3` | 27.0 | not kept: 1.5% is not worth excluding older CPUs |
 | Integer registers and memory base in locals | 28.4 | 22.9 ms |
+| XMM registers in locals, only those a function uses (`x0`…`x7`, `X_SAVE`/`X_LOAD`) | 31.2 | 19.9 ms |
+| Runtime: fast hasher for the renderer's maps, no per-call timing (`fastmap.rs`, `ALTAIR_SHIM_TIME`) | 33.4 | |
+| Runtime: lock-free table of COM methods | 35.6 | |
 
-The profile of that scene is flat (no function above 3%), so the remaining gains are
-systemic: XMM and x87 registers in locals, then the cost of recording a draw in the runtime
-(12.3 ms per frame, a third of the frame).
+The profile of that scene is flat (no function above 3%), so the gains have to be systemic.
+Weighting the instructions of the 34 hottest translated functions by their share of the
+profile: 58% SSE, 34% integer, 6% x87, 2% calls. The guess that x87 emulation was the cost was
+wrong; SSE with its registers in the context was. With the XMM registers in locals the
+function above went from 488 to 226 host instructions (for 154 of the guest).
+
+What is left, per frame at 35.6 fps (28.1 ms): about 18 ms of translated code and 9 ms of
+draw recording in the runtime, of which wgpu's own bookkeeping per draw is now the largest
+part. Still to try: x87 state in locals, the SSE lane operations as host vector operations
+instead of unions, the runtime lock taken by every Direct3D call.
 
 ## Hooks (2026-11-15)
 

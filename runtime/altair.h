@@ -120,14 +120,15 @@ ALTAIR_API void altair_mem_destroy(u8 *mem);
 
 /* Generated functions keep the guest's integer registers and the memory base in locals (see
  * `localize` in the translator): `R_LOCALS` declares them, `R_SAVE` and `R_LOAD` bring the
- * context up to date and read it back around anything that may look at it. */
+ * context up to date and read it back around anything that may look at it. `X_SAVE` and
+ * `X_LOAD` are defined by each function for the XMM registers it keeps in locals. */
 #define R_LOCALS() \
     u32 eax = c->eax, ecx = c->ecx, edx = c->edx, ebx = c->ebx, esp = c->esp, ebp = c->ebp, esi = c->esi, edi = c->edi; \
     u8 *const gm = c->mem
 #define R_SAVE() \
-    (c->eax = eax, c->ecx = ecx, c->edx = edx, c->ebx = ebx, c->esp = esp, c->ebp = ebp, c->esi = esi, c->edi = edi)
+    (c->eax = eax, c->ecx = ecx, c->edx = edx, c->ebx = ebx, c->esp = esp, c->ebp = ebp, c->esi = esi, c->edi = edi, X_SAVE())
 #define R_LOAD() \
-    (eax = c->eax, ecx = c->ecx, edx = c->edx, ebx = c->ebx, esp = c->esp, ebp = c->ebp, esi = c->esi, edi = c->edi)
+    (eax = c->eax, ecx = c->ecx, edx = c->edx, ebx = c->ebx, esp = c->esp, ebp = c->ebp, esi = c->esi, edi = c->edi, X_LOAD())
 #define R_CALL(call) do { R_SAVE(); call; R_LOAD(); } while (0)
 #define R_RET do { R_SAVE(); return; } while (0)
 #define R_TRAP(c, msg, addr) (R_SAVE(), altair_trap(c, msg, addr))

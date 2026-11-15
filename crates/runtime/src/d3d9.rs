@@ -7,7 +7,8 @@
 use crate::com::{self, Method};
 use crate::user32::SCREEN;
 use crate::win32::{Call, Runtime, Shim, Shim::L};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+use crate::fastmap::HashMap;
 
 const D3D_OK: u32 = 0;
 const NOT_AVAILABLE: u32 = 0x8876_086a;
@@ -631,7 +632,7 @@ fn dev_create_texture(rt: &mut Runtime, c: &mut Call) -> u32 {
     let obj = com::create(rt, "IDirect3DTexture9", TEXTURE, 0);
     let table = if usage & 3 != 0 { &mut rt.d3d.rt_formats } else { &mut rt.d3d.texture_formats };
     *table.entry((fmt_name(format), usage)).or_default() += 1;
-    rt.d3d.res.insert(obj, Res::Texture { w, h, depth: 1, levels, format, usage, pool, surfaces: HashMap::new() });
+    rt.d3d.res.insert(obj, Res::Texture { w, h, depth: 1, levels, format, usage, pool, surfaces: HashMap::default() });
     rt.mem.w32(c.arg(7), obj);
     D3D_OK
 }
@@ -640,7 +641,7 @@ fn dev_create_volume_texture(rt: &mut Runtime, c: &mut Call) -> u32 {
     let obj = com::create(rt, "IDirect3DVolumeTexture9", VOLUME_TEXTURE, 0);
     rt.d3d.tex_kind.insert(obj, 2);
     *rt.d3d.texture_formats.entry((format!("{} (volume)", fmt_name(format)), usage)).or_default() += 1;
-    rt.d3d.res.insert(obj, Res::Texture { w, h, depth, levels: levels.max(1), format, usage, pool, surfaces: HashMap::new() });
+    rt.d3d.res.insert(obj, Res::Texture { w, h, depth, levels: levels.max(1), format, usage, pool, surfaces: HashMap::default() });
     rt.mem.w32(c.arg(8), obj);
     D3D_OK
 }
@@ -649,7 +650,7 @@ fn dev_create_cube_texture(rt: &mut Runtime, c: &mut Call) -> u32 {
     let obj = com::create(rt, "IDirect3DCubeTexture9", CUBE_TEXTURE, 0);
     rt.d3d.tex_kind.insert(obj, 1);
     *rt.d3d.texture_formats.entry((format!("{} (cube)", fmt_name(format)), usage)).or_default() += 1;
-    rt.d3d.res.insert(obj, Res::Texture { w: edge, h: edge, depth: 1, levels: levels.max(1), format, usage, pool, surfaces: HashMap::new() });
+    rt.d3d.res.insert(obj, Res::Texture { w: edge, h: edge, depth: 1, levels: levels.max(1), format, usage, pool, surfaces: HashMap::default() });
     rt.mem.w32(c.arg(6), obj);
     D3D_OK
 }

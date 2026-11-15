@@ -525,7 +525,8 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
             }
             if n > big {
                 n_big += 1;
-                body.push_str("ALTAIR_BIG ");
+                // The attribute goes on the definition, after the per-function macro lines.
+                c = c.replacen("\nvoid f_", "\nALTAIR_BIG void f_", 1);
             }
             body.push_str(&c);
             body.push('\n');

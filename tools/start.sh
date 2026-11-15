@@ -19,11 +19,17 @@ rm -f run/ctl/status run/ctl/cmd
 ALTAIR_STATS=1 ALTAIR_CTL=run/ctl ALTAIR_AUDIO_DUMP="${ALTAIR_AUDIO_DUMP:-run/ctl/audio.raw}" setsid nohup tools/run.sh > run/ctl/log.txt 2>&1 < /dev/null &
 echo $! > run/ctl/pid
 case "${1:-}" in --game|--animus|--tutorial) ;; *) exit 0 ;; esac
-# After the logos the intro video starts: it is skipped with Enter, then we wait for the title.
-until tools/ctl.sh 2>/dev/null | grep -q "video=DemoIntro"; do sleep 1; done
-sleep 2
-tools/ctl.sh "key 28"
-until tools/ctl.sh 2>/dev/null | grep -q "video=$"; do sleep 1; done
+# Logo, "presents", warnings and intro video: each is skipped with Enter as soon as it plays
+# (the runtime makes the first three skippable too). Then we wait for the title.
+intro=0
+until [ "$intro" = 1 ] && tools/ctl.sh 2>/dev/null | grep -q "video=$"; do
+  case "$(tools/ctl.sh 2>/dev/null | grep -o 'video=.*')" in
+    video=DemoIntro*) intro=1; sleep 1; tools/ctl.sh "key 28" >/dev/null ;;
+    video=LoadingScreen*|video=) ;;
+    video=*) sleep 1; tools/ctl.sh "key 28" >/dev/null ;;
+  esac
+  sleep 1
+done
 sleep 8
 tools/ctl.sh "key 28";    sleep 6     # title
 tools/ctl.sh "key 208 6"; sleep 1     # profile list: down twice
@@ -32,19 +38,20 @@ tools/ctl.sh "key 28";    sleep 6     # profile selection
 tools/ctl.sh "key 28";    sleep 12    # confirm → main menu
 tools/ctl.sh "key 28"                 # CONTINUE (or NEW if there is no save)
 [ "$1" = "--game" ] && exit 0
-# Laboratory: the scene lasts about two minutes, then waits for a key; the same in the Animus.
-# We press Space and scroll the helix until the game loads the corridor.
-# The lab scene lasts about 100 seconds: the game clock at 8x gets through it in 16.
-tools/ctl.sh "speed 8" >/dev/null; sleep 16; tools/ctl.sh "speed 1" >/dev/null
+# Lab and Animus: two long dialogue scenes, each ending on "press any button", then the DNA
+# helix to scroll. The game clock stays at 8x (F9's fast-forward) until the corridor is loaded.
+tools/ctl.sh "speed 8" >/dev/null
 until grep -q "Memory_Corridor" run/ctl/log.txt; do
-  tools/ctl.sh "key 57 15" >/dev/null; sleep 12
-  tools/ctl.sh "key 205 200" >/dev/null; sleep 12
+  tools/ctl.sh "key 57 15" >/dev/null; sleep 3
+  tools/ctl.sh "key 205 200" >/dev/null; sleep 3
 done
-sleep 20
+sleep 6
+tools/ctl.sh "speed 1" >/dev/null
 [ "$1" = "--tutorial" ] || exit 0
 # Durations in real time (ms suffix): the pace changes a lot from one scene to another.
-sleep 45; tools/ctl.sh "key 18 700ms" >/dev/null             # Head (E): first-person view
-sleep 30; tools/ctl.sh "key 42 25000ms" "key 17 25000ms" >/dev/null   # Empty hand + forward among the monks
-sleep 30; tools/ctl.sh "mouse -60 0" "key 17 8000ms" >/dev/null       # up to the marker
+fast() { tools/ctl.sh "speed 8" >/dev/null; sleep "$1"; tools/ctl.sh "speed 1" >/dev/null; }   # waits, at 8x
+fast 6; tools/ctl.sh "key 18 700ms" >/dev/null             # Head (E): first-person view
+fast 4; tools/ctl.sh "key 42 25000ms" "key 17 25000ms" >/dev/null   # Empty hand + forward among the monks
+fast 4; tools/ctl.sh "mouse -60 0" "key 17 8000ms" >/dev/null       # up to the marker
 sleep 25; tools/ctl.sh "button 1 4000ms" >/dev/null          # high profile (right button)
 sleep 12
