@@ -32,6 +32,8 @@ fn register_class_ex_a(rt: &mut Runtime, c: &mut Call) -> u32 {
 }
 fn create_window_ex_a(rt: &mut Runtime, c: &mut Call) -> u32 {
     eprintln!("[finestra] CreateWindowExA \"{}\" {}x{} (senza schermo)", rt.mem.cstr(c.arg(2)), c.arg(6) as i32, c.arg(7) as i32);
+    rt.window_thread = rt.mem.r32(c.teb() + 0x24);
+    rt.text_script = parse_text();
     HWND
 }
 fn write_rect(rt: &mut Runtime, p: u32) -> u32 {
@@ -65,6 +67,71 @@ fn post_quit_message(_: &mut Runtime, c: &mut Call) -> u32 {
     0
 }
 
+/// `ALTAIR_TEXT="2000:Matteo"`: dal fotogramma 2000 batte il testo, un carattere ogni 12
+/// fotogrammi, come messaggi della finestra (`WM_KEYDOWN`, `WM_CHAR`, `WM_KEYUP`). Più testi
+/// si separano con `|`.
+pub fn parse_text() -> Vec<(u64, char)> {
+    let Ok(spec) = std::env::var("ALTAIR_TEXT") else { return Vec::new() };
+    let mut out = Vec::new();
+    for item in spec.split('|') {
+        if let Some((frame, text)) = item.split_once(':') {
+            if let Ok(f) = frame.trim().parse::<u64>() {
+                out.extend(text.chars().enumerate().map(|(i, ch)| (f + 12 * i as u64, ch)));
+            }
+        }
+    }
+    out
+}
+
+/// Il gioco svuota la coda dei messaggi a ogni fotogramma, dal thread che possiede la finestra.
+fn peek_message_a(rt: &mut Runtime, c: &mut Call) -> u32 {
+    if rt.wndproc == 0 || rt.mem.r32(c.teb() + 0x24) != rt.window_thread {
+        return 0;
+    }
+    let frame = rt.d3d.frames;
+    if frame != rt.text_frame {
+        rt.text_frame = frame;
+        let due: Vec<char> = rt.text_script.iter().filter(|(f, _)| *f == frame).map(|(_, ch)| *ch).collect();
+        for ch in due {
+            let vk = ch.to_ascii_uppercase() as u32;
+            // Niente WM_CHAR: la procedura della finestra ricava il carattere da sé, con ToUnicode.
+            rt.messages.extend([(0x100, vk, 1), (0x101, vk, 0xc000_0001)]);
+            rt.typed.push_back(ch);
+        }
+    }
+    let Some((msg, wparam, lparam)) = rt.messages.pop_front() else { return 0 };
+    let p = c.arg(0);
+    for (i, v) in [HWND, msg, wparam, lparam, 0, 0, 0].iter().enumerate() {
+        rt.mem.w32(p + 4 * i as u32, *v);
+    }
+    1
+}
+
+/// `ToUnicode(vk, scan, stato, buffer, capienza, flag)`: il carattere del tasto premuto. Qui i
+/// tasti arrivano solo dal copione, quindi il carattere è quello in attesa.
+fn to_unicode(rt: &mut Runtime, c: &mut Call) -> u32 {
+    let vk = c.arg(0);
+    match rt.typed.front().copied() {
+        Some(ch) if ch.to_ascii_uppercase() as u32 == vk && c.arg(4) >= 1 => {
+            rt.typed.pop_front();
+            rt.mem.w16(c.arg(3), ch as u16);
+            1
+        }
+        _ => 0,
+    }
+}
+
+/// Consegna un messaggio alla procedura della finestra, che è codice del gioco.
+pub fn dispatch_message_a(c: &mut Call) -> u32 {
+    let p = c.arg(0);
+    let args = [c.mem.r32(p), c.mem.r32(p + 4), c.mem.r32(p + 8), c.mem.r32(p + 12)];
+    let wndproc = crate::win32::with_runtime(|rt| rt.wndproc);
+    if wndproc == 0 {
+        return 0;
+    }
+    crate::win32::call_guest(c, wndproc, &args)
+}
+
 /// Un solo monitor, grande quanto lo schermo dichiarato. La callback è codice guest.
 pub fn enum_display_monitors(c: &mut Call) -> u32 {
     let rect = c.ctx.esp - 0x40;
@@ -92,9 +159,8 @@ pub static SHIMS: &[(&str, u32, Shim)] = &[
     ("AdjustWindowRect", 3, L(one)),
     ("GetClientRect", 2, L(get_rect)),
     ("GetWindowRect", 2, L(get_rect)),
-    ("PeekMessageA", 5, L(zero)),
+    ("PeekMessageA", 5, L(peek_message_a)),
     ("TranslateMessage", 1, L(zero)),
-    ("DispatchMessageA", 1, L(zero)),
     ("DefWindowProcA", 4, L(zero)),
     ("ShowCursor", 1, L(zero)),
     ("ClipCursor", 1, L(one)),
@@ -105,7 +171,7 @@ pub static SHIMS: &[(&str, u32, Shim)] = &[
     ("IsWindow", 1, L(one)),
     ("IsWindowVisible", 1, L(one)),
     ("GetKeyboardState", 1, L(get_keyboard_state)),
-    ("ToUnicode", 6, L(zero)),
+    ("ToUnicode", 6, L(to_unicode)),
     ("MessageBoxA", 4, L(message_box_a)),
     ("PostQuitMessage", 1, L(post_quit_message)),
 ];

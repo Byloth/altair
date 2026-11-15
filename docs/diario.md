@@ -136,3 +136,10 @@
   Any Key To Continue"): 74.341 draw in 1.500 fotogrammi, nessun errore di validazione.
   Primo giro: errori su slot dei vertex buffer senza attributi e texture 3D, corretti.
   Resta un riquadro azzurro in alto a sinistra → `analisi/d3d9.md`.
+- **Viewport** corretto (segnalazione dell'utente): lo sfondo della schermata iniziale è la
+  nebbia dell'Animus, non bianco.
+- **Input simulato**: `ALTAIR_KEYS` (DirectInput) e `ALTAIR_TEXT` (messaggi della finestra,
+  con `DispatchMessageA` che richiama la procedura del gioco e `ToUnicode`). Il gioco passa
+  dalla schermata iniziale all'elenco dei profili, **crea il profilo "Matteo"** scrivendo
+  `.hdr` e `.sav` in `run/c/`, e arriva al **menu principale** (NEW, CONTINUE, OPTIONS).
+  Alla corsa successiva ritrova il profilo → `analisi/runtime.md`, `analisi/d3d9.md`.

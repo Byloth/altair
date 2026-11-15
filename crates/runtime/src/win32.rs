@@ -45,6 +45,13 @@ pub struct Runtime {
     /// Oggetto DirectInput della tastiera e copione dei tasti simulati: (da, a, codice DIK).
     pub keyboard: u32,
     pub key_script: Vec<(u64, u64, u8)>,
+    /// Coda dei messaggi della finestra: (messaggio, wParam, lParam).
+    pub messages: std::collections::VecDeque<(u32, u32, u32)>,
+    pub window_thread: u32,
+    pub text_script: Vec<(u64, char)>,
+    pub text_frame: u64,
+    /// Caratteri battuti dal copione, in attesa che il gioco li chieda con ToUnicode.
+    pub typed: std::collections::VecDeque<char>,
     start: Instant,
     cmdline: u32,
     env_a: u32,
@@ -119,6 +126,11 @@ fn lookup(addr: u32) -> Option<(String, Option<(u32, Shim)>)> {
     TABLE.get()?.get(((addr - HOST_BASE) / 16) as usize).cloned()
 }
 
+/// Accesso breve al runtime per gli shim di tipo `F`.
+pub fn with_runtime<T>(f: impl FnOnce(&mut Runtime) -> T) -> T {
+    f(&mut rt())
+}
+
 fn rt() -> MutexGuard<'static, Runtime> {
     RT.get().expect("runtime non installato").lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -168,6 +180,11 @@ impl Runtime {
             gfx: None,
             keyboard: 0,
             key_script: Vec::new(),
+            messages: Default::default(),
+            window_thread: 0,
+            text_script: Vec::new(),
+            text_frame: 0,
+            typed: Default::default(),
             fs: fs::FsState::new(
                 std::path::Path::new(exe).parent().map(Into::into).unwrap_or_default(),
                 std::env::current_dir().unwrap_or_default().join("run").join("c"),
@@ -233,6 +250,7 @@ impl Runtime {
 /// Import implementati in altri moduli.
 static EXTRA: &[(&str, u32, Shim)] = &[
     ("EnumDisplayMonitors", 4, F(crate::user32::enum_display_monitors)),
+    ("DispatchMessageA", 1, F(crate::user32::dispatch_message_a)),
    ("dsound.dll!#11", 3, L(crate::dsound::direct_sound_create8))];
 
 /// Chiama una funzione guest `stdcall` da uno shim e ne ritorna `eax`. Lo shim deve essere di

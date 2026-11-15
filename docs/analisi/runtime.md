@@ -104,6 +104,30 @@ Cose notate lungo la strada:
 - Senza dispositivo audio il gioco mostra "Cannot initialize Sound Driver" e poi chiama un
   oggetto nullo: l'originale non parte senza scheda audio.
 
+## Input simulato
+
+Finché non c'è una finestra vera, i tasti arrivano da un copione legato ai fotogrammi:
+
+```sh
+ALTAIR_KEYS="900:28,1500:28,2300:28"   # fotogramma:codice DIK[:durata in fotogrammi]
+ALTAIR_TEXT="2000:Matteo"              # fotogramma:testo, un carattere ogni 12 fotogrammi
+```
+
+Il gioco legge la tastiera in due modi diversi, entrambi serviti:
+
+- **Navigazione** (Invio, frecce, "premi un tasto"): stato immediato di DirectInput,
+  `GetDeviceState` sulla tastiera, 256 byte indicizzati dai codici DIK (28 Invio, 1 Esc,
+  57 Spazio, 200/208/203/205 frecce).
+- **Testo** (nome del profilo): messaggi della finestra. Il thread che possiede la finestra
+  chiama `PeekMessageA` a ogni fotogramma, poi `TranslateMessage` e `DispatchMessageA`; la
+  procedura della finestra (`0x004013E3`, codice del gioco richiamato con `call_guest`) su
+  `WM_KEYDOWN` chiede il carattere con `GetKeyboardState` e `ToUnicode`. `WM_CHAR` non serve.
+
+Con il copione qui sopra il gioco **crea un profilo**: scrive
+`C:\Users\Player\AppData\Roaming\Ubisoft\Assassin's Creed\Saved Games\<numero>.hdr` e
+`.sav`, cioè `run/c/Users/Player/…` nel progetto, e alla corsa successiva lo ritrova. Cerca
+anche un `<numero>.opt` (le opzioni), che non esiste ancora.
+
 ## Cosa ha insegnato
 
 - **Una funzione che la scoperta non vedeva.** La prima chiamata indiretta fallita è stata verso

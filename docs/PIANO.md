@@ -176,7 +176,10 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 - [x] Traduttore shader SM3 → WGSL (`crates/shader`): 1.488 shader del gioco tradotti e validati
 - [x] D3D9 su wgpu, prima versione fuori schermo (`gfx.rs`): **il gioco disegna la schermata
   iniziale**, 74.341 draw senza errori → `analisi/d3d9.md`
-- [ ] Finestra vera e input: premere un tasto, entrare nei menu, caricare il gioco
+- [x] Input simulato (`ALTAIR_KEYS`, `ALTAIR_TEXT`): schermata iniziale → profili → creazione
+  del profilo (salvato su disco) → menu principale
+- [ ] `NEW`: avviare una partita e arrivare alla prima scena 3D
+- [ ] Finestra vera con tastiera e mouse
 - [ ] Stencil, scissor, depth bias, rettangoli parziali, `ColorFill`, riciclo delle risorse
 - [ ] Video Bink, DirectSound (EAX opzionale), DirectInput, XInput
 - [ ] Confronto visivo: di norma con la DX10 originale, che sull'hardware attuale funziona
@@ -214,8 +217,8 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 
 ## Prossimi passi concreti
 
-1. **Fase 3**: finestra e input per superare la schermata iniziale; poi i menu e il
-   primo livello, completando il renderer man mano che servono le funzioni mancanti.
+1. **Fase 3**: scegliere `NEW` e arrivare alla prima scena 3D, completando il renderer man
+   mano che servono le funzioni mancanti; poi la finestra vera.
 2. Lettore `.forge` in Rust.
 3. Punti aperti della Fase 1: scenari mirati per le istruzioni non verificate, limiti della
    scoperta.
