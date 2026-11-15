@@ -156,7 +156,7 @@ tools/ctl.sh quit           # census and exit
 Commands (durations are in frames, or in real time with `ms`: `key 17 3000ms`): `key DIK [duration]`, `text TEXT`, `mouse DX DY`, `button N [frames]`,
 `move X Y`, `click X Y`, `shot FILE.png`, `stats`, `profile [reset]`, `fps` (turns the
 diagnostics panel on or off, like F8; with the panel on, `shot` includes it), `find TEXT` and `findhex BYTES` (investigation: they search the game's memory
-for a UTF-16 text or a byte sequence and print its addresses and surroundings), `hooks` (how many times
+for a UTF-16 text or a byte sequence and print its addresses and surroundings), `speed N` (debug fast-forward of the game clock, like F9; `speed 1` goes back to real time), `hooks` (how many times
 each hooked function has been called, see `runtime/hooks.txt`), `quit`. `ctl.sh` waits
 until the game has executed them and prints frame, rate and the video in progress. Do not launch `start.sh` under
 `timeout`: it would kill the game too. `start.sh` and `play.sh` close at startup every

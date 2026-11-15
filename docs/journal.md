@@ -372,8 +372,8 @@ Request from the user while trying `tools/play.sh`.
   render thread inside libm's `truncl`: the rounding fix of this morning (`x87_rnd`) had
   turned every `fistp` under the CRT's truncating control word into a library call (crowd on
   WSL down from 23 to 17 fps). The conversions now go through an inline 64-bit integer
-  conversion (`x87_trunc` in `runtime/altair_x87.h`); differential test green. **The crowd is
-  still to be re-measured**: two scripted attempts did not get the character into the crowd.
+  conversion (`x87_trunc` in `runtime/altair_x87.h`); differential test green. Re-measured
+  on WSL: 24.0 fps at 3,791 draws.
 - **The repository is now in English** (the user's request: it is public on GitHub). Docs,
   comments, log and CLI messages translated; Italian file names renamed (`docs/analysis/`,
   `PLAN.md`, `journal.md`, `decisions.md`, `open-questions.md`, `sources.md`,
@@ -382,3 +382,6 @@ Request from the user while trying `tools/play.sh`.
   -NoAudio -NoVideo`); log tags `[window]`, `[profile]`, `[net]`, `[overlay]`, `[hook]`. Still
   Italian on purpose: text the game itself shows (key names handed to the game, quoted
   dialogue). Commit history rewritten in English, Conventional Commits, same dates.
+- **Debug fast-forward.** The user's idea, to avoid waiting through the lab scene: the game
+  clock can run faster (`clock.rs`; F9 toggles 8x, `speed N`, `ALTAIR_SPEED`). The lab scene
+  takes 16 seconds instead of about 100; `tools/start.sh` uses it → `analysis/runtime.md`.

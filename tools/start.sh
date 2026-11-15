@@ -34,7 +34,8 @@ tools/ctl.sh "key 28"                 # CONTINUE (or NEW if there is no save)
 [ "$1" = "--game" ] && exit 0
 # Laboratory: the scene lasts about two minutes, then waits for a key; the same in the Animus.
 # We press Space and scroll the helix until the game loads the corridor.
-sleep 100
+# The lab scene lasts about 100 seconds: the game clock at 8x gets through it in 16.
+tools/ctl.sh "speed 8" >/dev/null; sleep 16; tools/ctl.sh "speed 1" >/dev/null
 until grep -q "Memory_Corridor" run/ctl/log.txt; do
   tools/ctl.sh "key 57 15" >/dev/null; sleep 12
   tools/ctl.sh "key 205 200" >/dev/null; sleep 12

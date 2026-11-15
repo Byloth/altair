@@ -599,6 +599,8 @@ fn control(rt: &mut Runtime, frame: u64) {
                     eprintln!("[ctl]   {a:#010x}: {} | {}", dump(a.saturating_sub(32), 32), dump(a, 32));
                 }
             }
+            // Debug fast-forward of the game clock: `speed 8`, `speed 1` to go back to real time.
+            Some("speed") => crate::clock::set_speed(words.next().and_then(|v| v.parse().ok()).unwrap_or(1)),
             Some("hooks") => eprintln!("[ctl] frame {frame}, hooks: {}", crate::hooks::report()),
             Some("stats") => eprintln!("[ctl] frame {frame}: {}", rt.d3d.last_stats),
             // `profile reset` clears the samples, `profile` prints the report (ALTAIR_PROFILE=1).

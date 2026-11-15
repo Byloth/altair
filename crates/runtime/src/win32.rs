@@ -62,7 +62,6 @@ pub struct Runtime {
     /// Keys and buttons pressed by the control channel for a real-time duration: (release, code).
     pub key_timed: Vec<(std::time::Instant, u8)>,
     pub button_timed: Vec<(std::time::Instant, usize)>,
-    start: Instant,
     cmdline: u32,
     env_a: u32,
     env_w: u32,
@@ -217,7 +216,6 @@ impl Runtime {
                 std::path::Path::new(exe).parent().map(Into::into).unwrap_or_default(),
                 std::env::current_dir().unwrap_or_default().join("run").join("c"),
             ),
-            start: *START.get_or_init(Instant::now),
             cmdline: 0,
             env_a: 0,
             env_w: 0,
@@ -592,21 +590,18 @@ fn sleep(c: &mut Call) -> u32 {
 
 // --- kernel32: time -------------------------------------------------------------------------
 
-/// The startup instant, from which the times given to the game are counted.
-pub static START: OnceLock<Instant> = OnceLock::new();
-
 // Without the runtime lock: the game's audio thread reads the clock continuously.
 fn query_performance_counter(c: &mut Call) -> u32 {
     // 10 MHz since process start: large values overflow the game's arithmetic.
-    c.mem.w64(c.arg(0), (START.get_or_init(Instant::now).elapsed().as_nanos() / 100) as u64);
+    c.mem.w64(c.arg(0), (crate::clock::now_ns() / 100) as u64);
     1
 }
 fn query_performance_frequency(c: &mut Call) -> u32 {
     c.mem.w64(c.arg(0), 10_000_000);
     1
 }
-fn get_tick_count(rt: &mut Runtime, _: &mut Call) -> u32 {
-    60_000 + rt.start.elapsed().as_millis() as u32
+fn get_tick_count(_: &mut Runtime, _: &mut Call) -> u32 {
+    60_000 + (crate::clock::now_ns() / 1_000_000) as u32
 }
 fn get_system_time_as_file_time(rt: &mut Runtime, c: &mut Call) -> u32 {
     let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();

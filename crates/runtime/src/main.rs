@@ -6,6 +6,7 @@ mod d3d9;
 mod dsound;
 mod fs;
 mod animus_font;
+mod clock;
 mod gfx;
 mod hooks;
 mod overlay;

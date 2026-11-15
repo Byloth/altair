@@ -183,6 +183,13 @@ impl ApplicationHandler for App {
                     }
                     return;
                 }
+                // F9 does not go to the game either: debug fast-forward of the game clock (clock.rs).
+                if code == KeyCode::F9 {
+                    if event.state == ElementState::Pressed && !event.repeat {
+                        crate::clock::toggle_fast();
+                    }
+                    return;
+                }
                 let Some((dik, vk)) = map(code) else { return };
                 let down = event.state == ElementState::Pressed;
                 s.keys[dik as usize] = if down { 0x80 } else { 0 };

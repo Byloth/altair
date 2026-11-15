@@ -552,6 +552,21 @@ compiles it with `llvm-rc` and `llvm-cvtres` and `tools/win-link.sh` links it in
 as resource no. 1; `window.rs` gives it to the window and to the taskbar. Like the generated
 C, the icon is material derived from the game and stays in `build/`. **Never seen on Windows.**
 
+### Debug fast-forward (F9, 2026-11-15)
+
+Reaching a scene to test can mean sitting through minutes of non-interactive dialogue (the
+lab scene lasts about 100 seconds). `clock.rs` is the clock the game reads:
+`QueryPerformanceCounter` and `GetTickCount` return a virtual time that normally follows real
+time, and with a speed factor above one advances faster, so the game plays everything faster.
+**F9** (not passed to the game) switches between real time and 8x; the `speed N` command of
+the control channel and `ALTAIR_SPEED=N` set any factor from 1 to 64. Changing the factor
+never makes the time jump.
+
+Verified on WSL: with `speed 8` the lab scene reaches "PREMERE QUALUNQUE PULSANTE PER
+INTERAGIRE" in 16 seconds (`run/shots/speed-lab.png`); `tools/start.sh --animus` uses it. Audio
+and videos keep running in real time, so sound is out of sync while the factor is on: it is a
+debugging aid. `rdtsc` and `Sleep` are not scaled.
+
 ## Native Windows (2026-11-15)
 
 The same runtime runs on Windows, where wgpu uses Vulkan or Direct3D 12 with no intermediate

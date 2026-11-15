@@ -10,6 +10,7 @@
 #             -Game    path to AssassinsCreed_Dx9.exe;  -NoAudio;  -NoVideo.
 # In the window: F8 shows or hides the diagnostics overlay (fps),
 # the opening videos are skipped like the intro one,
+#                F9 toggles the debug fast-forward (game clock at 8x),
 #                F10 captures or releases the mouse pointer.
 # Executable and DLL are built from WSL with tools/build-win.sh.
 # The game's log ends up in run\win\log.txt (it can be read from WSL too).

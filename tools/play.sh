@@ -3,6 +3,7 @@
 # Usage: tools/play.sh            (from the project root; close the window to quit)
 # F10 captures or releases the mouse pointer (captured: camera; released: menus).
 # F8 shows or hides the diagnostics overlay (frames per second).
+# F9 toggles the debug fast-forward (game clock at 8x; sound goes out of sync).
 # The opening videos (logo, "presents", warnings) are skipped like the intro one.
 # Useful variables: ALTAIR_LANG=English|Italian|…  ALTAIR_AUDIO=0  ALTAIR_VIDEO=0  ALTAIR_STATS=1
 set -euo pipefail
