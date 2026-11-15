@@ -154,7 +154,7 @@ fn spawn_submitter(queue: wgpu::Queue) -> Option<std::sync::mpsc::SyncSender<Job
 struct PassState {
     pipeline: Option<wgpu::RenderPipeline>,
     blend: Option<u32>,
-    consts: Option<(u32, u32)>,
+    consts: [Option<u32>; 2],
     groups: [Option<wgpu::BindGroup>; 2],
     stencil: Option<u32>,
     scissor: Option<[u32; 4]>,
@@ -173,6 +173,7 @@ pub struct Gfx {
     encoder: Option<wgpu::CommandEncoder>,
     pass: Option<wgpu::RenderPass<'static>>,
     pass_key: ([u32; 4], u32),
+    pass_formats: ([Option<wgpu::TextureFormat>; 4], Option<wgpu::TextureFormat>),
     pass_size: (u32, u32),
     pending_clear: HashMap<u32, [f64; 4]>,
     pending_depth_clear: HashMap<u32, (Option<f32>, Option<u32>)>,
@@ -181,12 +182,13 @@ pub struct Gfx {
     parsed: HashMap<u32, Option<sh::Shader>>,
     modules: HashMap<(u32, sh::Options), Option<ShaderGpu>>,
     pipelines: HashMap<PipeKey, Option<wgpu::RenderPipeline>>,
+    last_pipeline: Option<(PipeKey, wgpu::RenderPipeline)>,
     samplers: HashMap<[u32; 6], wgpu::Sampler>,
-    g0_layout: wgpu::BindGroupLayout,
-    g0: wgpu::BindGroup,
+    g0_layout: [wgpu::BindGroupLayout; 2],
+    g0: [wgpu::BindGroup; 2],
     ubuf: wgpu::Buffer,
     /// Le altre copie di (costanti, bind group, appoggio), in attesa del loro turno.
-    ring: std::collections::VecDeque<(wgpu::Buffer, wgpu::BindGroup, wgpu::Buffer)>,
+    ring: std::collections::VecDeque<(wgpu::Buffer, [wgpu::BindGroup; 2], wgpu::Buffer)>,
     ubuf_off: u64,
     /// Contenuto in attesa del buffer uniforme e di quello di appoggio: scritti all'invio.
     ubuf_cpu: Vec<u8>,
@@ -224,8 +226,7 @@ pub struct Gfx {
     /// Bind group delle texture già creati, per (stadio, texture e stati dei campionatori).
     groups: HashMap<Vec<[u32; 9]>, wgpu::BindGroup>,
     /// Ultimo blocco di costanti scritto per vertex e pixel shader, con il suo offset.
-    consts_last: [(Vec<u8>, Option<u32>); 2],
-    consts_tmp: Vec<u8>,
+    consts_at: [Option<(usize, usize)>; 2],
     surface: Option<(wgpu::Surface<'static>, wgpu::SurfaceConfiguration, std::sync::Arc<winit::window::Window>)>,
     pub drawn: u64,
     pub skipped: BTreeMap<String, u64>,
@@ -405,10 +406,8 @@ impl Gfx {
             ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: true, min_binding_size: wgpu::BufferSize::new(CONSTS_SIZE) },
             count: None,
         };
-        let g0_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: None,
-            entries: &[uniform(0, wgpu::ShaderStages::VERTEX), uniform(1, wgpu::ShaderStages::FRAGMENT)],
-        });
+        // Costanti del vertex shader nel gruppo 0, del pixel shader nel gruppo 3.
+        let g0_layout = [wgpu::ShaderStages::VERTEX, wgpu::ShaderStages::FRAGMENT].map(|stage| device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: None, entries: &[uniform(0, stage)] }));
         // I buffer riscritti a ogni invio (costanti e dati di appoggio) esistono in più copie,
         // usate a rotazione: riscrivere un buffer che la GPU sta ancora leggendo per il
         // fotogramma precedente obbliga il driver ad aspettarla.
@@ -418,7 +417,7 @@ impl Gfx {
                 binding: b,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: &ubuf, offset: 0, size: wgpu::BufferSize::new(CONSTS_SIZE) }),
             };
-            let g0 = device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &g0_layout, entries: &[binding(0), binding(1)] });
+            let g0 = [0, 1].map(|i| device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &g0_layout[i], entries: &[binding(0)] }));
             let scratch = device.create_buffer(&wgpu::BufferDescriptor { label: None, size: SCRATCH_SIZE, usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
             (ubuf, g0, scratch)
         };
@@ -453,6 +452,7 @@ impl Gfx {
             encoder: None,
             pass: None,
             pass_key: ([0; 4], 0),
+            pass_formats: ([None; 4], None),
             pass_size: (0, 0),
             pending_clear: HashMap::new(),
             pending_depth_clear: HashMap::new(),
@@ -461,6 +461,7 @@ impl Gfx {
             parsed: HashMap::new(),
             modules: HashMap::new(),
             pipelines: HashMap::new(),
+            last_pipeline: None,
             samplers: HashMap::new(),
             g0_layout,
             g0,
@@ -492,8 +493,7 @@ impl Gfx {
             prof_end: Default::default(),
             prof_finish: Default::default(),
             groups: HashMap::new(),
-            consts_last: Default::default(),
-            consts_tmp: Vec::new(),
+            consts_at: [None; 2],
             surface,
             drawn: 0,
             skipped: BTreeMap::new(),
@@ -655,8 +655,7 @@ impl Gfx {
         }
         self.ubuf_off = 0;
         self.scratch_off = 0;
-        self.consts_last[0].1 = None;
-        self.consts_last[1].1 = None;
+        self.consts_at = [None; 2];
         // Le versioni di appoggio non valgono più: i buffer veri vanno riallineati.
         self.recent.rotate_right(1);
         self.recent[0] = std::mem::take(&mut self.used);
@@ -741,6 +740,10 @@ impl Gfx {
     /// Apre, se serve, il render pass sui target correnti. Ritorna formati dei colori e del depth.
     fn begin_pass(&mut self, d: &D3d) -> Option<([Option<wgpu::TextureFormat>; 4], Option<wgpu::TextureFormat>)> {
         let key = (d.render_targets, d.depth_target);
+        // Stessi target del draw precedente, pass ancora aperto: i formati sono quelli di prima.
+        if self.pass.is_some() && self.pass_key == key {
+            return Some(self.pass_formats);
+        }
         for s in d.render_targets.iter().chain([&d.depth_target]) {
             if *s != 0 {
                 let (obj, ..) = Self::owner(d, *s);
@@ -814,6 +817,7 @@ impl Gfx {
             .forget_lifetime();
         self.pass = Some(pass);
         self.pass_key = key;
+        self.pass_formats = (colors, depth_format);
         self.pass_size = size;
         Some((colors, depth_format))
     }
@@ -997,29 +1001,26 @@ impl Gfx {
         let f = &f[..(4 * floats).min(f.len())];
         // SAFETY: f32 e i32 non hanno byte di riempimento; l'host è little-endian come il formato atteso.
         let (fb, ib) = unsafe { (std::slice::from_raw_parts(f.as_ptr() as *const u8, f.len() * 4), std::slice::from_raw_parts(i.as_ptr() as *const u8, i.len() * 4)) };
-        let mut bytes = std::mem::take(&mut self.consts_tmp);
-        bytes.clear();
-        bytes.extend(misc.iter().flat_map(|v| v.to_le_bytes()));
-        bytes.extend([b, 0, 0, 0].iter().flat_map(|v| v.to_le_bytes()));
-        bytes.extend_from_slice(ib);
-        bytes.extend_from_slice(fb);
-        // Un blocco già scritto che comincia con gli stessi byte va bene anche se è più lungo.
-        let last = &mut self.consts_last[stage];
-        if let Some(off) = last.1.filter(|_| last.0.len() >= bytes.len() && last.0[..bytes.len()] == bytes[..]) {
-            self.consts_tmp = bytes;
-            return off;
+        // Il blocco si scrive direttamente in coda al buffer del fotogramma; se è uguale
+        // all'ultimo dello stesso stadio (o ne è l'inizio) lo si toglie e si riusa quello.
+        let off = self.ubuf_off as usize;
+        self.ubuf_cpu.truncate(off);
+        self.ubuf_cpu.extend(misc.iter().flat_map(|v| v.to_le_bytes()));
+        self.ubuf_cpu.extend([b, 0, 0, 0].iter().flat_map(|v| v.to_le_bytes()));
+        self.ubuf_cpu.extend_from_slice(ib);
+        self.ubuf_cpu.extend_from_slice(fb);
+        let len = self.ubuf_cpu.len() - off;
+        if let Some((last_off, last_len)) = self.consts_at[stage] {
+            let (head, tail) = self.ubuf_cpu.split_at(off);
+            if last_len >= len && head[last_off..last_off + len] == tail[..] {
+                self.ubuf_cpu.truncate(off);
+                return last_off as u32;
+            }
         }
-        // Le scritture si accumulano e partono tutte insieme all'invio: migliaia di piccole
-        // `write_buffer` per fotogramma costavano più dei draw.
-        let off = self.ubuf_off;
-        let slot = (bytes.len() as u64).next_multiple_of(256);
-        self.ubuf_cpu.extend_from_slice(&bytes);
-        self.ubuf_cpu.resize((off + slot) as usize, 0);
+        let slot = (len as u64).next_multiple_of(256);
+        self.ubuf_cpu.resize(off + slot as usize, 0);
         self.ubuf_off += slot;
-        let last = &mut self.consts_last[stage];
-        std::mem::swap(&mut last.0, &mut bytes);
-        last.1 = Some(off as u32);
-        self.consts_tmp = bytes;
+        self.consts_at[stage] = Some((off, len));
         off as u32
     }
 
@@ -1291,11 +1292,14 @@ impl Gfx {
             rs(195, 0), rs(175, 0), 0, 0, 0,
         ];
         let key = PipeKey { vs, ps, decl, strides, opts_vs, opts_ps, colors, depth: depth_format, topology: prim_type, index16, states };
-        if !self.pipelines.contains_key(&key) {
+        // Draw consecutivi usano spesso la stessa pipeline: si confronta con l'ultima prima di
+        // cercare nella tabella (la chiave è grossa da ridurre a un hash).
+        let cached = self.last_pipeline.as_ref().filter(|(k, _)| *k == key).map(|(_, p)| p.clone());
+        if cached.is_none() && !self.pipelines.contains_key(&key) {
             let _gate = gate();
             let ps_layout = self.tex_layout(&ps_samplers, wgpu::ShaderStages::FRAGMENT);
             let vs_layout = self.tex_layout(&vs_samplers, wgpu::ShaderStages::VERTEX);
-            let layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&self.g0_layout, &ps_layout, &vs_layout], push_constant_ranges: &[] });
+            let layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&self.g0_layout[0], &ps_layout, &vs_layout, &self.g0_layout[1]], push_constant_ranges: &[] });
             // Solo i flussi che portano attributi: uno slot senza attributi verrebbe comunque
             // controllato contro la dimensione del buffer legato.
             let mut buffers: Vec<wgpu::VertexBufferLayout> = (0..4)
@@ -1377,7 +1381,14 @@ impl Gfx {
             }
             self.pipelines.insert(key.clone(), err.is_none().then_some(pipeline));
         }
-        let Some(pipeline) = self.pipelines[&key].clone() else { return self.skip("pipeline rifiutata da wgpu") };
+        let pipeline = match cached {
+            Some(p) => p,
+            None => {
+                let Some(p) = self.pipelines[&key].clone() else { return self.skip("pipeline rifiutata da wgpu") };
+                self.last_pipeline = Some((key, p.clone()));
+                p
+            }
+        };
 
         lap!(4);
         let (w, h) = self.pass_size;
@@ -1400,9 +1411,13 @@ impl Gfx {
             pass.set_blend_constant(wgpu::Color { r: ((bf >> 16) & 0xff) as f64 / 255.0, g: ((bf >> 8) & 0xff) as f64 / 255.0, b: (bf & 0xff) as f64 / 255.0, a: (bf >> 24) as f64 / 255.0 });
             last.blend = Some(bf);
         }
-        if last.consts != Some((vs_off, ps_off)) {
-            pass.set_bind_group(0, &self.g0, &[vs_off, ps_off]);
-            last.consts = Some((vs_off, ps_off));
+        if last.consts[0] != Some(vs_off) {
+            pass.set_bind_group(0, &self.g0[0], &[vs_off]);
+            last.consts[0] = Some(vs_off);
+        }
+        if last.consts[1] != Some(ps_off) {
+            pass.set_bind_group(3, &self.g0[1], &[ps_off]);
+            last.consts[1] = Some(ps_off);
         }
         if last.groups[0].as_ref() != Some(&ps_group) {
             pass.set_bind_group(1, &ps_group, &[]);

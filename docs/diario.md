@@ -288,3 +288,5 @@ Richiesta dell'utente mentre prova `tools/gioca.sh`.
   30 → 65, folla 12 → 20. Per arrivarci: un cancello tra i thread (wgpu su OpenGL va in errore
   o si blocca se un thread crea risorse mentre l'altro usa la coda) e una riserva di buffer
   riusati → `analisi/d3d9.md`.
+- Registrazione dei draw più leggera (folla: 17 → 11 ms sul thread del gioco) e costanti di
+  vertex e pixel shader in gruppi separati (nessun effetto sull'invio). Folla a 23 fps.

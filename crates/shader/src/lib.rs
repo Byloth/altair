@@ -1,7 +1,8 @@
 //! Traduzione degli shader Direct3D 9 (bytecode shader model 3.0) in WGSL.
 //!
 //! Convenzioni del WGSL prodotto, che il renderer deve rispettare:
-//!  - costanti: `@group(0) @binding(0)` per il vertex shader, `@binding(1)` per il pixel shader,
+//!  - costanti: `@group(0) @binding(0)` per il vertex shader, `@group(3) @binding(0)` per il
+//!    pixel shader (gruppi separati: ciascuno si riaggancia solo quando cambiano le sue),
 //!    entrambe `Consts { misc: vec4f, b: vec4u, i: array<vec4i, 16>, c: array<vec4f, 256> }`:
 //!    le costanti float stanno in fondo, così il renderer può caricarne solo il tratto che
 //!    lo shader usa (`Shader::float_consts`);
@@ -616,7 +617,7 @@ pub fn translate_with(sh: &Shader, opt: &Options) -> R<String> {
     let vertex = sh.stage == Stage::Vertex;
     let mut w = String::new();
     w.push_str(CONSTS);
-    let _ = writeln!(w, "@group(0) @binding({}) var<uniform> {}: Consts;", if vertex { 0 } else { 1 }, e.u());
+    let _ = writeln!(w, "@group({}) @binding(0) var<uniform> {}: Consts;", if vertex { 0 } else { 3 }, e.u());
     let group = if vertex { 2 } else { 1 };
     for (&n, &kind) in &sh.samplers {
         let ty = match kind {
