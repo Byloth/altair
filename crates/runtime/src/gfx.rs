@@ -353,15 +353,15 @@ struct V { @builtin(position) p: vec4f, @location(0) uv: vec2f }
 
 impl Gfx {
     pub fn new() -> Option<Gfx> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor { backends: wgpu::Backends::all(), ..Default::default() });
+        // Con la finestra, istanza e superficie arrivano dal thread che l'ha creata.
         let window = crate::window::window();
-        let surface = window.as_ref().and_then(|w| match instance.create_surface(w.clone()) {
-            Ok(s) => Some(s),
-            Err(e) => {
-                eprintln!("[gfx] superficie della finestra non creabile ({e}): fuori schermo");
-                None
-            }
-        });
+        let (instance, surface) = match window.as_ref().and_then(|_| crate::window::take_graphics()) {
+            Some((instance, surface)) => (instance, Some(surface)),
+            None => (wgpu::Instance::new(&wgpu::InstanceDescriptor { backends: wgpu::Backends::all(), ..Default::default() }), None),
+        };
+        if window.is_some() && surface.is_none() {
+            eprintln!("[gfx] nessuna superficie per la finestra: si disegna fuori schermo");
+        }
         let mut adapters = instance.enumerate_adapters(wgpu::Backends::all());
         if let Some(s) = &surface {
             adapters.retain(|a| a.is_surface_supported(s));

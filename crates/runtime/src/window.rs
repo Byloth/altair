@@ -40,6 +40,14 @@ pub struct State {
 }
 
 static WINDOW: OnceLock<Arc<Window>> = OnceLock::new();
+/// Istanza wgpu e superficie della finestra, create dal thread della finestra e in attesa che
+/// il renderer le prenda.
+static GRAPHICS: Mutex<Option<(wgpu::Instance, wgpu::Surface<'static>)>> = Mutex::new(None);
+
+/// Consegna al renderer l'istanza e la superficie della finestra (una volta sola).
+pub fn take_graphics() -> Option<(wgpu::Instance, wgpu::Surface<'static>)> {
+    GRAPHICS.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
 static FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(|| {
     Mutex::new(State { keys: [0; 256], events: VecDeque::new(), cursor: (SCREEN.0 / 2, SCREEN.1 / 2), motion: (0, 0, 0), buttons: [false; 8], raw_motion: false, grabbed: false, last_cursor: None })
@@ -117,7 +125,16 @@ impl ApplicationHandler for App {
         match el.create_window(attrs) {
             Ok(w) => {
                 eprintln!("[finestra] finestra aperta, {}x{}", SCREEN.0, SCREEN.1);
-                let _ = WINDOW.set(Arc::new(w));
+                let w = Arc::new(w);
+                // La superficie di disegno si crea qui, sul thread che possiede la finestra: su
+                // Windows da un altro thread l'handle non è disponibile. Il renderer, che nasce
+                // sul thread del gioco, riceve l'istanza wgpu e la superficie già pronte.
+                let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor { backends: wgpu::Backends::all(), ..Default::default() });
+                match instance.create_surface(w.clone()) {
+                    Ok(surface) => *GRAPHICS.lock().unwrap_or_else(|e| e.into_inner()) = Some((instance, surface)),
+                    Err(e) => eprintln!("[finestra] superficie non creabile ({e}): il gioco disegnerà fuori schermo"),
+                }
+                let _ = WINDOW.set(w);
             }
             Err(e) => eprintln!("[finestra] impossibile aprire la finestra: {e}"),
         }

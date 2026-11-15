@@ -307,3 +307,10 @@ Richiesta dell'utente mentre prova `tools/gioca.sh`.
   - `host.rs`: lo strato Linux/Windows. Audio su `waveOut`.
   - `tools/gioca.ps1` per lanciarlo. **Mai eseguito**: aspetto la prova dell'utente e il
     registro in `run\win\log.txt` → `analisi/runtime.md`, `ambiente.md`.
+- **Prima esecuzione su Windows** (utente): parte tutto al primo tentativo (DLL, 4 GB di
+  memoria, audio `waveOut`, video, Vulkan sulla RTX 4070 Ti, 180-195 fps sui loghi), ma la
+  finestra restava bianca: `create_surface` dal thread del gioco falliva con "the underlying
+  handle is not available". Su Windows l'handle della finestra si ottiene solo dal thread che
+  l'ha creata. Ora istanza wgpu e superficie nascono in `window.rs`, sul thread della
+  finestra, e il renderer le riceve (`take_graphics`). Verificato su Linux che la finestra
+  funzioni ancora; su Windows da riprovare.
