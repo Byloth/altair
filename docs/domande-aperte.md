@@ -3,23 +3,6 @@
 Quando una domanda trova risposta, sposta la risposta nel file di analisi giusto e
 sostituisci qui la voce con un rimando.
 
-## Cambiare la versione dell'Animus mostrata dal gioco (2026-11-15)
-
-Richiesta dell'utente: "1.28" → `2.0.0α`, o in ripiego `2.0.0-dev.1`. Stato:
-
-- `α` non si può: i caratteri del gioco coprono solo Latin-1 (`analisi/forge.md`). Resta
-  `2.0.0-dev.1`.
-- Il testo sta nei dati compressi (`Animus_MGB`), che non si toccano (cartella in sola lettura).
-- In memoria (comandi `find` e `findhex` del canale di comando, nel laboratorio): dieci copie
-  di "Versione Animus 1.28", ognuna in un blocco di heap su misura, seguita dopo 2-6 byte dai
-  dati di un altro blocco. Un testo più lungo non ci sta. L'oggetto che la possiede tiene
-  puntatore e lunghezza (visto `{ptr, …, 0x14, 0x17}`): cambiare il puntatore con uno nostro
-  farebbe liberare al gioco memoria non sua.
-- Strada giusta, da fare: un **aggancio nel traduttore** (una funzione host chiamata
-  all'ingresso o all'uscita di una funzione guest scelta) sulla funzione di magma che crea le
-  stringhe dai dati, per sostituire il testo prima che venga allocato. Serve trovare quella
-  funzione e aggiungere il meccanismo, che ancora non c'è.
-
 ## Funzioni di sviluppo rimaste nel binario (2026-11-15)
 
 Ricognizione in `analisi/funzioni-nascoste.md`. Restano da capire:
@@ -89,6 +72,25 @@ l'originale); per giocare, differenze di un'unità sull'ultima cifra non contano
 del piano del 2026-11-15 si ferma qui: non c'erano altre istruzioni annotate come non verificate.
 
 ## Laboratorio: telecamera sbagliata e interferenze dell'Animus assenti (2026-11-15)
+
+**Interferenze, indagine con gli agganci (stesso giorno).** L'utente si aspetta la prima
+interferenza nel laboratorio quando Desmond dice "… e mi avete legato a quella… cosa!".
+Agganciati 47 metodi e seguita la scena per 130 secondi (`ALTAIR_HOOK_LOG`, comando `hooks`):
+
+- `Glitcher` (`0xAD91B0`, il disegno dell'effetto, chiamato da `0xAAFD4B` quando un oggetto
+  dice che l'effetto è attivo): gira per circa 680 fotogrammi **solo all'inizio**, durante il
+  risveglio di Desmond (bianco, sfocatura), e poi mai più.
+- `GlitchCameraClip` e `MissCinematicGlitchConditionClip`: **nessuna istanza viene nemmeno
+  costruita** (agganciati i quattro costruttori) dal menu fino a due minuti di laboratorio.
+- Girano invece di continuo `CameraActionConditionClip` (il clic che cambia telecamera),
+  `PadInputConditionClip` e `PresentTimeConditionClip` (`0xC01B00`: confronta un indice di
+  stato con un valore del clip, non è un orologio).
+
+Quindi nel laboratorio, con i nostri dati, non esiste un oggetto "interferenza con
+inquadratura speciale": o nell'originale quell'interferenza appartiene alle scene dentro i
+ricordi (dove quei clip avrebbero senso) e non a questa, oppure viene da un meccanismo che
+non ho ancora individuato. **Serve un riscontro sull'originale** (DX10, che all'utente
+funziona): in quale scena e come appare. Gli agganci usati sono in `runtime/hooks.txt`, spenti.
 
 **Aggiornamento, stesso giorno: l'inquadratura vuota è sparita.** Dopo la correzione di
 `frndint`/`fistp` e del bit ID di EFLAGS (`analisi/traduttore.md`, punti 7 e 8) l'utente

@@ -50,6 +50,12 @@ int altair_trail(u32 *out, int max) {
     return n;
 }
 
+static AltairHook hook_fn;
+
+void altair_set_hook(AltairHook fn) { hook_fn = fn; }
+
+int altair_hook(Ctx *c, u32 addr) { return hook_fn ? hook_fn(c, addr) : 0; }
+
 void altair_call_indirect(Ctx *c, u32 addr) {
     trail[trail_pos++ % TRAIL] = addr;
     AltairFn fn = find(addr);

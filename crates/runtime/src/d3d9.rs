@@ -599,6 +599,7 @@ fn control(rt: &mut Runtime, frame: u64) {
                     eprintln!("[ctl]   {a:#010x}: {} | {}", dump(a.saturating_sub(32), 32), dump(a, 32));
                 }
             }
+            Some("hooks") => eprintln!("[ctl] fotogramma {frame}, agganci: {}", crate::hooks::report()),
             Some("stats") => eprintln!("[ctl] fotogramma {frame}: {}", rt.d3d.last_stats),
             // `profile reset` azzera i campioni, `profile` stampa il resoconto (ALTAIR_PROFILE=1).
             Some("profile") => match words.next() {

@@ -21,7 +21,8 @@ uso: altair <comando> <AssassinsCreed_Dx9.exe> [opzioni]
 
   translate --out FILE.c [--roots FILE] ADDR...
                             traduce in C le funzioni indicate e quelle che chiamano
-  image --out DIR [--window KB] [--big N]
+  image --out DIR [--window KB] [--big N] [--hooks FILE]
+  icon --out FILE.ico       estrae l'icona dell'eseguibile (per la build Windows; resta in build/)
                             traduce l'intera immagine in DIR: un file C per finestra di
                             indirizzi (64 KB), table.c e un Makefile. Le funzioni con più di
                             N istruzioni (5000) non vengono ottimizzate dal compilatore
@@ -69,6 +70,7 @@ fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
     match cmd.as_str() {
         "info" => info(&img, &sha),
         "rtti" => rtti_stats(&img),
+        "icon" => icon_cmd(&img, value(args, "--out").ok_or("manca --out FILE.ico")?)?,
         "discover" => discover_cmd(&img, flag(args, "--strict"), value(args, "--out"))?,
         "translate" => translate_cmd(&img, args)?,
         "coverage" => coverage_cmd(&img, flag(args, "--list")),
@@ -443,6 +445,17 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
     let window = value(args, "--window").and_then(|v| v.parse::<u32>().ok()).unwrap_or(64) * 1024;
     let big = value(args, "--big").and_then(|v| v.parse::<usize>().ok()).unwrap_or(5000);
     std::fs::create_dir_all(&out)?;
+    // Agganci: funzioni guest che all'ingresso passano dal runtime (`altair_hook`), che può
+    // osservarle o sostituirle. Un indirizzo esadecimale per riga, il resto è commento.
+    let mut hooks: BTreeSet<u32> = BTreeSet::new();
+    if let Some(file) = value(args, "--hooks") {
+        for line in std::fs::read_to_string(file)?.lines() {
+            if let Some(word) = line.split('#').next().and_then(|l| l.split_whitespace().next()) {
+                hooks.insert(u32::from_str_radix(word.trim_start_matches("0x"), 16).map_err(|_| format!("{file}: indirizzo non valido: {word}"))?);
+            }
+        }
+    }
+    let mut hooked = 0;
 
     let (d, _) = Discovery::run(img, false, false);
     let hard = hard_starts(&d);
@@ -504,7 +517,12 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
             if n > biggest.0 {
                 biggest = (n, *a);
             }
-            let c = translate::emit(f, &known)?;
+            let mut c = translate::emit(f, &known)?;
+            if hooks.contains(a) {
+                const FLAGS: &str = "    u32 cf = 0, zf = 0, sf = 0, of = 0, pf = 0, af = 0;\n";
+                c = c.replacen(FLAGS, &format!("{FLAGS}    if (altair_hook(c, {a:#x}u)) return;\n"), 1);
+                hooked += 1;
+            }
             if n > big {
                 n_big += 1;
                 body.push_str("ALTAIR_BIG ");
@@ -575,7 +593,63 @@ fn image_cmd(img: &Image, args: &[String]) -> Result<(), Box<dyn std::error::Err
     println!("file                {} da {} KB di indirizzi, più table.c", parts.len(), window / 1024);
     println!("dimensione          {:.1} MB di C", bytes as f64 / 1e6);
     println!("file riscritti      {written}, rimossi {removed}");
+    if !hooks.is_empty() {
+        println!("agganci             {hooked} su {} richiesti", hooks.len());
+    }
     println!("funzioni non ottimizzate (più di {big} istruzioni): {n_big}; la più grande {:#x} con {} istruzioni", biggest.1, biggest.0);
     println!("tempo               {:.1} s", t0.elapsed().as_secs_f64());
+    Ok(())
+}
+
+/// Estrae la prima icona di gruppo dell'eseguibile in un file `.ico`. Come il C generato, il
+/// risultato è materiale derivato dal gioco: va in `build/`, mai nel repository.
+fn icon_cmd(img: &Image, out: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let d = &img.data;
+    let u16_at = |o: usize| d.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize).ok_or("risorse troncate");
+    let u32_at = |o: usize| d.get(o..o + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]) as usize).ok_or("risorse troncate");
+    let pe = u32_at(0x3c)?;
+    let rva = u32_at(pe + 24 + 96 + 8 * 2)? as u32;
+    if rva == 0 {
+        return Err("l'eseguibile non ha risorse".into());
+    }
+    let root = img.off(img.base + rva).ok_or("sezione delle risorse non trovata")?;
+    // Le voci di una directory: (id o nome, offset dalla radice, è una sottodirectory).
+    let entries = |dir: usize| -> Result<Vec<(usize, usize, bool)>, &'static str> {
+        let n = u16_at(dir + 12)? + u16_at(dir + 14)?;
+        (0..n).map(|i| Ok((u32_at(dir + 16 + 8 * i)?, u32_at(dir + 20 + 8 * i)? & 0x7fff_ffff, u32_at(dir + 20 + 8 * i)? >> 31 == 1))).collect()
+    };
+    // I dati della prima lingua di una risorsa (tipo, id); senza id, la prima del tipo.
+    let find = |kind: usize, id: Option<usize>| -> Result<&[u8], Box<dyn std::error::Error>> {
+        let types = entries(root)?;
+        let t = types.iter().find(|e| e.0 == kind && e.2).ok_or("tipo di risorsa assente")?;
+        let names = entries(root + t.1)?;
+        let n = names.iter().find(|e| id.map_or(true, |id| e.0 == id) && e.2).ok_or("risorsa assente")?;
+        let lang = *entries(root + n.1)?.first().ok_or("risorsa senza lingue")?;
+        let (data_rva, size) = (u32_at(root + lang.1)? as u32, u32_at(root + lang.1 + 4)?);
+        let off = img.off(img.base + data_rva).ok_or("dati della risorsa fuori dalle sezioni")?;
+        Ok(d.get(off..off + size).ok_or("dati della risorsa troncati")?)
+    };
+    let group = find(14, None)?; // RT_GROUP_ICON
+    let count = u16::from_le_bytes([group[4], group[5]]) as usize;
+    let mut ico = Vec::from(&group[..6]);
+    let mut images = Vec::new();
+    let mut offset = 6 + 16 * count;
+    for i in 0..count {
+        let e = group.get(6 + 14 * i..20 + 14 * i).ok_or("gruppo di icone troncato")?;
+        let image = find(3, Some(u16::from_le_bytes([e[12], e[13]]) as usize))?; // RT_ICON
+        ico.extend_from_slice(&e[..8]);
+        ico.extend_from_slice(&(image.len() as u32).to_le_bytes());
+        ico.extend_from_slice(&(offset as u32).to_le_bytes());
+        offset += image.len();
+        images.push(image);
+    }
+    for image in images {
+        ico.extend_from_slice(image);
+    }
+    if let Some(dir) = std::path::Path::new(out).parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(out, &ico)?;
+    println!("icona               {count} immagini, {} byte, in {out}", ico.len());
     Ok(())
 }

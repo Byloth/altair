@@ -87,6 +87,8 @@ Come funziona:
   `opt/rust-win/sysroot` è una cartella di collegamenti che unisce quella e la toolchain di
   Linux (`RUSTFLAGS=--sysroot=…`). Il collegamento finale lo fa `tools/win-link.sh`: clang di
   Linux, `lld`, librerie di LLVM-MinGW, `libunwind` statica.
+- Per l'icona servono `llvm-rc` e `llvm-cvtres` (su Ubuntu arrivano con il pacchetto `llvm`,
+  qui già presenti in `/usr/bin`): compilano l'icona estratta in una risorsa da collegare.
 - `tools/build-win.sh` fa le due cose. Risultato: `build/win/altair_ac1.dll` (63 MB) e
   `target/x86_64-pc-windows-gnullvm/release/altair-run.exe` (74 MB), che dipendono solo da DLL
   di sistema.

@@ -359,3 +359,12 @@ Richiesta dell'utente mentre prova `tools/gioca.sh`.
 - Telecamera sbagliata del laboratorio: sparita dopo le correzioni x87/EFLAGS di oggi
   (utente su Windows, e otto clic qui su WSL). Restano da riprovare interferenze e
   inquadratura speciale → `domande-aperte.md`.
+- **Agganci** nel traduttore (`--hooks runtime/hooks.txt`, `altair_hook`, `hooks.rs`): una
+  funzione del gioco può essere osservata o sostituita dal runtime → `analisi/traduttore.md`.
+- Versione dell'Animus: con un aggancio su `0x8A1920` (costruzione delle stringhe
+  dell'interfaccia) ora il gioco mostra "Versione Animus 2.0.0-dev.1" → `analisi/runtime.md`.
+- Icona: `altair icon` la estrae dall'eseguibile originale, `build-win.sh` la collega.
+- Interferenze nel laboratorio: l'effetto gira solo al risveglio; i clip delle interferenze
+  non vengono mai costruiti. Serve un riscontro sull'originale → `domande-aperte.md`.
+- Segnalato dall'utente, da affrontare: folla del tutorial a 21-23 fotogrammi al secondo su
+  Windows.

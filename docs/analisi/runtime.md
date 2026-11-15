@@ -523,6 +523,35 @@ millisecondi e non in fotogrammi, non si accorciavano abbastanza (segnalato dall
 Lezione: prima di aggirare il gioco dall'esterno, cercare se ha già la funzione e manca solo
 il permesso.
 
+### Versione dell'Animus (2026-11-15)
+
+Richiesta dell'utente: la schermata dell'Animus dice "Versione Animus 1.28"; mostrare la
+nostra. `2.0.0α` non si può (i caratteri del gioco coprono solo Latin-1, `forge.md`), quindi
+`2.0.0-dev.1`.
+
+Il testo sta in `Animus_MGB`, dentro `DataPC_Present_Room.forge`, e una volta caricato vive in
+blocchi di heap su misura: non si può allungare sul posto (provato con `find`/`findhex`). Come
+si è trovato dove intervenire: un aggancio temporaneo su `memcpy` (`0xF9FB80`) che, quando i
+byte copiati contengono "1.28" in UTF-16, stampa gli indirizzi di codice sullo stack. La
+catena: il lettore dei dati dell'interfaccia (intorno a `0x892C40` e `0x892E80`) legge la
+lunghezza, alloca un buffer temporaneo, ci legge i caratteri e chiama **`0x8A1920`**
+(`cdecl`: stringa di uscita, testo UTF-16 terminato da zero), che costruisce la stringa vera.
+
+L'aggancio su `0x8A1920` (`hooks.rs`, `animus_version`) guarda il testo: se contiene "Animus"
+e finisce per "1.28", in qualunque lingua, ne scrive una copia con la versione nuova in una
+zona di memoria guest nostra e fa puntare lì l'argomento; la funzione prosegue e alloca la
+stringa della lunghezza giusta. Verificato: dieci stringhe "… Animus 2.0.0-dev.1" in memoria
+e la scritta a video nella schermata della cronologia (`run/scatti/elica-versione.png`).
+`ALTAIR_ANIMUS_VERSION` cambia il testo; vuota, lascia l'originale.
+
+### Icona (2026-11-15)
+
+`altair icon EXE --out build/win/altair.ico` estrae dall'eseguibile originale la prima icona
+di gruppo (`RT_GROUP_ICON` con le sue `RT_ICON`: 11 immagini). `tools/build-win.sh` la
+compila con `llvm-rc` e `llvm-cvtres` e `tools/win-link.sh` la collega in `altair-run.exe`
+come risorsa n. 1; `window.rs` la dà alla finestra e alla barra delle applicazioni. Come il C
+generato, l'icona è materiale derivato dal gioco e resta in `build/`. **Mai vista su Windows.**
+
 ## Windows nativo (2026-11-15)
 
 Lo stesso runtime gira su Windows, dove wgpu usa Vulkan o Direct3D 12 senza passaggi

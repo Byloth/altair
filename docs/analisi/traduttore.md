@@ -293,6 +293,25 @@ strutturati che il generatore non sa costruire; lo stack x87 parte sempre vuoto.
 `tools/difftrace.py <exe> 0xADDR <caso>` rigioca un caso sui due motori e mostra indirizzi
 eseguiti, registri e prime differenze di memoria.
 
+## Agganci (2026-11-15)
+
+Per osservare o cambiare il comportamento interno del gioco senza toccare il codice generato a
+mano. `altair image --hooks runtime/hooks.txt`: le funzioni elencate (un indirizzo per riga)
+cominciano con `if (altair_hook(c, indirizzo)) return;`. `altair_hook` (in `runtime/altair.c`)
+chiama la funzione che il runtime ha registrato con `altair_set_hook`; senza registrazione
+ritorna zero. Zero vuol dire "prosegui": l'aggancio ha solo guardato, o ha ritoccato gli
+argomenti sullo stack. Diverso da zero vuol dire "fatto io": l'aggancio deve aver lasciato
+registri e stack come dopo il `ret` della funzione.
+
+Lato runtime (`crates/runtime/src/hooks.rs`): ogni aggancio conta le chiamate (comando `hooks`
+del canale di comando), `ALTAIR_HOOK_LOG=N` scrive le prime N di ognuno con istante, `ecx`,
+tre argomenti, indirizzo di ritorno e thread; la tabella `REPLACEMENTS` associa un indirizzo a
+chi interviene. Cambiare l'elenco riscrive solo i file delle funzioni toccate: pochi secondi
+di ricompilazione. Costo a regime: una chiamata indiretta per ingresso nella funzione.
+
+Primo uso vero: la versione dell'Animus (`runtime.md`). Primo uso d'indagine: le interferenze
+(`domande-aperte.md`), con 47 agganci accesi e poi spenti.
+
 ## Limiti noti
 
 - Flag non confrontati direttamente dal test (solo attraverso i loro effetti).

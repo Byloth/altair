@@ -14,4 +14,6 @@ for a in "$@"; do
   [ "$a" = "-lunwind" ] && a="-l:libunwind.a"
   args+=("$a")
 done
+# Le risorse (l'icona), se tools/build-win.sh le ha preparate.
+[ -n "${ALTAIR_WIN_RES:-}" ] && [ -f "$ALTAIR_WIN_RES" ] && args+=("$ALTAIR_WIN_RES")
 exec clang --target=x86_64-w64-mingw32 --sysroot="$SYSROOT" -fuse-ld=lld -nodefaultlibs "${args[@]}" -l:libunwind.a "$BUILTINS" -lmingw32 -lmingwex -lucrt -lkernel32 "$BUILTINS" 2> >(grep -v "argument unused" >&2)

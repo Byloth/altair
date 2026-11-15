@@ -7,6 +7,7 @@ mod dsound;
 mod fs;
 mod animus_font;
 mod gfx;
+mod hooks;
 mod overlay;
 mod host;
 mod input;
@@ -78,6 +79,12 @@ fn run() -> Result<i32, String> {
     let mem_create: MemCreateFn = sym(lib, "altair_mem_create")?;
     let trail: win32::TrailFn = sym(lib, "altair_trail")?;
     let call: win32::CallFn = sym(lib, "altair_call_indirect")?;
+    // Agganci (hooks.rs): una libreria tradotta più vecchia può non averli.
+    type SetHookFn = unsafe extern "C" fn(unsafe extern "C" fn(*mut machine::Ctx, u32) -> i32);
+    match sym::<SetHookFn>(lib, "altair_set_hook") {
+        Ok(set_hook) => unsafe { set_hook(hooks::dispatch) },
+        Err(_) => eprintln!("[agganci] la libreria tradotta non li prevede: va rigenerata (tools/build-image.sh)"),
+    }
 
     let base = unsafe { mem_create() };
     if base.is_null() {
@@ -110,6 +117,7 @@ fn run() -> Result<i32, String> {
     mem.w32(PEB + 0x08, img.base);
 
     let mut rt = win32::Runtime::new(mem, &img, exe, trace);
+    hooks::set_scratch(rt.halloc(hooks::SCRATCH_SIZE, true));
     rt.setup_static_tls(&img, TEB);
     win32::install(rt, &img, altair_run, trail, call);
 
