@@ -6,9 +6,18 @@ mod d3d9;
 mod dsound;
 mod fs;
 mod gfx;
+mod host;
 mod input;
 mod machine;
+#[cfg(unix)]
 mod profile;
+/// Il profilatore a campionamento usa i segnali: esiste solo su Linux.
+#[cfg(not(unix))]
+mod profile {
+    pub fn watch_current_thread() {}
+    pub fn reset() {}
+    pub fn report() {}
+}
 mod sync;
 mod system;
 mod user32;
@@ -17,7 +26,7 @@ mod window;
 
 use altair_pe::{Image, AC1_DX9_STEAM_SHA1};
 use machine::{Ctx, Mem};
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::process::ExitCode;
 
 const USAGE: &str = "uso: altair-run <AssassinsCreed_Dx9.exe> --lib <libaltair_ac1-*.so> [--trace]
@@ -38,13 +47,12 @@ pub const PEB: u32 = 0x7ffd_f000;
 type RunFn = unsafe extern "C" fn(*mut Ctx, u32) -> i32;
 type MemCreateFn = unsafe extern "C" fn() -> *mut u8;
 
-fn sym<T: Copy>(lib: *mut libc::c_void, name: &str) -> Result<T, String> {
-    let c = CString::new(name).unwrap();
-    // SAFETY: `lib` è un handle valido di dlopen; il tipo T è quello dichiarato in altair.h.
-    let p = unsafe { libc::dlsym(lib, c.as_ptr()) };
+fn sym<T: Copy>(lib: &host::Library, name: &str) -> Result<T, String> {
+    let p = lib.symbol(name);
     if p.is_null() {
         return Err(format!("simbolo {name} non trovato nella libreria"));
     }
+    // SAFETY: il tipo T è quello dichiarato in altair.h per quel simbolo.
     Ok(unsafe { std::mem::transmute_copy(&p) })
 }
 
@@ -58,13 +66,8 @@ fn run() -> Result<i32, String> {
     if img.sha1() != AC1_DX9_STEAM_SHA1 {
         return Err("l'eseguibile non è AssassinsCreed_Dx9.exe della build Steam".into());
     }
-    let c_lib = CString::new(lib_path.as_str()).unwrap();
-    // SAFETY: carica la libreria generata da `altair image`.
-    let lib = unsafe { libc::dlopen(c_lib.as_ptr(), libc::RTLD_NOW) };
-    if lib.is_null() {
-        let err = unsafe { CStr::from_ptr(libc::dlerror()) }.to_string_lossy().into_owned();
-        return Err(format!("dlopen: {err}"));
-    }
+    // La libreria generata da `altair image`: un `.so` su Linux, una DLL su Windows.
+    let lib = &host::Library::open(lib_path)?;
     let altair_run: RunFn = sym(lib, "altair_run")?;
     let mem_create: MemCreateFn = sym(lib, "altair_mem_create")?;
     let trail: win32::TrailFn = sym(lib, "altair_trail")?;
@@ -146,31 +149,22 @@ static GUEST_BASE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsi
 /// successo invece di lasciare un core dump muto. `ALTAIR_NULL=0` toglie la protezione.
 fn guard_guest_memory(base: *mut u8) {
     GUEST_BASE.store(base as usize, std::sync::atomic::Ordering::Relaxed);
-    unsafe {
-        if !std::env::var("ALTAIR_NULL").is_ok_and(|v| v == "0") {
-            libc::mprotect(base.cast(), 0x1_0000, libc::PROT_NONE);
-        }
-        let mut action: libc::sigaction = std::mem::zeroed();
-        action.sa_sigaction = on_fault as *const () as usize;
-        action.sa_flags = libc::SA_SIGINFO;
-        libc::sigaction(libc::SIGSEGV, &action, std::ptr::null_mut());
-    }
+    host::guard(base, !std::env::var("ALTAIR_NULL").is_ok_and(|v| v == "0"), report_fault);
 }
 
-/// Gestore di SIGSEGV. Non è codice "sicuro per i segnali" (stampa, prende un lock), ma il
-/// processo sta morendo comunque e quello che stampa è l'unica traccia utile.
-extern "C" fn on_fault(_: libc::c_int, info: *mut libc::siginfo_t, _: *mut libc::c_void) {
-    let addr = unsafe { (*info).si_addr() } as usize;
+/// Stampa ciò che si sa di un accesso non valido; dopo, il processo esce con codice 3.
+fn report_fault(addr: usize) -> bool {
     let base = GUEST_BASE.load(std::sync::atomic::Ordering::Relaxed);
-    if base != 0 && (base..base + (1usize << 32)).contains(&addr) {
+    let guest = base != 0 && (base..base + (1usize << 32)).contains(&addr);
+    if guest {
         let guest = (addr - base) as u32;
         let thread = std::thread::current();
         eprintln!("\nACCESSO NON VALIDO alla memoria guest {guest:#010x}{} (thread {})", if guest < 0x1_0000 { ": puntatore nullo" } else { "" }, thread.name().unwrap_or("?"));
         eprintln!("  ultime funzioni guest chiamate per indirizzo, dalla più recente: {}", win32::trail_text());
     } else {
-        eprintln!("\nSIGSEGV fuori dalla memoria guest, all'indirizzo host {addr:#x}");
+        eprintln!("\nACCESSO NON VALIDO fuori dalla memoria guest, all'indirizzo host {addr:#x}");
     }
-    unsafe { libc::_exit(3) }
+    guest
 }
 
 pub fn trap_text(ctx: &Ctx) -> String {

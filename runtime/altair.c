@@ -1,9 +1,23 @@
 /* Runtime minimo per il codice generato: registro delle funzioni, trap, memoria guest. */
 #include "altair.h"
 
+#ifdef _WIN32
+/* Windows (clang in versione MinGW: è l'unica che dà un `long double` a 80 bit).
+   Il salto fuori dal codice guest usa le funzioni intrinseche del compilatore: `longjmp` del
+   sistema srotolerebbe lo stack con il meccanismo delle eccezioni, attraversando anche i frame
+   del runtime in Rust. */
+#include <windows.h>
+typedef void *AltairJmp[5];
+#define ALTAIR_SETJMP(b) __builtin_setjmp(b)
+#define ALTAIR_LONGJMP(b) __builtin_longjmp(b, 1)
+#else
 #include <setjmp.h>
 #include <sys/mman.h>
 #include <time.h>
+typedef jmp_buf AltairJmp;
+#define ALTAIR_SETJMP(b) setjmp(b)
+#define ALTAIR_LONGJMP(b) longjmp(b, 1)
+#endif
 
 #define GUEST_SPACE (1ull << 32)
 
@@ -48,7 +62,7 @@ void altair_call_indirect(Ctx *c, u32 addr) {
 _Noreturn void altair_trap(Ctx *c, const char *msg, u32 addr) {
     c->trap_msg = msg;
     c->trap_addr = addr;
-    longjmp(*(jmp_buf *)c->trap_jmp, 1);
+    ALTAIR_LONGJMP(*(AltairJmp *)c->trap_jmp);
 }
 
 /* MXCSR dell'host: durante l'esecuzione guest vale quello del guest, così arrotondamento,
@@ -80,7 +94,7 @@ void altair_set_mxcsr(Ctx *c, u32 v) {
 }
 
 int altair_run(Ctx *c, u32 addr) {
-    jmp_buf jb;
+    AltairJmp jb;
     void *outer = c->trap_jmp;
     volatile u32 saved = host_mxcsr();
     volatile u16 saved_cw = host_fpcw();
@@ -90,7 +104,7 @@ int altair_run(Ctx *c, u32 addr) {
         set_host_mxcsr(c->mxcsr | 0x1f80);
         set_host_fpcw((u16)(c->fpcw | 0x3f));
     }
-    int trapped = setjmp(jb);
+    int trapped = ALTAIR_SETJMP(jb);
     if (!trapped)
         altair_call_indirect(c, addr);
     c->trap_jmp = outer;
@@ -101,6 +115,28 @@ int altair_run(Ctx *c, u32 addr) {
     return trapped;
 }
 
+#ifdef _WIN32
+/* Su Linux le pagine si materializzano quando vengono toccate. Su Windows la memoria va
+   impegnata subito e tutta: una zona solo riservata darebbe errore alle funzioni di sistema
+   che ci scrivono dentro (una ReadFile in un buffer del gioco). Sono 4 GB di "commit", che non
+   occupano RAM finché non vengono usati ma devono stare nel limite di RAM più file di paging. */
+u8 *altair_mem_create(void) {
+    return VirtualAlloc(0, GUEST_SPACE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+}
+
+void altair_mem_destroy(u8 *mem) {
+    if (mem)
+        VirtualFree(mem, 0, MEM_RELEASE);
+}
+
+u64 altair_rdtsc(Ctx *c) {
+    (void)c;
+    LARGE_INTEGER now, freq;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&freq);
+    return (u64)((long double)now.QuadPart * 1000000000.0L / (long double)freq.QuadPart);
+}
+#else
 u8 *altair_mem_create(void) {
     void *p = mmap(0, GUEST_SPACE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     return p == MAP_FAILED ? 0 : p;
@@ -117,6 +153,7 @@ u64 altair_rdtsc(Ctx *c) {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (u64)ts.tv_sec * 1000000000ull + (u64)ts.tv_nsec;
 }
+#endif
 
 void altair_cpuid(Ctx *c) {
     u32 leaf = c->eax;

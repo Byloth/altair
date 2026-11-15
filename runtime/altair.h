@@ -64,6 +64,14 @@ struct Ctx {
 
 typedef void (*AltairFn)(Ctx *c);
 
+/* Le funzioni che il runtime cerca per nome nella libreria. In una DLL di Windows vanno
+   esportate una per una: le 117.000 funzioni tradotte non ci starebbero (limite di 65.535). */
+#ifdef _WIN32
+#define ALTAIR_API __declspec(dllexport)
+#else
+#define ALTAIR_API
+#endif
+
 /* Ogni funzione tradotta riceve `Ctx *ALTAIR_RESTRICT c`. Con `restrict` il compilatore sa che
    le scritture nella memoria guest (`c->mem`, un puntatore a byte che altrimenti può
    sovrapporsi a tutto) non toccano i registri in `*c`, e può tenerli nei registri host tra
@@ -83,13 +91,13 @@ typedef struct {
 extern const AltairEntry altair_functions[];
 extern const u32 altair_function_count;
 
-void altair_call_indirect(Ctx *c, u32 addr);
+ALTAIR_API void altair_call_indirect(Ctx *c, u32 addr);
 /* Copia in `out` le ultime destinazioni indirette del thread chiamante, dalla più recente. */
-int altair_trail(u32 *out, int max);
+ALTAIR_API int altair_trail(u32 *out, int max);
 _Noreturn void altair_trap(Ctx *c, const char *msg, u32 addr);
 /* Esegue la funzione guest `addr`. Ritorna 0, oppure 1 se è scattata una trap
  * (motivo in c->trap_msg, indirizzo in c->trap_addr). */
-int altair_run(Ctx *c, u32 addr);
+ALTAIR_API int altair_run(Ctx *c, u32 addr);
 /* Contatore di tempo a 1 GHz per `rdtsc`. */
 u64 altair_rdtsc(Ctx *c);
 /* `cpuid`: una CPU fissa di classe SSE3, uguale su ogni host. */
@@ -98,8 +106,8 @@ void altair_cpuid(Ctx *c);
 void altair_set_fpcw(Ctx *c, u32 v);
 /* `ldmxcsr`: aggiorna la parola di controllo del guest e quella dell'host. */
 void altair_set_mxcsr(Ctx *c, u32 v);
-u8 *altair_mem_create(void);
-void altair_mem_destroy(u8 *mem);
+ALTAIR_API u8 *altair_mem_create(void);
+ALTAIR_API void altair_mem_destroy(u8 *mem);
 
 static inline u8 rd8(Ctx *c, u32 a) { return c->mem[a]; }
 static inline u16 rd16(Ctx *c, u32 a) { u16 v; memcpy(&v, c->mem + a, 2); return v; }

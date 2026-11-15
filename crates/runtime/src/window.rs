@@ -129,7 +129,7 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => {
                 eprintln!("[finestra] chiusa dall'utente: esco");
                 // Uscita secca: smontare wgpu e la finestra da qui, con il gioco che gira, non serve.
-                unsafe { libc::_exit(0) }
+                crate::host::exit_now(0)
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 let PhysicalKey::Code(code) = event.physical_key else { return };

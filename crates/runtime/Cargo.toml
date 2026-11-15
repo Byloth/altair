@@ -10,10 +10,13 @@ path = "src/main.rs"
 
 [dependencies]
 altair-pe = { path = "../pe" }
-libc = "0.2"
 altair-shader = { path = "../shader" }
 altair-bink = { path = "../bink" }
 wgpu = "24"
 pollster = "0.4"
 png = "0.17"
 winit = "0.30"
+
+# Solo su Linux: memoria, segnali, caricamento di librerie (vedi src/host.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

@@ -292,3 +292,18 @@ Richiesta dell'utente mentre prova `tools/gioca.sh`.
   vertex e pixel shader in gruppi separati (nessun effetto sull'invio). Folla a 23 fps.
 - Su indicazione dell'utente `avvia.sh` torna a chiudere tutte le istanze all'avvio, e lo fa
   anche `gioca.sh`: una sola istanza alla volta.
+- `avvia.sh` e `gioca.sh`: una sola istanza alla volta (indicazione dell'utente).
+- **Porting su Windows.** In WSL non c'è un Vulkan diretto (la GPU è esposta solo come D3D12),
+  quindi la strada senza doppio salto è Windows. L'utente ha installato Rust e LLVM-MinGW su
+  Windows. Da WSL non posso eseguirli (interoperabilità spenta nel suo `wsl.conf`): compilo
+  per Windows da qui, con il clang di Linux e le librerie di LLVM-MinGW lette da `/mnt/c`.
+  - C generato → `build/win/altair_ac1.dll` in 65 s (`tools/build-image-win.sh`);
+    `runtime/altair.c` con `VirtualAlloc`, `QueryPerformanceCounter`, salti intrinseci.
+  - Runtime → `altair-run.exe` con il bersaglio `x86_64-pc-windows-gnullvm`. `rust-std` in
+    `opt/rust-win/` e sysroot di collegamenti:
+    `ln -s <toolchain Linux>/lib/* …`, `ln -s <rust-std estratto>/lib/rustlib/x86_64-pc-windows-gnullvm …`.
+    Due inciampi al collegamento: il clang di Linux aggiungeva `-lgcc` (serve
+    `-nodefaultlibs`) e l'eseguibile cercava `libunwind.dll` (ora statica).
+  - `host.rs`: lo strato Linux/Windows. Audio su `waveOut`.
+  - `tools/gioca.ps1` per lanciarlo. **Mai eseguito**: aspetto la prova dell'utente e il
+    registro in `run\win\log.txt` → `analisi/runtime.md`, `ambiente.md`.

@@ -366,7 +366,22 @@ impl Gfx {
         if let Some(s) = &surface {
             adapters.retain(|a| a.is_surface_supported(s));
         }
-        adapters.sort_by_key(|a| a.get_info().device_type == wgpu::DeviceType::Cpu);
+        // Prima una GPU vera; a parità, il backend chiesto con ALTAIR_BACKEND (vulkan, dx12,
+        // gl), altrimenti nell'ordine Vulkan, Direct3D 12, OpenGL. In WSL c'è solo OpenGL su
+        // GPU; su Windows gli altri due parlano al driver senza passaggi intermedi.
+        let wanted = std::env::var("ALTAIR_BACKEND").unwrap_or_default().to_ascii_lowercase();
+        let rank = |a: &wgpu::Adapter| {
+            let info = a.get_info();
+            let name = format!("{:?}", info.backend).to_ascii_lowercase();
+            let asked = !wanted.is_empty() && name.starts_with(&wanted);
+            let order = match info.backend {
+                wgpu::Backend::Vulkan => 0,
+                wgpu::Backend::Dx12 => 1,
+                _ => 2,
+            };
+            (!asked, info.device_type == wgpu::DeviceType::Cpu, info.device_type != wgpu::DeviceType::DiscreteGpu && info.backend != wgpu::Backend::Gl, order)
+        };
+        adapters.sort_by_key(rank);
         let adapter = adapters.into_iter().next()?;
         let info = adapter.get_info();
         eprintln!("[gfx] adattatore: {:?} | {} | {:?}", info.backend, info.name, info.device_type);

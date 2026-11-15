@@ -359,6 +359,48 @@ non si apre: in quel caso il runtime prosegue fuori schermo). Il gioco legge il 
 stato immediato `DIMOUSESTATE2` (20 byte) a ogni fotogramma, e all'avvio enumera gli oggetti
 dei dispositivi con `EnumObjects`: per il mouse elenchiamo tre assi e otto pulsanti.
 
+## Windows nativo (2026-11-15)
+
+Lo stesso runtime gira su Windows, dove wgpu usa Vulkan o Direct3D 12 senza passaggi
+intermedi (in WSL ogni draw attraversa OpenGL → Mesa → D3D12). **Compila e si collega; non è
+ancora stato eseguito**: da WSL non posso lanciare programmi di Windows.
+
+Ciò che cambia tra i due sistemi sta in `host.rs`:
+
+| | Linux | Windows |
+|---|---|---|
+| Libreria con il codice tradotto | `dlopen` di un `.so` | `LoadLibraryW` di una DLL |
+| Memoria guest (in `runtime/altair.c`) | `mmap` pigro di 4 GB | `VirtualAlloc` con 4 GB impegnati subito (vedi sotto) |
+| Pagina zero e accessi non validi | `mprotect` + `SIGSEGV` | `VirtualProtect` + gestore vettoriale delle eccezioni |
+| Uscita dal codice guest | `setjmp`/`longjmp` | `__builtin_setjmp`/`__builtin_longjmp` |
+| Uscita audio | PulseAudio (`libpulse-simple`) | `waveOut` (`winmm`) |
+| Profilatore a campionamento | segnali | assente |
+
+Scelte da ricordare:
+
+- **4 GB impegnati.** Su Linux le pagine nascono quando si toccano. Su Windows una zona solo
+  riservata farebbe fallire le funzioni di sistema che ci scrivono (una lettura da file in un
+  buffer del gioco), quindi la si impegna tutta: non occupa RAM finché non serve, ma conta nel
+  limite di RAM più file di paging.
+- **Niente `longjmp` di sistema.** Su Windows a 64 bit srotolerebbe lo stack con il meccanismo
+  delle eccezioni, attraversando i frame in Rust; le funzioni intrinseche del compilatore
+  ripristinano solo i registri.
+- **Esportazioni.** Una DLL non può esportare più di 65.535 simboli e le funzioni tradotte
+  sono 117.000: si esportano solo le cinque che il runtime cerca (`ALTAIR_API`).
+- Il gestore delle eccezioni si occupa solo degli accessi alla memoria guest; gli altri li
+  lascia a chi di dovere (un driver può gestire i suoi).
+- Scelta dell'adattatore: `ALTAIR_BACKEND=vulkan|dx12|gl`; senza, Vulkan, poi Direct3D 12.
+
+```sh
+tools/build-win.sh                                             # da WSL
+```
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\gioca.ps1      # da Windows, nella cartella del progetto
+```
+
+`gioca.ps1` apre la finestra e scrive il registro in `run\win\log.txt`, leggibile anche da
+WSL: è il modo in cui si diagnostica ciò che su Windows non va. Come compilare: `ambiente.md`.
+
 ## Cosa ha insegnato
 
 - **Una funzione che la scoperta non vedeva.** La prima chiamata indiretta fallita è stata verso

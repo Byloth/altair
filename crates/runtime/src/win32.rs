@@ -662,8 +662,7 @@ fn virtual_alloc(rt: &mut Runtime, c: &mut Call) -> u32 {
 fn virtual_free(rt: &mut Runtime, c: &mut Call) -> u32 {
     if c.arg(2) & 0x8000 != 0 {
         if let Some(size) = rt.regions.remove(&c.arg(0)) {
-            // SAFETY: la zona appartiene allo spazio guest; MADV_DONTNEED la riporta a zero.
-            unsafe { libc::madvise(rt.mem.ptr(c.arg(0)) as *mut libc::c_void, size as usize, libc::MADV_DONTNEED) };
+            crate::host::discard(rt.mem.ptr(c.arg(0)), size as usize);
         }
     }
     1

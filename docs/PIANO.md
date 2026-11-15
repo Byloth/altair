@@ -192,6 +192,9 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 - [x] Invio alla GPU su un thread a parte e registrazione dei draw più leggera: laboratorio
   106 fps, elica del DNA 64, folla 23 (erano 55, 30 e 12) → `analisi/d3d9.md`
 - [x] Profilatore a campionamento nel runtime (`ALTAIR_PROFILE=1`)
+- [x] Runtime portato su Windows (`host.rs`, `tools/build-win.sh`, `tools/gioca.ps1`): compila
+  e si collega da WSL
+- [ ] Windows nativo: **prima esecuzione** (serve l'utente), poi misure con Vulkan e D3D12
 - [ ] Folla: il costo per draw resta nel driver OpenGL-su-D3D12 di WSL; da rimisurare con
   Vulkan o D3D12 nativi. Leve rimaste: costanti legate una volta sola, registrazione dei draw
 - [x] Canale di comando per pilotare il gioco mentre gira (`ALTAIR_CTL`, `tools/avvia.sh`, `tools/ctl.sh`)

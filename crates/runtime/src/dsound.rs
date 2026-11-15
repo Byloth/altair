@@ -52,52 +52,9 @@ impl Buffer {
 
 // --- mixer ----------------------------------------------------------------------------------
 
-const RATE: u32 = 48_000;
+const RATE: u32 = crate::host::AUDIO_RATE;
 /// Fotogrammi per giro del mixer: 10 ms.
 const TICK: usize = 480;
-
-/// `libpulse-simple` caricata con `dlopen`: bastano tre funzioni.
-struct Pulse {
-    handle: *mut libc::c_void,
-    write: unsafe extern "C" fn(*mut libc::c_void, *const u8, usize, *mut i32) -> i32,
-}
-
-impl Pulse {
-    fn open() -> Option<Pulse> {
-        if std::env::var("ALTAIR_AUDIO").is_ok_and(|v| v == "0") {
-            return None;
-        }
-        unsafe {
-            let lib = libc::dlopen(c"libpulse-simple.so.0".as_ptr(), libc::RTLD_NOW);
-            if lib.is_null() {
-                eprintln!("[audio] libpulse-simple non trovata: mixer muto");
-                return None;
-            }
-            let new = libc::dlsym(lib, c"pa_simple_new".as_ptr());
-            let write = libc::dlsym(lib, c"pa_simple_write".as_ptr());
-            if new.is_null() || write.is_null() {
-                return None;
-            }
-            type New = unsafe extern "C" fn(*const i8, *const i8, i32, *const i8, *const i8, *const u32, *const u8, *const u32, *mut i32) -> *mut libc::c_void;
-            let new: New = std::mem::transmute(new);
-            // pa_sample_spec { format, rate, channels }: S16LE (3), 48 kHz, stereo.
-            let spec = [3u32, RATE, 2];
-            // pa_buffer_attr { maxlength, tlength, prebuf, minreq, fragsize }. La coda è lunga
-            // (`ALTAIR_AUDIO_MS`, 200 ms): con 60 ms il sink di WSLg rallenta fino a un quinto
-            // del tempo reale, per tutti i programmi.
-            let ms = std::env::var("ALTAIR_AUDIO_MS").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(200).clamp(20, 2000);
-            let attr = [u32::MAX, RATE * 4 / 1000 * ms, u32::MAX, u32::MAX, u32::MAX];
-            let mut err = 0;
-            let handle = new(std::ptr::null(), c"altair".as_ptr(), 1, std::ptr::null(), c"Assassin's Creed".as_ptr(), spec.as_ptr(), std::ptr::null(), attr.as_ptr(), &mut err);
-            if handle.is_null() {
-                eprintln!("[audio] PulseAudio non raggiungibile (errore {err}): mixer muto");
-                return None;
-            }
-            eprintln!("[audio] uscita su PulseAudio, 48 kHz stereo");
-            Some(Pulse { handle, write: std::mem::transmute::<*mut libc::c_void, unsafe extern "C" fn(*mut libc::c_void, *const u8, usize, *mut i32) -> i32>(write) })
-        }
-    }
-}
 
 /// Guadagno lineare da un'attenuazione DirectSound in centesimi di decibel (0 … -10000).
 fn gain(hundredths_db: i32) -> f32 {
@@ -253,10 +210,12 @@ fn mixer_thread(mem: crate::machine::Mem) {
     // WSLg capita) si perde del suono, ma i cursori, e con loro il gioco, non rallentano.
     let (tx, rx) = std::sync::mpsc::sync_channel::<[u8; 4 * TICK]>(6);
     let _ = std::thread::Builder::new().name("audio-out".into()).spawn(move || {
-        let Some(p) = Pulse::open() else { return };
+        if std::env::var("ALTAIR_AUDIO").is_ok_and(|v| v == "0") {
+            return;
+        }
+        let Some(mut out) = crate::host::AudioOut::open() else { return };
         for chunk in rx {
-            let mut err = 0;
-            unsafe { (p.write)(p.handle, chunk.as_ptr(), chunk.len(), &mut err) };
+            out.write(&chunk);
         }
     });
     let mut dropped = 0u64;

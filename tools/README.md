@@ -193,3 +193,21 @@ cargo build --release -p altair-bink
 python3 -I tools/binktest.py "$AC1/videos"                       # tutti i filmati, video e audio
 python3 -I tools/binktest.py "$AC1/videos/UBI_LOGO.bik" --solo-video --fotogrammi 50
 ```
+
+## `build-win.sh`, `build-image-win.sh`, `win-link.sh`, `gioca.ps1`
+
+Windows nativo. I primi tre girano in WSL e compilano per Windows (vedi `docs/ambiente.md`):
+
+```sh
+tools/build-win.sh     # build/win/altair_ac1.dll + target/x86_64-pc-windows-gnullvm/release/altair-run.exe
+```
+
+`build-image-win.sh` compila il C generato come DLL, `win-link.sh` è il linker che cargo usa
+per l'eseguibile. `gioca.ps1` si lancia da PowerShell su Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\gioca.ps1 [-Backend vulkan|dx12] [-SenzaAudio] [-SenzaVideo]
+```
+
+Chiude le istanze già aperte, avvia il gioco in finestra e lascia il registro in
+`run\win\log.txt`.

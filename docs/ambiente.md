@@ -61,3 +61,37 @@ Lo script sposta la cartella (con `ref/`, `opt/`, `private/`, `build/`), copia c
 memoria di Claude Code sotto il nuovo percorso (`~/.claude/projects/<percorso con i trattini>`),
 ricrea il venv, che contiene percorsi assoluti, e ricompila. Gli originali delle conversazioni
 restano al vecchio posto come copia di sicurezza.
+
+## Compilare per Windows da WSL (2026-11-15)
+
+Il runtime e il gioco tradotto si compilano per Windows **da WSL**, senza eseguire nulla di
+Windows (nel `wsl.conf` dell'utente l'interoperabilità è spenta e i file sotto `/mnt/c` non
+sono eseguibili: scelta rispettata).
+
+Cosa serve:
+
+| Cosa | Dove | Chi l'ha messo |
+|---|---|---|
+| LLVM-MinGW (UCRT) | Windows, `winget install MartinStorsjo.LLVM-MinGW.UCRT` | utente |
+| Rust su Windows (`rustup`, toolchain GNU) | Windows | utente; **oggi non serve**, vedi sotto |
+| `rust-std` 1.100.0 per `x86_64-pc-windows-gnullvm` | `opt/rust-win/` (ignorata da git) | scaricato da `static.rust-lang.org`, SHA-256 `5e63b95c…4384cf` verificato |
+
+Come funziona:
+
+- **Il C generato** lo compila il clang di Linux con `--target=x86_64-w64-mingw32` e, come
+  libreria di sistema, la cartella di LLVM-MinGW letta da `/mnt/c` (`tools/build-image-win.sh`).
+  Serve la variante MinGW e non quella di Visual Studio perché solo lì `long double` è a 80 bit
+  (verificato: `sizeof(long double)` = 16), come vuole l'emulazione dell'x87.
+- **Il runtime in Rust** si compila con il bersaglio `x86_64-pc-windows-gnullvm`. La sua
+  libreria standard non è nell'installazione di Rust dell'utente: sta in `opt/rust-win/`, e
+  `opt/rust-win/sysroot` è una cartella di collegamenti che unisce quella e la toolchain di
+  Linux (`RUSTFLAGS=--sysroot=…`). Il collegamento finale lo fa `tools/win-link.sh`: clang di
+  Linux, `lld`, librerie di LLVM-MinGW, `libunwind` statica.
+- `tools/build-win.sh` fa le due cose. Risultato: `build/win/altair_ac1.dll` (63 MB) e
+  `target/x86_64-pc-windows-gnullvm/release/altair-run.exe` (74 MB), che dipendono solo da DLL
+  di sistema.
+
+Per rifare `opt/rust-win/sysroot` dopo un aggiornamento di Rust: scaricare il `rust-std` della
+stessa versione di `rustc --version`, e ricreare i collegamenti (comandi nel diario del
+2026-11-15). Il Rust installato su Windows resta utile per compilare lì, ma questa strada non
+lo usa.
