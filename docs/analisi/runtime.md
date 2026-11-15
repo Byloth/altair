@@ -318,6 +318,64 @@ thread audio aspetta i lock del gioco stesso); a regime, nel menu e nel laborato
 Il mixer ora li conta: stampa "N ms di flussi suonati da zone non riscritte in tempo" ogni
 5 secondi in cui capita. **Da riascoltare su Windows.**
 
+### Il suono che gracchia, la causa vera: `floor(11,5) = 12` (2026-11-15)
+
+La correzione qui sopra era reale ma non era quella: su Windows il registro non mostrava quasi
+più ritardi e il suono gracchiava lo stesso. L'utente ha dato l'indizio giusto: gracchiano
+**solo la musica del menu e le voci**, non l'ambiente, non i caricamenti, non i filmati.
+
+Musica e voci sono **Ogg Vorbis**, decodificate da una libvorbis compilata dentro il gioco;
+gli altri suoni no. La catena, risalita all'indietro dal buffer DirectSound (tutto verificato
+qui, con sonde temporanee nel C generato e con `ALTAIR_AUDIO_TRAP`):
+
+| Stadio | Indirizzo | Esito |
+|---|---|---|
+| Buffer di miscelazione DirectSound (stereo 48 kHz, 37.888 byte) | oggetto `0x10013750` | fotogrammi alterni di due segnali diversi, picchi |
+| Conversione float → int16 di DARE (`cvttps2pi`…) | `0x8383A0` | tradotta bene; riceve float già guasti |
+| `vorbis_synthesis_blockin`, somma con sovrapposizione | `0x83FF10` | tradotta bene; sorgente già guasta |
+| `vorbis_synthesis` | `0x841590` | |
+| `mapping0_inverse` (tabella `0x1927740`) | `0x851A60` | sano dopo residui, accoppiamento stereo e curva; **guasto dopo la MDCT** |
+| `mdct_backward` | `0x84ECB0` | identica all'originale se provata da sola |
+| `mdct_bitreverse` | `0x84EB40` | legge fuori dal buffer |
+| `mdct_init` | intorno a `0x84F2D8` | **`log2n = 12` per n = 2048** (giusto: 11); per n = 256 dà 8, giusto |
+
+`mdct_init` calcola `log2n = (int)floor(log(n)/log(2) + 0,5)`. Per n = 2048 è `floor(11,5)`, e
+il `floor` del CRT tradotto restituiva 12: `frndint` ignorava la modalità di arrotondamento
+(dettagli in `traduttore.md`, "Cosa ha trovato il test", punto 7). Per n = 256, `floor(8,5)`
+dava 8 solo perché l'arrotondamento al più vicino manda i mezzi al pari. Con `log2n` sbagliato
+la tabella di inversione dei bit contiene indici fino a 2046 invece che fino a 1022: la MDCT
+dei blocchi lunghi legge memoria oltre il proprio buffer e la mescola al segnale. Per questo
+sotto si sentiva il suono giusto, e per questo l'originale in Unicorn con le stesse tabelle
+dava lo stesso risultato del tradotto (stessa memoria vicina) ma non quello del gioco.
+
+Due cose in più, emerse per strada:
+
+- Il gioco finiva nel ramo x87 di `floor` solo perché il CRT credeva che la CPU non avesse
+  SSE2 (bit ID di EFLAGS perso, punto 8 dello stesso elenco). Su un PC vero prende il ramo
+  SSE2. Corretto anche questo: ora la causa è tolta due volte.
+- DARE sceglie tra due implementazioni delle farfalle della MDCT (`0x84E960` e `0x84EA30`)
+  secondo la variabile `0x1A19ECC`, impostata all'avvio da `0x81A250` (rilevamento della CPU;
+  nel gioco vale 1). Tutte e due provate con dati veri: identiche all'originale.
+
+Verifica dopo la correzione, sul buffer di miscelazione nel menu principale (70 s, campioni
+sopra 300 in valore assoluto): la differenza media tra fotogrammi consecutivi è 27,7 e quella
+a distanza due 53,7, come in un segnale continuo; prima era il contrario (la distanza due era
+molto più piccola: due segnali intercalati). Nessun campione saturato, massimo 7.076.
+**Da riascoltare su Windows.**
+
+Lezione: **una funzione identica all'originale in isolamento può essere guasta nel gioco se le
+sue tabelle sono nate male.** Il confronto va fatto con lo stato del gioco, non con ingressi
+inventati; qui è servito salvare ingresso e uscita di 600 chiamate vere e rieseguirle
+sull'originale. Un dato salvato per la prova (`private/audio/mdct-2048.raw`) resta fuori da git.
+
+Strumenti nati dall'indagine, tutti spenti di norma:
+
+- `ALTAIR_AUDIO_LOG=1` ora salva anche ciò che il gioco scrive nei buffer in flusso, in
+  `run/ctl/flusso-<oggetto>.raw`, e stampa formato e flag di ogni `CreateSoundBuffer`;
+- `ALTAIR_AUDIO_TRAP=N` (Linux): all'N-esimo `Lock` del buffer di miscelazione la zona diventa
+  di sola lettura; con `ALTAIR_TRAP_CONTINUE=1` il gestore degli accessi non validi nomina la
+  funzione tradotta che ci scrive (`dladdr`) e lascia proseguire.
+
 ## Video Bink
 
 `bink.rs`. Il gioco importa 15 funzioni di `binkw32.dll` e riproduce cinque filmati da

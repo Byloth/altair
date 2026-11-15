@@ -32,8 +32,25 @@ static inline void wrf64(Ctx *c, u32 a, double v) { memcpy(c->mem + a, &v, 8); }
 
 /* Conversione a intero come `fistp` (arrotondamento della parola di controllo) o `fisttp`
  * (troncamento). Fuori intervallo o NaN: l'"intero indefinito", il minimo negativo. */
-static inline u64 x87_toi(f80 x, int bits, int trunc) {
-    f80 r = trunc ? truncl(x) : rintl(x);
+/* Arrotondamento a intero secondo il campo RC della parola di controllo del guest (`frndint`,
+ * `fist`). Niente `rintl`: quando l'operando nasce da un double il compilatore lo riduce a
+ * `rint`, che arrotonda secondo MXCSR e ignora la modalità x87; il `floor` del CRT (che mette
+ * RC verso il basso e poi usa `frndint`) restituiva così 12 per 11,5. `floorl`, `ceill` e
+ * `truncl` non dipendono dalla modalità. */
+static inline f80 x87_rnd(Ctx *c, f80 x) {
+    switch ((c->fpcw >> 10) & 3) {
+    case 1: return floorl(x);
+    case 2: return ceill(x);
+    case 3: return truncl(x);
+    }
+    if (!(x == x) || x - x != 0) return x; /* NaN e infiniti */
+    f80 r = floorl(x), d = x - r;
+    if (d > 0.5L || (d == 0.5L && fmodl(r, 2.0L) != 0)) r += 1.0L;
+    return r == 0 ? copysignl(r, x) : r;
+}
+
+static inline u64 x87_toi(Ctx *c, f80 x, int bits, int trunc) {
+    f80 r = trunc ? truncl(x) : x87_rnd(c, x);
     f80 lim = bits == 16 ? 32768.0L : bits == 32 ? 2147483648.0L : 9223372036854775808.0L;
     if (!(r >= -lim && r < lim))
         return 1ull << (bits - 1);

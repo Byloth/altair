@@ -60,6 +60,7 @@ struct Ctx {
     u32 fptop;
     u32 fpcw;      /* parola di controllo x87 del guest; Windows parte da 0x027f */
     u32 fpsw;      /* solo i codici di condizione C0-C3 */
+    u32 eflags_id; /* bit ID di EFLAGS (21): il guest lo inverte per sapere se esiste `cpuid` */
 };
 
 typedef void (*AltairFn)(Ctx *c);
@@ -130,10 +131,10 @@ _Static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "serve un host little-
 #define MP(T, a) ((T *)(c->mem + (u32)(a)))
 
 /* Registro EFLAGS ricostruito dalle variabili locali (bit 1 sempre a 1). */
-#define EFLAGS() (cf | 2u | (pf << 2) | (af << 4) | (zf << 6) | (sf << 7) | (c->df << 10) | (of << 11))
+#define EFLAGS() (cf | 2u | (pf << 2) | (af << 4) | (zf << 6) | (sf << 7) | (c->df << 10) | (of << 11) | (c->eflags_id << 21))
 #define SET_EFLAGS(v) \
     cf = (v) & 1; pf = ((v) >> 2) & 1; af = ((v) >> 4) & 1; zf = ((v) >> 6) & 1; sf = ((v) >> 7) & 1; \
-    c->df = ((v) >> 10) & 1; of = ((v) >> 11) & 1;
+    c->df = ((v) >> 10) & 1; of = ((v) >> 11) & 1; c->eflags_id = ((v) >> 21) & 1;
 
 /* Flag: variabili locali `cf zf sf of pf af` della funzione generata, sempre 0 o 1. */
 #define F_ZSP(r, bits) \

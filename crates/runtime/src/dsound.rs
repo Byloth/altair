@@ -39,6 +39,8 @@ pub struct Buffer {
     /// Per ogni trentaduesimo del buffer, se è stato scritto dopo l'ultima volta che il mixer
     /// l'ha suonato; il trentaduesimo in cui sta il cursore e se è "vecchio"; se il gioco
     /// riempie il buffer mentre suona (un flusso). Servono a contare i ritardi del gioco.
+    /// Ultima zona data al gioco con `Lock` (offset, byte), per `ALTAIR_AUDIO_LOG`.
+    locked: (u32, u32),
     fresh: [bool; 32],
     at: (usize, bool),
     streamed: bool,
@@ -333,12 +335,16 @@ fn ds_create_sound_buffer(rt: &mut Runtime, c: &mut Call) -> u32 {
     let bytes_per_sec = u32::from_le_bytes(format[8..12].try_into().unwrap());
     let rate = u32::from_le_bytes(format[4..8].try_into().unwrap());
     let primary = flags & 1 != 0;
+    if audio_log() {
+        let raw = if wfx != 0 { rt.mem.bytes(wfx, 40).iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ") } else { "(nessun formato)".into() };
+        eprintln!("[audio] CreateSoundBuffer flag {flags:#x}, {size} byte, formato: {raw}");
+    }
     let data = if size > 0 { rt.halloc(size, true) } else { 0 };
     let obj = com::create(rt, "IDirectSoundBuffer8", BUFFER, 0);
     if rt.trace {
         eprintln!("    buffer audio {obj:#x}: {size} byte, {rate} Hz, flag {flags:#x}{}", if primary { " (primario)" } else { "" });
     }
-    buffers().insert(obj, Buffer { data, size, format, bytes_per_sec, cursor: 0.0, playing: false, looping: false, volume: 0, pan: 0, frequency: rate, primary, fresh: [true; 32], at: (usize::MAX, false), streamed: false });
+    buffers().insert(obj, Buffer { data, size, format, bytes_per_sec, cursor: 0.0, playing: false, looping: false, volume: 0, pan: 0, frequency: rate, primary, locked: (0, 0), fresh: [true; 32], at: (usize::MAX, false), streamed: false });
     rt.mem.w32(c.arg(2), obj);
     0
 }
@@ -347,7 +353,7 @@ fn ds_duplicate(rt: &mut Runtime, c: &mut Call) -> u32 {
     let copy = {
         let all = buffers();
         let Some(src) = all.get(&c.arg(1)) else { return 0x8007_0057 };
-        Buffer { playing: false, cursor: 0.0, fresh: [true; 32], at: (usize::MAX, false), streamed: false, ..Buffer { format: src.format, ..*src } }
+        Buffer { playing: false, cursor: 0.0, locked: (0, 0), fresh: [true; 32], at: (usize::MAX, false), streamed: false, ..Buffer { format: src.format, ..*src } }
     };
     let obj = com::create(rt, "IDirectSoundBuffer8", BUFFER, 0);
     buffers().insert(obj, copy);
@@ -489,6 +495,18 @@ fn buf_lock(c: &mut Call) -> u32 {
     // Segna quando ogni zona è stata scritta: il mixer se ne serve per accorgersi di quando suona
     // dati vecchi di un giro.
     b.streamed |= b.playing;
+    b.locked = (offset, bytes);
+    // Indagine (`ALTAIR_AUDIO_TRAP=N`, solo Linux): all'N-esimo riempimento del buffer di
+    // miscelazione del gioco la zona diventa di sola lettura, e chi ci scrive viene nominato.
+    #[cfg(unix)]
+    if b.playing && b.size == 37888 {
+        static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if std::env::var("ALTAIR_AUDIO_TRAP").ok().and_then(|v| v.parse::<u64>().ok()) == Some(n) {
+            eprintln!("[audio] trappola di scrittura su {:#x}, {bytes} byte", data + offset);
+            crate::host::write_trap(c.mem.ptr(data + offset), bytes as usize);
+        }
+    }
     let (first_chunk, chunks) = (offset as u64 * 32 / size as u64, (bytes as u64 * 32).div_ceil(size as u64).min(32));
     for k in 0..chunks {
         b.fresh[((first_chunk + k) % 32) as usize] = true;
@@ -545,6 +563,9 @@ fn buf_set_current_position(c: &mut Call) -> u32 {
 }
 fn buf_set_format(c: &mut Call) -> u32 {
     let f: [u8; 18] = c.mem.bytes(c.arg(1), 18).try_into().unwrap();
+    if audio_log() {
+        eprintln!("[audio] {:#x} SetFormat: {}", c.arg(0), c.mem.bytes(c.arg(1), 40).iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" "));
+    }
     if let Some(mut b) = buf(c) {
         b.format = f;
         b.bytes_per_sec = u32::from_le_bytes(f[8..12].try_into().unwrap());
@@ -585,6 +606,27 @@ fn free_ok(_: &mut Call) -> u32 {
     0
 }
 
+/// `Unlock`. Con `ALTAIR_AUDIO_LOG=1` accoda ciò che il gioco ha appena scritto in un flusso a
+/// `run/ctl/flusso-<buffer>.raw` (campioni così come sono): serve a guardare la forma d'onda
+/// che esce dal decodificatore del gioco, prima del nostro mixer.
+fn buf_unlock(c: &mut Call) -> u32 {
+    if audio_log() {
+        if let Some(b) = buf(c) {
+            if b.streamed {
+                let (offset, bytes) = b.locked;
+                let first = bytes.min(b.size - offset);
+                let mut data = c.mem.bytes(b.data + offset, first).to_vec();
+                data.extend_from_slice(c.mem.bytes(b.data, bytes - first));
+                let path = format!("run/ctl/flusso-{:x}.raw", c.arg(0));
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                    let _ = std::io::Write::write_all(&mut f, &data);
+                }
+            }
+        }
+    }
+    0
+}
+
 static BUFFER: &[Method] = &[
     ("QueryInterface", 3, Some(L(buf_query_interface))),
     ("AddRef", 1, Some(L(com::add_ref))),
@@ -605,7 +647,7 @@ static BUFFER: &[Method] = &[
     ("SetPan", 2, Some(F(buf_set_pan))),
     ("SetFrequency", 2, Some(F(buf_set_frequency))),
     ("Stop", 1, Some(F(buf_stop))),
-    ("Unlock", 5, Some(F(free_ok))),
+    ("Unlock", 5, Some(F(buf_unlock))),
     ("Restore", 1, Some(F(free_ok))),
     ("SetFX", 4, Some(F(free_ok))),
     ("AcquireResources", 4, Some(F(free_ok))),

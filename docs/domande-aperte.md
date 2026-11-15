@@ -3,6 +3,18 @@
 Quando una domanda trova risposta, sposta la risposta nel file di analisi giusto e
 sostituisci qui la voce con un rimando.
 
+## Funzioni di sviluppo rimaste nel binario (2026-11-15)
+
+Ricognizione in `analisi/funzioni-nascoste.md`. Restano da capire:
+
+1. Chi legge il byte `+0x92` delle impostazioni del motore (`[0x1A0F058]`), cioè se esiste
+   ancora codice che disegna l'indicatore di FPS di sviluppo.
+2. Se `QuickTeleportHandler`, la telecamera di debug e le statistiche del profiler hanno
+   codice raggiungibile e dati nei `.forge`.
+3. Se la telecamera "troppo vicina" segnalata su Windows dipendeva da `frndint`/`fistp` che
+   ignoravano l'arrotondamento x87 (corretto oggi, `traduttore.md` punto 7): da riprovare
+   prima di indagare oltre.
+
 ## Fase 0: binario
 
 - [x] ~~Steam e Ubisoft Connect coincidono indirizzo per indirizzo?~~ **Sì, quasi certamente**:

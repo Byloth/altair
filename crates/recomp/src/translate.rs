@@ -912,7 +912,7 @@ impl Emitter<'_> {
                 return Err(format!("{m:?} con operando di {msize} byte"));
             }
             Ok(format!(
-                "wr{n}(c, {}, (u{n})x87_toi(ST(0), {n}, {}));{}",
+                "wr{n}(c, {}, (u{n})x87_toi(c, ST(0), {n}, {}));{}",
                 ea(ins)?,
                 trunc as u32,
                 if pop { " fpop(c);" } else { "" }
@@ -980,7 +980,7 @@ impl Emitter<'_> {
             Fchs => Ok("ST(0) = -ST(0);".into()),
             Fabs => unary("fabsl"),
             Fsqrt => unary("sqrtl"),
-            Frndint => unary("rintl"),
+            Frndint => Ok("ST(0) = x87_rnd(c, ST(0));".into()),
             Fsin => unary("sinl"),
             Fcos => unary("cosl"),
             Fsincos => Ok("{ f80 v = ST(0); ST(0) = sinl(v); fpush(c, cosl(v)); c->fpsw &= ~0x400u; }".into()),

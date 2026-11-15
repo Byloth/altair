@@ -50,7 +50,7 @@ Ctx._fields_ = [(r, ctypes.c_uint32) for r in ('eax', 'ecx', 'edx', 'ebx', 'esp'
     ('mem', ctypes.c_void_p), ('host_call', HOST_CALL), ('trap_jmp', ctypes.c_void_p),
     ('trap_msg', ctypes.c_char_p), ('trap_addr', ctypes.c_uint32), ('mxcsr', ctypes.c_uint32),
     ('xmm', ctypes.c_uint8 * 128), ('fpr', ctypes.c_longdouble * 8), ('fptop', ctypes.c_uint32),
-    ('fpcw', ctypes.c_uint32), ('fpsw', ctypes.c_uint32)]
+    ('fpcw', ctypes.c_uint32), ('fpsw', ctypes.c_uint32), ('eflags_id', ctypes.c_uint32)]
 
 
 class Native:
@@ -244,7 +244,28 @@ def sc_memcpy(g, rng):
             g.call(MEMCPY, [buf + d, buf + s, n])
 
 
-SCENARIOS = [('strlen', sc_strlen, [STRLEN]), ('strcmp', sc_strcmp, [STRCMP]), ('memcpy', sc_memcpy, [MEMCPY])]
+def sc_floor(g, rng):
+    """`floor` del CRT, ramo x87: mette RC verso il basso con `fldcw` e arrotonda con `frndint`.
+    I mezzi interi distinguono la modalità giusta dall'arrotondamento al più vicino."""
+    values = [11.5, 8.5, 2.5, 3.5, -2.5, -3.5, 0.5, -0.5, 0.0, -0.0, 11.4999, 1e10 + 0.5, 4503599627370497.0, 1e300,
+              float('inf'), float('-inf')]
+    values += [rng.uniform(-1e6, 1e6) for _ in range(200)] + [rng.randrange(-1000, 1000) + 0.5 for _ in range(100)]
+    for v in values:
+        lo, hi = struct.unpack('<II', struct.pack('<d', v))
+        g.call(FLOOR, [lo, hi])
+
+
+def sc_cpuid(g, rng):
+    """Il CRT decide se usare SSE2: inverte il bit ID di EFLAGS (`pushfd`/`popfd`), poi `cpuid`."""
+    # Si confronta solo il verdetto: negli altri registri e sullo stack restano i bit di `cpuid`, che tra la CPU
+    # emulata da Unicorn e quella dichiarata dal runtime sono diversi per forza.
+    g.log.append(('sse2', g.e.call(SSE2_AVAILABLE, []).eax))
+    g.write(STACK_TOP - STACK_CLEAR, bytes(STACK_CLEAR))    # i bit di `cpuid` restano anche sullo stack
+
+
+FLOOR, SSE2_AVAILABLE = 0x00FA1120, 0x00FCA495
+SCENARIOS = [('strlen', sc_strlen, [STRLEN]), ('strcmp', sc_strcmp, [STRCMP]), ('memcpy', sc_memcpy, [MEMCPY]),
+             ('floor', sc_floor, [FLOOR]), ('cpuid', sc_cpuid, [SSE2_AVAILABLE])]
 
 
 ALTAIR = os.path.join(ROOT, 'target', 'release', 'altair')

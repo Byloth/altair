@@ -39,10 +39,28 @@ mod imp {
 
     static REPORT: std::sync::OnceLock<FaultReport> = std::sync::OnceLock::new();
 
-    extern "C" fn on_fault(_: libc::c_int, info: *mut libc::siginfo_t, _: *mut c_void) {
+    extern "C" fn on_fault(_: libc::c_int, info: *mut libc::siginfo_t, context: *mut c_void) {
         // Non è codice "sicuro per i segnali" (stampa, può prendere un lock), ma il processo
         // sta morendo comunque e quello che stampa è l'unica traccia utile.
         let addr = unsafe { (*info).si_addr() } as usize;
+        // Dove stava eseguendo: per il codice tradotto il simbolo è la funzione guest (f_XXXXXXXX).
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            let rip = (*(context as *mut libc::ucontext_t)).uc_mcontext.gregs[libc::REG_RIP as usize] as usize;
+            let mut sym: libc::Dl_info = std::mem::zeroed();
+            if libc::dladdr(rip as *const c_void, &mut sym) != 0 && !sym.dli_sname.is_null() {
+                eprintln!("\naccesso non valido dentro {} (+{:#x})", CStr::from_ptr(sym.dli_sname).to_string_lossy(), rip - sym.dli_saddr as usize);
+            }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        let _ = context;
+        // Indagine (`ALTAIR_TRAP_CONTINUE=1`): la pagina torna scrivibile e l'esecuzione
+        // prosegue. Con una pagina resa di sola lettura apposta, il registro elenca così, una
+        // dopo l'altra, le funzioni che ci scrivono.
+        if addr >= 0x1_0000 && std::env::var_os("ALTAIR_TRAP_CONTINUE").is_some() {
+            unsafe { libc::mprotect((addr & !0xfff) as *mut c_void, 0x1000, libc::PROT_READ | libc::PROT_WRITE) };
+            return;
+        }
         if let Some(report) = REPORT.get() {
             report(addr);
         }
@@ -60,6 +78,14 @@ mod imp {
             action.sa_flags = libc::SA_SIGINFO;
             libc::sigaction(libc::SIGSEGV, &action, std::ptr::null_mut());
         }
+    }
+
+    /// Rende di sola lettura le pagine che contengono la zona: la prossima scrittura finisce nel
+    /// gestore degli accessi non validi, che dice quale funzione l'ha fatta. Solo per indagini.
+    pub fn write_trap(ptr: *mut u8, len: usize) {
+        let start = ptr as usize & !0xfff;
+        let end = (ptr as usize + len + 0xfff) & !0xfff;
+        unsafe { libc::mprotect(start as *mut c_void, end - start, libc::PROT_READ) };
     }
 
     pub fn discard(ptr: *mut u8, len: usize) {
@@ -306,6 +332,8 @@ mod imp {
 }
 
 pub use imp::{discard, exit_now, fine_timers, guard, AudioOut, Library};
+#[cfg(unix)]
+pub use imp::write_trap;
 
 // I puntatori dentro sono handle del sistema, usati da un thread solo alla volta.
 unsafe impl Send for AudioOut {}

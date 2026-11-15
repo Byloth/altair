@@ -31,6 +31,7 @@ pub struct Ctx {
     pub fptop: u32,
     pub fpcw: u32,
     pub fpsw: u32,
+    pub eflags_id: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<Ctx>() == 352);

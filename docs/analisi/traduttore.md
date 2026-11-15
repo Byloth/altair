@@ -198,6 +198,8 @@ chiamati e il contenuto finale di heap di prova, stack e sezioni scrivibili dell
 | `strlen` (`0xFA6790`), contenuti e allineamenti casuali | 300 | identico |
 | `strcmp` (`0xFA9760`), stringhe uguali, diverse, troncate | 300 | identico |
 | `memcpy` (`0xF9FB80`), ogni lunghezza e allineamento, più regioni sovrapposte (copia all'indietro con `std`) | 1.117 | identico |
+| `floor` (`0xFA1120`), ramo x87: mezzi interi, zeri con segno, infiniti, valori casuali | 316 | identico (prima della correzione: diverso alla prima chiamata) |
+| `cpuid` (`0xFCA495`), il CRT cerca SSE2 passando dal bit ID di EFLAGS | 1 | stesso verdetto |
 
 ### Campione automatico (`--auto N`)
 
@@ -269,6 +271,24 @@ strutturati che il generatore non sa costruire; lo stack x87 parte sempre vuoto.
 6. **Codice che prosegue dentro un'altra funzione.** Dopo una `call`, le routine matematiche
    del CRT continuano in codice che è anche l'inizio di un'altra funzione. Il traduttore la
    trattava come tail call senza includerla tra le funzioni da tradurre. Corretto.
+7. **`frndint` e `fistp` ignoravano la modalità di arrotondamento x87** (2026-11-15, trovato
+   dall'audio che gracchiava, vedi `runtime.md`). Erano tradotti con `rintl`, contando sul
+   fatto che la parola di controllo x87 dell'host è quella del guest. Ma quando l'operando
+   nasce da un `double` (`fld qword; frndint; fstp qword`), clang riduce
+   `(double)rintl((long double)x)` a `rint(x)`: una chiamata in doppia precisione, che arrotonda
+   secondo **MXCSR** e non secondo la parola di controllo x87. Il `floor` del CRT (ramo x87,
+   `0xFB2B93`: mette RC verso il basso con `_controlfp`, poi `frndint` in `0xFCA5FE`)
+   restituiva così `floor(11,5) = 12` e `floor(3,5) = 4`. Verificato con `objdump` sulla
+   libreria (`call rint@plt`) e con il nuovo scenario `floor`. Ora `x87_rnd` (in
+   `runtime/altair_x87.h`) arrotonda leggendo il campo RC di `c->fpcw` e usando solo `floorl`,
+   `ceill`, `truncl`, che non dipendono da alcuna modalità. Il campione automatico non l'aveva
+   visto: genera ingressi a caso e non imposta mai una modalità diversa dal più vicino.
+8. **Il bit ID di EFLAGS andava perso.** Il CRT (`0xFCA495`) decide se usare i rami SSE2 delle
+   funzioni matematiche invertendo il bit 21 con `pushfd`/`popfd` e rileggendolo, come si
+   faceva per sapere se la CPU ha `cpuid`. `SET_EFLAGS` lo scartava: il verdetto era "niente
+   SSE2" e tutto il CRT prendeva i rami x87, al contrario di qualunque PC vero. Ora il bit
+   vive in `Ctx.eflags_id` (occupa quattro byte che erano di riempimento: la dimensione di
+   `Ctx` non cambia). Scenario `cpuid`, che confronta solo il verdetto.
 
 `tools/difftrace.py <exe> 0xADDR <caso>` rigioca un caso sui due motori e mostra indirizzi
 eseguiti, registri e prime differenze di memoria.
@@ -282,6 +302,10 @@ eseguiti, registri e prime differenze di memoria.
 - La parola di controllo x87 dell'host è quella del guest durante tutta l'esecuzione guest: le
   funzioni host chiamate dal gioco (il futuro runtime) dovranno ripristinarla e reimpostarla.
 - x87: niente tag dei registri, niente flag di eccezione; trascendenti non verificate.
+- Arrotondamento x87: `frndint` e `fist(p)` seguono il campo RC del guest per costruzione
+  (`x87_rnd`); le quattro operazioni seguono invece la parola di controllo dell'host, che è
+  tenuta uguale a quella del guest. Se il compilatore le riduce a `float` o `double` il
+  risultato non cambia con l'arrotondamento al più vicino; con un'altra modalità sì (non verificato).
 - SSE in C portabile: su host non x86 (ARM, wasm) vanno riviste la propagazione dei NaN, le
   conversioni e il controllo dell'arrotondamento.
 - `stmxcsr` restituisce l'ultima parola di controllo impostata: i flag di eccezione non sono tracciati.

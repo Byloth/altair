@@ -325,3 +325,14 @@ Richiesta dell'utente mentre prova `tools/gioca.sh`.
     ritardi nel mixer, `ALTAIR_AUDIO_LOG` → `analisi/runtime.md`.
   - F8: fotogrammi al secondo nel titolo della finestra.
   - Telecamera: non ancora capita, servono dettagli.
+- **Terza prova su Windows** (utente): il suono gracchia ancora, ma solo musica del menu e
+  voci. Indizio decisivo: sono i flussi Ogg Vorbis. Risalita la catena dal buffer DirectSound
+  fino a `mdct_init`: `floor(11,5)` del CRT tradotto dava 12, perché `frndint` era tradotto con
+  `rintl` e clang lo riduce a `rint`, che ignora l'arrotondamento x87. Tabella della MDCT
+  sbagliata per i blocchi da 2048 → letture fuori dal buffer. Corretti `frndint` e `fistp`
+  (`x87_rnd`) e il bit ID di EFLAGS (il CRT non vedeva SSE2). Scenari `floor` e `cpuid` nel
+  test differenziale. Verificato sul flusso del menu → `analisi/runtime.md`,
+  `analisi/traduttore.md`. Immagine Linux e binari Windows ricompilati.
+- Ricognizione dei residui di sviluppo nel binario (richiesta dell'utente, per l'indicatore di
+  FPS): c'è un interprete di 60 opzioni da riga di comando, `/nofps` compreso, ma è codice
+  orfano e manca il testo dell'indicatore → `analisi/funzioni-nascoste.md`.
