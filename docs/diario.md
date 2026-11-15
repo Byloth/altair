@@ -218,3 +218,19 @@ lingua italiana; finestre di prova permesse; a fine lavoro aggiornare il piano o
 - Errori miei da ricordare: `pkill -f testo` e `pgrep -f testo` trovano anche la shell che li
   lancia, se il testo compare nella sua riga di comando (mi sono ucciso il comando due volte):
   usare `"altair-ru[n]"`. `sleep` lunghi in primo piano sono bloccati: usare un ciclo `until`.
+
+## 2026-11-15, mattina
+
+Piano approvato dall'utente: chiudere il gate della Fase 3 (input vero, audio, tutorial), poi
+renderer per le città e robustezza.
+
+- **Input verificabile**: `ALTAIR_INPUT_LOG=1` e comandi `mouse`, `button`, `move`, `click` sul
+  canale di comando, che passano per lo stesso stato della finestra. Nel corridoio dell'Animus
+  il mouse simulato ruota la visuale: DirectInput del mouse funziona. `tools/avvia.sh --animus`
+  porta fin lì da solo.
+- **Buffer caricati per intervallo usato** dal draw: elica del DNA da 20 MB a 0,3 MB per
+  fotogramma.
+- **Audio**: il server PulseAudio si è ripreso da solo. Con la coda da 200 ms il gioco suona in
+  tempo reale: 100 s, zero blocchi scartati. `tools/audio-probe.py` per misurare fuori dal
+  gioco (anche SDL2, alternativa pronta). L'ipotesi sulla crisi notturna (coda da 60 ms) resta
+  non dimostrata → `analisi/runtime.md`.

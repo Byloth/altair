@@ -215,23 +215,24 @@ Misurato: nel menu e nel laboratorio il miscelato ha picchi tra 15.000 e 30.000 
 tutti i 400 secondi di una sessione, quindi il gioco decodifica e suona davvero (musica, voci,
 ambiente). Non fatto: suono 3D (posizione, distanza), EAX.
 
-**L'uscita su PulseAudio non è verificata a orecchio, e in WSLg si è comportata male.** Fatti
-osservati la notte del 2026-11-15, senza nessuno ad ascoltare:
+**L'uscita su PulseAudio funziona in tempo reale con la coda da 200 ms; non è ancora stata
+ascoltata da una persona.** Misura del 2026-11-15 mattina, a server tornato in salute: 100
+secondi di gioco (loghi, filmato introduttivo con il suo audio), 100,8 secondi di miscelato,
+**zero blocchi scartati**.
 
-- con il gioco in esecuzione `pa_simple_write` accetta circa un quinto del tempo reale (il
-  mixer scarta il resto: "uscita in ritardo: N blocchi scartati"), con o senza finestra
-  aperta, con coda di 60 o di 200 ms;
-- nello stesso momento anche un altro programma (`ffmpeg -f pulse`) va a rilento; a gioco
-  chiuso, o con `ALTAIR_AUDIO=0`, `ffmpeg` torna veloce;
-- dopo vari avvii e arresti il server ha smesso di rispondere (`pa_simple_new` fallisce con
-  errore 8, timeout). Il server gira nella distribuzione di sistema di WSLg: da qui non si
-  riavvia; da Windows, `wsl --shutdown`.
+Storia, perché il problema può tornare. Di notte l'uscita accettava un quinto del tempo reale,
+rallentava anche gli altri programmi (`ffmpeg -f pulse`) e alla fine il server ha smesso di
+rispondere (`pa_simple_new`: errore 8, timeout) per più di un'ora; poi si è ripreso da solo.
+La prima versione chiedeva una coda di 60 ms: l'ipotesi, coerente con le misure ma non
+dimostrata, è che una coda così corta mandi in crisi il sink RDP di WSLg per tutti, e che le
+prove successive con 200 ms siano state fatte a server già compromesso. Se ricapita:
+`ALTAIR_AUDIO=0` per giocare senza, `wsl --shutdown` da Windows per riavviare il server.
 
-Ipotesi non verificate: il sink RDP di WSLg consuma solo quando il client RDP sta davvero
-riproducendo; oppure il nostro modo di scrivere (blocchi da 10 ms in tempo reale) lo mette in
-crisi. Il gioco non ne risente in nessun caso: i cursori li muove il mixer, e l'uscita sta in
-un thread suo. Se il suono non si sente o gracchia: `ALTAIR_AUDIO=0`, e questa sezione è il
-punto da cui ripartire (alternative: API asincrona di PulseAudio, ALSA, uscita su file).
+`tools/audio-probe.py` misura l'uscita fuori dal gioco: suona 4 secondi di tono a blocchi, in
+tempo reale come il mixer, e dice quanto ci ha messo. Con il server in salute: `pa_simple` con
+coda predefinita o da 200 ms, e SDL2 (`libSDL2`, presente in WSL, che usa PulseAudio a modo
+suo), consumano tutti 4 secondi in 4,0-4,2. SDL2 resta l'alternativa pronta se `pa_simple`
+tornasse a dare problemi.
 
 ## Video Bink
 

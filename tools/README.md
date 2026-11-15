@@ -165,3 +165,16 @@ tools/gioca.sh                      # chiudere la finestra per uscire
 ALTAIR_AUDIO=0 tools/gioca.sh       # senza uscita audio
 ALTAIR_LANG=English tools/gioca.sh  # lingua del gioco (predefinita: Italian)
 ```
+
+## `audio-probe.py`
+
+Misura se l'uscita audio consuma il suono in tempo reale, fuori dal gioco: 4 secondi di tono
+a 440 Hz scritti a blocchi, con `libpulse-simple` (come fa il runtime) o con SDL2.
+
+```sh
+python3 -I tools/audio-probe.py tutto          # tutte le combinazioni utili
+python3 -I tools/audio-probe.py pulse 10 200   # blocchi da 10 ms, coda da 200 ms
+python3 -I tools/audio-probe.py sdl
+```
+
+Se 4 secondi di suono richiedono molto più di 4 secondi, il problema è nel server audio.

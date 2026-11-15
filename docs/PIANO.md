@@ -186,14 +186,16 @@ ampio di funzioni. Stato e numeri in `analisi/traduttore.md`.
 - [ ] Completare il tutorial dell'Animus e arrivare a Masyaf: serve giocare davvero
 - [x] Canale di comando per pilotare il gioco mentre gira (`ALTAIR_CTL`, `tools/avvia.sh`, `tools/ctl.sh`)
 - [x] Finestra vera (`ALTAIR_WINDOW=1`, `tools/gioca.sh`): si apre via Wayland e mostra il gioco
-- [ ] Tastiera e mouse veri nella finestra: scritti, **non ancora provati da una persona**
+- [ ] Tastiera e mouse veri nella finestra: provata tutta la strada tranne il primo tratto
+  (winit → stato); **manca la prova di una persona**
 - [x] Stencil, scissor, depth bias, `ColorFill`, riciclo delle risorse
 - [ ] Rettangoli parziali in `StretchRect`/`Clear` (mai visti finora), `GetRenderTargetData`
 - [x] Prestazioni del renderer: da 2-25 a 27-190 fotogrammi al secondo secondo la scena
 - [x] Video Bink veri, decodificati da `ffmpeg` (loghi e filmato introduttivo)
 - [x] DirectSound su un mixer nostro: il gioco suona (verificato sul miscelato salvato)
-- [ ] Uscita audio su PulseAudio: scritta, **non verificata a orecchio**; in WSLg va a
-  singhiozzo → `analisi/runtime.md`, sezione Audio
+- [x] Uscita audio su PulseAudio in tempo reale (100 s, zero blocchi scartati); **da ascoltare**.
+  Di notte il server di WSLg era andato in crisi → `analisi/runtime.md`, sezione Audio
+- [x] Diagnosi dell'input (`ALTAIR_INPUT_LOG`) e mouse sul canale di comando: la visuale ruota
 - [ ] Suono 3D, EAX, XInput (controller)
 - [ ] Confronto visivo con la DX10 originale, che sull'hardware attuale funziona: serve uno
   screenshot dell'utente della stessa scena (laboratorio Abstergo)
