@@ -147,11 +147,16 @@ per comando) e scrive in `cartella/stato` il numero del fotogramma.
 |---|---|
 | `key DIK [fotogrammi]` | preme un tasto (predefinito 10 fotogrammi) |
 | `text TESTO` | batte un testo come messaggi della finestra |
+| `mouse DX DY [ROTELLA]` | sposta il mouse (relativo, come lo legge DirectInput) |
+| `button N [fotogrammi]` | preme un pulsante del mouse (0 sinistro, 1 destro, 2 centrale) |
+| `move X Y`, `click X Y` | porta il puntatore in un punto dello schermo, e clic sinistro |
+| `stats` | stampa il ritmo dell'ultimo intervallo |
 | `shot FILE.png` | salva il back buffer in `cartella/FILE.png` |
 | `quit` | stampa il censimento ed esce |
 
 ```sh
 tools/avvia.sh --partita          # avvia in background e arriva alla partita del profilo "Claude"
+tools/avvia.sh --animus           # prosegue fino al corridoio dell'Animus con Altaïr (5 minuti)
 tools/ctl.sh "key 28" "shot a.png"
 tools/ctl.sh quit
 ```
@@ -264,6 +269,23 @@ dimensione della finestra. Gli eventi si accumulano in uno stato condiviso:
   visuale senza fermarsi ai bordi; libero, serve per i menu.
 
 Senza la variabile tutto resta fuori schermo, come prima. `tools/gioca.sh` la imposta.
+
+### Diagnosi dell'input: `ALTAIR_INPUT_LOG=1`
+
+Una riga per ogni passaggio di un evento: `finestra:` (winit l'ha ricevuto), `messaggio:`
+(consegnato alla procedura della finestra), `DirectInput tastiera/mouse:` (il gioco l'ha letto
+con `GetDeviceState`; stampato solo quando cambia). Se un tasto non fa nulla, il registro
+dice a quale passaggio si è perso.
+
+I comandi `mouse`, `button`, `move`, `click` del canale di comando scrivono nello stesso stato
+che riempie la finestra, quindi provano la stessa strada. Verificato così (2026-11-15): nel
+corridoio dell'Animus `mouse 400 0` **ruota la visuale** attorno ad Altaïr, e il clic arriva
+sia a DirectInput sia come `WM_LBUTTONDOWN`. Resta non provato solo il primo tratto, da winit
+allo stato.
+
+Tasti predefiniti del gioco (`DefaultBindings.map`, schema tastiera + mouse): WASD movimento,
+frecce visuale, Spazio gambe, clic sinistro mano armata, E testa, Maiusc sinistro mano nuda,
+clic destro profilo alto, Tab mappa, Esc pausa. I pulsanti del mouse sono i codici 256 + N.
 
 Stato delle verifiche: la finestra si apre via **Wayland** (WSLg) e mostra il gioco; i tasti
 del canale di comando funzionano anche con la finestra aperta. La tastiera e il mouse **veri

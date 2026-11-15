@@ -55,6 +55,10 @@ pub struct Runtime {
     pub typed: std::collections::VecDeque<(u32, char)>,
     /// Il mouse di DirectInput.
     pub mouse: u32,
+    /// Ultimo stato stampato da `ALTAIR_INPUT_LOG`: tasti premuti; pulsanti e se il mouse si muove.
+    pub input_seen: (Vec<u32>, ([bool; 8], bool)),
+    /// Pulsanti del mouse premuti dal canale di comando: (fotogramma del rilascio, pulsante).
+    pub button_script: Vec<(u64, usize)>,
     start: Instant,
     cmdline: u32,
     env_a: u32,
@@ -189,6 +193,8 @@ impl Runtime {
             text_frame: 0,
             typed: Default::default(),
             mouse: 0,
+            input_seen: Default::default(),
+            button_script: Vec::new(),
             fs: fs::FsState::new(
                 std::path::Path::new(exe).parent().map(Into::into).unwrap_or_default(),
                 std::env::current_dir().unwrap_or_default().join("run").join("c"),

@@ -49,6 +49,13 @@ pub fn enabled() -> bool {
     std::env::var("ALTAIR_WINDOW").is_ok_and(|v| v == "1")
 }
 
+/// `ALTAIR_INPUT_LOG=1`: una riga per ogni evento di tastiera e mouse, a ogni passaggio
+/// (finestra → stato → DirectInput o messaggi), per capire dove se ne perde uno.
+pub fn log_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("ALTAIR_INPUT_LOG").is_ok_and(|v| v == "1"))
+}
+
 pub fn state() -> MutexGuard<'static, State> {
     STATE.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -144,6 +151,9 @@ impl ApplicationHandler for App {
                 let down = event.state == ElementState::Pressed;
                 s.keys[dik as usize] = if down { 0x80 } else { 0 };
                 let ch = if down { event.text.as_ref().and_then(|t| t.chars().next()).filter(|c| !c.is_control()) } else { None };
+                if log_enabled() && !event.repeat {
+                    eprintln!("[input] finestra: tasto {code:?} {} → DIK {dik}, VK {vk}, carattere {ch:?}", if down { "giù" } else { "su" });
+                }
                 s.events.push_back(Event::Key { vk, scan: (dik & 0x7f) as u32, down, ch });
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -172,6 +182,9 @@ impl ApplicationHandler for App {
                     MouseButton::Other(_) => return,
                 };
                 let down = st == ElementState::Pressed;
+                if log_enabled() {
+                    eprintln!("[input] finestra: pulsante {index} {} in {:?}", if down { "giù" } else { "su" }, s.cursor);
+                }
                 s.buttons[index] = down;
                 if index < 3 {
                     s.events.push_back(Event::Button { index, down });

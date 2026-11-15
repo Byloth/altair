@@ -89,6 +89,8 @@ pub struct Gfx {
     /// appoggio); buffer veri rimasti indietro rispetto alla memoria guest.
     used: std::collections::HashSet<u32>,
     shadow: HashMap<u32, u64>,
+    /// Intervallo di ogni buffer vero non ancora caricato dalla memoria guest.
+    pending: HashMap<u32, (u64, u64)>,
     stale: std::collections::HashSet<u32>,
     flushes: u64,
     uploaded: u64,
@@ -336,6 +338,7 @@ impl Gfx {
             blit: None,
             used: Default::default(),
             shadow: HashMap::new(),
+            pending: HashMap::new(),
             stale: Default::default(),
             flushes: 0,
             uploaded: 0,
@@ -478,6 +481,7 @@ impl Gfx {
     pub fn forget(&mut self, obj: u32) {
         self.buffers.remove(&obj);
         self.shadow.remove(&obj);
+        self.pending.remove(&obj);
         self.stale.remove(&obj);
         self.used.remove(&obj);
         if self.textures.remove(&obj).is_some() {
@@ -807,7 +811,7 @@ impl Gfx {
     /// costa troppo: i buffer dinamici del gioco vengono riscritti decine o centinaia di volte
     /// per fotogramma. La nuova versione va allora nel buffer di appoggio, e il buffer vero si
     /// riallinea dopo il prossimo invio.
-    fn gpu_buffer(&mut self, d: &D3d, mem: Mem, obj: u32) -> Option<(wgpu::Buffer, u64)> {
+    fn gpu_buffer(&mut self, d: &D3d, mem: Mem, obj: u32, need: (u64, u64)) -> Option<(wgpu::Buffer, u64)> {
         let &Res::Buffer { mem: data, size, index, .. } = d.res.get(&obj)? else { return None };
         if size == 0 {
             return None;
@@ -820,13 +824,17 @@ impl Gfx {
             let usage = if index { wgpu::BufferUsages::INDEX } else { wgpu::BufferUsages::VERTEX } | wgpu::BufferUsages::COPY_DST;
             g.device.create_buffer(&wgpu::BufferDescriptor { label: None, size: padded, usage, mapped_at_creation: false })
         };
+        // `pending`: la parte del buffer vero non ancora allineata alla memoria guest.
+        let widen = |g: &mut Gfx, lo: u64, hi: u64| {
+            let e = g.pending.entry(obj).or_insert((lo, hi));
+            *e = (e.0.min(lo), e.1.max(hi));
+        };
         if fresh {
             self.buffers.insert(obj, new_buffer(self));
-            self.queue.write_buffer(&self.buffers[&obj], 0, mem.bytes(data, padded as u32));
-            self.uploaded += padded;
+            self.pending.insert(obj, (0, padded));
         } else if stale || dirty.is_some() {
             let had_shadow = self.shadow.remove(&obj).is_some();
-            // Con una versione di appoggio in giro il buffer vero è indietro: si ricarica tutto.
+            // Con una versione di appoggio in giro il buffer vero è indietro: va riallineato tutto.
             let (lo, hi, append, discard) = match dirty {
                 Some(x) if !stale && !had_shadow => x,
                 _ => (0, size, false, false),
@@ -836,14 +844,12 @@ impl Gfx {
             if hi <= lo {
                 // Lock senza scrittura utile.
             } else if !in_use || append {
-                // Nessun draw in sospeso legge quell'intervallo: si aggiorna sul posto.
-                self.queue.write_buffer(&self.buffers[&obj], lo, mem.bytes(data + lo as u32, (hi - lo) as u32));
-                self.uploaded += hi - lo;
+                // Nessun draw in sospeso legge quell'intervallo: si potrà aggiornare sul posto.
+                widen(self, lo, hi);
             } else if discard {
                 // Il gioco rinuncia al vecchio contenuto: buffer nuovo, il vecchio resta ai draw in sospeso.
                 self.buffers.insert(obj, new_buffer(self));
-                self.queue.write_buffer(&self.buffers[&obj], lo, mem.bytes(data + lo as u32, (hi - lo) as u32));
-                self.uploaded += hi - lo;
+                self.pending.insert(obj, (lo, hi));
             } else if padded <= SHADOW_MAX && self.scratch_off + padded + (4 << 20) <= SCRATCH_SIZE {
                 let off = self.scratch_write(mem.bytes(data, padded as u32));
                 self.shadow.insert(obj, off);
@@ -851,12 +857,27 @@ impl Gfx {
                 return Some((self.scratch.clone(), off));
             } else {
                 self.buffers.insert(obj, new_buffer(self));
-                self.queue.write_buffer(&self.buffers[&obj], 0, mem.bytes(data, padded as u32));
-                self.uploaded += padded;
+                self.pending.insert(obj, (0, padded));
             }
         }
         if let Some(&off) = self.shadow.get(&obj) {
             return Some((self.scratch.clone(), off));
+        }
+        // Si carica ciò che questo draw legge e non è ancora allineato. Se l'intervallo cade in
+        // mezzo alla parte in attesa si carica dall'inizio di questa, così ogni byte parte una
+        // volta sola.
+        if let Some(&(lo, hi)) = self.pending.get(&obj) {
+            let (a, b) = (need.0 & !3, need.1.next_multiple_of(4).min(padded));
+            if b > lo && a < hi {
+                let (from, to, rest) = if a > lo && b >= hi { (a, hi, (lo, a)) } else { (lo, b.min(hi), (b.min(hi), hi)) };
+                self.queue.write_buffer(&self.buffers[&obj], from, mem.bytes(data + from as u32, (to - from) as u32));
+                self.uploaded += to - from;
+                if rest.1 > rest.0 {
+                    self.pending.insert(obj, rest);
+                } else {
+                    self.pending.remove(&obj);
+                }
+            }
         }
         self.used.insert(obj);
         self.buffers.get(&obj).cloned().map(|b| (b, 0))
@@ -865,7 +886,7 @@ impl Gfx {
     /// Un draw. `up` porta i vertici passati al volo: (dati, passo); `indexed`: (indice di
     /// partenza, vertice base).
     #[allow(clippy::too_many_arguments)]
-    pub fn draw(&mut self, d: &D3d, mem: Mem, prim_type: u32, start: u32, prim_count: u32, indexed: Option<i32>, up: Option<(u32, u32)>) {
+    pub fn draw(&mut self, d: &D3d, mem: Mem, prim_type: u32, start: u32, prim_count: u32, indexed: Option<(i32, u32, u32)>, up: Option<(u32, u32)>) {
         if self.ubuf_off + 2 * CONSTS_SLOT > UBUF_SIZE || self.scratch_off + (4 << 20) > SCRATCH_SIZE {
             self.flush();
         }
@@ -877,6 +898,8 @@ impl Gfx {
                 mark = now;
             }};
         }
+        let verts = indexed;
+        let indexed = indexed.map(|v| v.0);
         let (vs, ps, decl) = (d.vshader, d.pshader, d.decl);
         if vs == 0 || ps == 0 || decl == 0 {
             return self.skip("senza shader o dichiarazione (pipeline fissa)");
@@ -906,7 +929,15 @@ impl Gfx {
             for s in 0..4 {
                 let (obj, offset, stride) = d.streams[s];
                 if obj != 0 {
-                    let Some((b, base)) = self.gpu_buffer(d, mem, obj) else { return self.skip("vertex buffer non disponibile") };
+                    // I vertici letti: da `start` per i draw semplici; per quelli indicizzati
+                    // l'intervallo che il gioco dichiara (vertice base + minimo, numero).
+                    let (first, count) = match verts {
+                        Some((base, min, num)) if num > 0 => ((base as i64 + min as i64).max(0) as u64, num as u64),
+                        Some(_) => (0, u64::MAX / (stride.max(1) as u64 * 2)),
+                        None => (start as u64, vcount as u64),
+                    };
+                    let need = (offset as u64 + first * stride as u64, (offset as u64 + (first + count) * stride as u64).max(offset as u64 + 4));
+                    let Some((b, base)) = self.gpu_buffer(d, mem, obj, need) else { return self.skip("vertex buffer non disponibile") };
                     strides[s] = stride;
                     vbs[s] = Some((b, base + offset as u64));
                 }
@@ -917,7 +948,8 @@ impl Gfx {
         if indexed.is_some() {
             let Some(&Res::Buffer { fvf, .. }) = d.res.get(&d.indices) else { return self.skip("index buffer mancante") };
             index16 = fvf != 102;
-            ib = self.gpu_buffer(d, mem, d.indices);
+            let width = if index16 { 2 } else { 4 };
+            ib = self.gpu_buffer(d, mem, d.indices, (start as u64 * width, (start as u64 + vcount as u64) * width));
             if ib.is_none() {
                 return self.skip("index buffer non disponibile");
             }

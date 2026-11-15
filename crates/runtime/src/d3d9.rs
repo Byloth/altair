@@ -479,9 +479,22 @@ fn dev_present(rt: &mut Runtime, _: &mut Call) -> u32 {
 
 /// Canale di comando per pilotare il gioco mentre gira: `ALTAIR_CTL=cartella`. A ogni
 /// fotogramma il runtime legge e cancella `cartella/cmd`, una riga per comando:
-/// `key DIK [fotogrammi]`, `text TESTO`, `shot FILE.png`, `stats`, `quit`. Dopo ogni lotto scrive in
+/// `key DIK [fotogrammi]`, `text TESTO`, `mouse DX DY [ROTELLA]`, `button N [fotogrammi]`,
+/// `move X Y`, `click X Y`, `shot FILE.png`, `stats`, `quit`. Dopo ogni lotto scrive in
 /// `cartella/stato` il numero del fotogramma, così chi comanda sa che è stato eseguito.
 fn control(rt: &mut Runtime, frame: u64) {
+    // Rilascio dei pulsanti del mouse premuti da un comando.
+    if !rt.button_script.is_empty() {
+        let mut s = crate::window::state();
+        rt.button_script.retain(|&(until, index)| {
+            if frame < until {
+                return true;
+            }
+            s.buttons[index] = false;
+            s.events.push_back(crate::window::Event::Button { index, down: false });
+            false
+        });
+    }
     let Some(dir) = rt.ctl_dir.clone() else { return };
     let path = dir.join("cmd");
     let Ok(text) = std::fs::read_to_string(&path) else { return };
@@ -493,6 +506,40 @@ fn control(rt: &mut Runtime, frame: u64) {
                 let Some(key) = words.next().and_then(|v| v.parse::<u8>().ok()) else { continue };
                 let hold = words.next().and_then(|v| v.parse::<u64>().ok()).unwrap_or(10);
                 rt.key_script.push((frame + 1, frame + 1 + hold, key));
+            }
+            // Il mouse passa per lo stesso stato della finestra: stessa strada di quello vero.
+            Some("mouse") => {
+                let v: Vec<i32> = words.filter_map(|w| w.parse().ok()).collect();
+                if v.len() >= 2 {
+                    let mut s = crate::window::state();
+                    s.motion.0 += v[0];
+                    s.motion.1 += v[1];
+                    s.motion.2 += v.get(2).copied().unwrap_or(0);
+                }
+            }
+            Some("button") => {
+                let Some(index) = words.next().and_then(|v| v.parse::<usize>().ok()).filter(|i| *i < 8) else { continue };
+                let hold = words.next().and_then(|v| v.parse::<u64>().ok()).unwrap_or(10);
+                let mut s = crate::window::state();
+                s.buttons[index] = true;
+                if index < 3 {
+                    s.events.push_back(crate::window::Event::Button { index, down: true });
+                }
+                rt.button_script.push((frame + hold, index));
+            }
+            Some("move") | Some("click") => {
+                let click = line.trim_start().starts_with("click");
+                let v: Vec<u32> = words.filter_map(|w| w.parse().ok()).collect();
+                let [x, y] = v[..] else { continue };
+                let mut s = crate::window::state();
+                s.cursor = (x.min(SCREEN.0 - 1), y.min(SCREEN.1 - 1));
+                let (x, y) = s.cursor;
+                s.events.push_back(crate::window::Event::MouseMove(x, y));
+                if click {
+                    s.buttons[0] = true;
+                    s.events.push_back(crate::window::Event::Button { index: 0, down: true });
+                    rt.button_script.push((frame + 6, 0));
+                }
             }
             Some("text") => {
                 let rest = line.trim_start().strip_prefix("text").unwrap_or("").trim();
@@ -682,8 +729,8 @@ fn dev_draw(rt: &mut Runtime, c: &mut Call) -> u32 {
 fn dev_draw_indexed(rt: &mut Runtime, c: &mut Call) -> u32 {
     rt.d3d.draws += 1;
     rt.d3d.primitives += c.arg(6) as u64;
-    let (ty, base, start, count) = (c.arg(1), c.arg(2) as i32, c.arg(5), c.arg(6));
-    with_gfx(rt, |g, d, mem| g.draw(d, mem, ty, start, count, Some(base), None));
+    let (ty, base, min, num, start, count) = (c.arg(1), c.arg(2) as i32, c.arg(3), c.arg(4), c.arg(5), c.arg(6));
+    with_gfx(rt, |g, d, mem| g.draw(d, mem, ty, start, count, Some((base, min, num)), None));
     D3D_OK
 }
 fn dev_draw_up(rt: &mut Runtime, c: &mut Call) -> u32 {

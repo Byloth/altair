@@ -47,7 +47,7 @@ fn get_rect(rt: &mut Runtime, c: &mut Call) -> u32 {
     write_rect(rt, c.arg(1))
 }
 fn get_cursor_pos(rt: &mut Runtime, c: &mut Call) -> u32 {
-    let (x, y) = if crate::window::enabled() { crate::window::state().cursor } else { (SCREEN.0 / 2, SCREEN.1 / 2) };
+    let (x, y) = crate::window::state().cursor;
     rt.mem.w32(c.arg(0), x);
     rt.mem.w32(c.arg(0) + 4, y);
     1
@@ -116,10 +116,17 @@ fn peek_message_a(rt: &mut Runtime, c: &mut Call) -> u32 {
         }
     }
     // Tastiera e mouse veri, dalla finestra.
-    if crate::window::enabled() {
+    {
         use crate::window::Event;
         let events: Vec<Event> = crate::window::state().events.drain(..).collect();
         for e in events {
+            if crate::window::log_enabled() {
+                match &e {
+                    Event::Key { vk, down, ch, .. } => eprintln!("[input] messaggio: {} VK {vk}, carattere {ch:?}", if *down { "WM_KEYDOWN" } else { "WM_KEYUP" }),
+                    Event::Button { index, down } => eprintln!("[input] messaggio: pulsante {index} {}", if *down { "giù" } else { "su" }),
+                    Event::MouseMove(..) => {}
+                }
+            }
             match e {
                 Event::Key { vk, scan, down: true, ch } => {
                     rt.messages.push_back((0x100, vk, 1 | scan << 16));

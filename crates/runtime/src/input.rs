@@ -59,15 +59,21 @@ fn dev_get_device_state(rt: &mut Runtime, c: &mut Call) -> u32 {
                 rt.mem.w8(c.arg(2) + key as u32, 0x80);
             }
         }
-        if crate::window::enabled() {
-            let keys = crate::window::state().keys;
-            for (i, k) in keys.iter().enumerate().filter(|(_, k)| **k != 0) {
-                rt.mem.w8(c.arg(2) + i as u32, *k);
+        // Tasti veri (finestra) o simulati dal canale di comando: stessa tabella.
+        let keys = crate::window::state().keys;
+        for (i, k) in keys.iter().enumerate().filter(|(_, k)| **k != 0) {
+            rt.mem.w8(c.arg(2) + i as u32, *k);
+        }
+        if crate::window::log_enabled() {
+            let down: Vec<u32> = (0..256).filter(|i| rt.mem.r8(c.arg(2) + i) != 0).collect();
+            if down != rt.input_seen.0 {
+                eprintln!("[input] DirectInput tastiera: premuti {down:?}");
+                rt.input_seen.0 = down;
             }
         }
     }
     // DIMOUSESTATE (16 byte) o DIMOUSESTATE2 (20): spostamento dall'ultima lettura e pulsanti.
-    if c.arg(0) == rt.mouse && c.arg(1) >= 16 && crate::window::enabled() {
+    if c.arg(0) == rt.mouse && c.arg(1) >= 16 {
         let mut s = crate::window::state();
         let (dx, dy, dz) = std::mem::take(&mut s.motion);
         for (i, v) in [dx, dy, dz].iter().enumerate() {
@@ -75,6 +81,13 @@ fn dev_get_device_state(rt: &mut Runtime, c: &mut Call) -> u32 {
         }
         for i in 0..(c.arg(1) - 12).min(8) {
             rt.mem.w8(c.arg(2) + 12 + i, if s.buttons[i as usize] { 0x80 } else { 0 });
+        }
+        if crate::window::log_enabled() {
+            let now = (s.buttons, (dx, dy, dz) != (0, 0, 0));
+            if now != rt.input_seen.1 {
+                eprintln!("[input] DirectInput mouse: spostamento ({dx}, {dy}, {dz}), pulsanti {:?}", s.buttons);
+                rt.input_seen.1 = now;
+            }
         }
     }
     0
